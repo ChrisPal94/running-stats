@@ -24,7 +24,7 @@ const pageUrl = new URL(Astro.url.pathname, Astro.site ?? Astro.url).href;
     <meta name="description" content={description} />
     <meta name="theme-color" content="#05090b" />
     {noindex && <meta name="robots" content="noindex" />}
-    <link rel="canonical" content={pageUrl} />
+    <link rel="canonical" href={pageUrl} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={pageUrl} />
