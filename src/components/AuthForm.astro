@@ -1,0 +1,75 @@
+---
+interface Props {
+  email?: string;
+  error?: string;
+  passwordAutocomplete: "new-password" | "current-password";
+  footerHref: string;
+  footerLabel: string;
+}
+
+const {
+  email = "",
+  error = "",
+  passwordAutocomplete,
+  footerHref,
+  footerLabel,
+} = Astro.props;
+---
+
+<form method="post" class="flex max-w-md flex-col gap-5">
+  {
+    error && (
+      <p
+        class="rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
+        role="alert"
+      >
+        {error}
+      </p>
+    )
+  }
+
+  <label class="flex flex-col gap-2">
+    <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Email</span>
+    <input
+      type="email"
+      name="email"
+      value={email}
+      autocomplete="email"
+      inputmode="email"
+      autocapitalize="off"
+      spellcheck="false"
+      required
+      maxlength="254"
+      class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
+    />
+  </label>
+
+  <label class="flex flex-col gap-2">
+    <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Password</span>
+    <input
+      type="password"
+      name="password"
+      autocomplete={passwordAutocomplete}
+      required
+      minlength="8"
+      maxlength="128"
+      class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
+    />
+  </label>
+
+  <button
+    type="submit"
+    class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
+  >
+    Continue
+  </button>
+
+  <p>
+    <a
+      href={footerHref}
+      class="inline-flex items-center gap-2 border-b border-lime pb-1 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
+    >
+      {footerLabel}
+    </a>
+  </p>
+</form>
