@@ -37,9 +37,11 @@ Users evaluate the product on a marketing landing page before entering the track
 - The landing includes the hero (value, CTAs, nav) and the product preview of Hoy / Plan / Progreso with an AdaptationEvent inside Today.
 - English marketing copy is provisional and must remain easy to replace.
 - Activity and plan data on the landing are illustrative examples, not commercial claims. Mock values must be marked **Illustrative example**.
-- The AdaptationEvent includes a visual “Why?” control. In this scope it is not interactive: no modal, no JavaScript behavior, and not a working link.
+- The AdaptationEvent includes a visual “Why?” control. In this scope it is not interactive: no modal, no JavaScript behavior, and not a working link. It must not use underline or other look-clickable styling.
 - There is no interactive app behavior yet (no auth, no shell, no live plan edits).
-- Dedicated 390px polish is out of scope for this pass.
+- On ~390px widths, the hero fold must show the H1 and the primary CTA without a dedicated redesign—tighten spacing rather than inventing a new layout.
+- `/signup` is a placeholder until real auth exists and must send `noindex`.
+- Marketing pages share basic Open Graph tags (title, description, url). Do not invent share imagery.
 - The experience must be responsive and accessible.
 - Future work must not fabricate testimonials, member counts, partners, awards, or performance claims.
 

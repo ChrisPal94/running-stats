@@ -1,3 +1,7 @@
+---
+import PrimaryCta from "./PrimaryCta.astro";
+---
+
 <section id="how" class="scroll-mt-6 bg-ink px-5 py-16 sm:px-8 sm:py-20 lg:px-12 lg:py-24">
   <div class="mx-auto w-full max-w-[1600px]">
     <p class="text-[0.66rem] font-semibold tracking-[0.13em] text-lime uppercase">How it works</p>
@@ -35,12 +39,7 @@
     </ol>
 
     <p class="mt-10">
-      <a
-        href="/signup"
-        class="inline-flex items-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
-      >
-        Start your plan
-      </a>
+      <PrimaryCta />
     </p>
   </div>
 </section>
