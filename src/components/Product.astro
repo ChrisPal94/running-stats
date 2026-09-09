@@ -1,0 +1,182 @@
+---
+const weekDays = [
+  { key: "mon", abbr: "M", label: "Monday", today: false },
+  { key: "tue", abbr: "T", label: "Tuesday", today: false },
+  { key: "wed", abbr: "W", label: "Wednesday", today: true },
+  { key: "thu", abbr: "T", label: "Thursday", today: false },
+  { key: "fri", abbr: "F", label: "Friday", today: false },
+  { key: "sat", abbr: "S", label: "Saturday", today: false },
+  { key: "sun", abbr: "S", label: "Sunday", today: false },
+] as const;
+
+const planSessions = [
+  { day: "Wed", title: "Easy run · 6 km", today: true },
+  { day: "Fri", title: "Intervals · 5 km", today: false },
+  { day: "Sun", title: "Long run · 12 km", today: false },
+] as const;
+
+const progressStats = [
+  { label: "Consistency", value: "4/5" },
+  { label: "Easy pace", value: "5:42/km" },
+  { label: "Weekly distance", value: "28 km" },
+] as const;
+---
+
+<section id="product" class="scroll-mt-6 bg-ink px-5 py-16 sm:px-8 sm:py-20 lg:px-12 lg:py-24">
+  <div class="mx-auto w-full max-w-[1600px]">
+    <p class="text-[0.66rem] font-semibold tracking-[0.13em] text-lime uppercase">
+      Your adaptive plan
+    </p>
+    <h2
+      id="product-title"
+      class="mt-3 max-w-[18ch] text-[clamp(2rem,5vw,3.25rem)] leading-[0.9] font-bold tracking-[-0.04em] text-cloud uppercase"
+    >
+      One plan. Three clear views.
+    </h2>
+    <p class="mt-5 max-w-xl text-sm leading-6 text-[#d6ded6] sm:text-base">
+      See today’s session, understand the week, and track progress without the noise.
+    </p>
+
+    <div
+      class="mt-10 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:grid-rows-2 lg:gap-5"
+    >
+      <article
+        class="flex h-full flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6 lg:row-span-2 lg:p-7"
+        aria-labelledby="today-view-title"
+      >
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3
+              id="today-view-title"
+              class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
+            >
+              Today
+            </h3>
+            <p class="mt-2 text-[0.62rem] tracking-wider text-mist">Illustrative example</p>
+          </div>
+          <span
+            class="rounded-full border border-lime/40 px-3 py-1 text-[0.62rem] font-semibold tracking-wider text-lime uppercase"
+          >
+            Up next
+          </span>
+        </div>
+
+        <p class="mt-8 text-[clamp(1.75rem,4vw,2.75rem)] leading-none font-semibold tracking-[-0.04em] text-cloud">
+          Easy run · 6 km
+        </p>
+        <p class="mt-3 text-sm text-[#d6ded6] sm:text-base">Keep it conversational</p>
+
+        <div
+          class="mt-8 rounded-2xl border border-lime/30 bg-lime/8 p-4 sm:mt-auto sm:p-5"
+          aria-labelledby="adaptation-event-title"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <p
+              id="adaptation-event-title"
+              class="rounded-full border border-lime/40 px-3 py-1 text-[0.62rem] font-semibold tracking-wider text-lime uppercase"
+            >
+              Plan adjusted
+            </p>
+            <button
+              type="button"
+              disabled
+              aria-disabled="true"
+              class="pointer-events-none cursor-not-allowed border-0 bg-transparent p-0 text-xs font-bold tracking-[0.08em] text-lime/80 underline decoration-lime/50 underline-offset-[0.28em]"
+            >
+              Why?
+              <span class="sr-only">Illustrative example, not interactive</span>
+            </button>
+          </div>
+          <p class="mt-3 text-sm leading-6 text-cloud">
+            Easy run shortened after higher effort yesterday.
+          </p>
+          <p class="mt-2 text-[0.62rem] tracking-wider text-mist">Illustrative example</p>
+        </div>
+      </article>
+
+      <article
+        class="flex h-full flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
+        aria-labelledby="plan-view-title"
+      >
+        <div class="flex items-start justify-between gap-4">
+          <h3
+            id="plan-view-title"
+            class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
+          >
+            Plan
+          </h3>
+          <p class="text-[0.62rem] tracking-wider text-mist">Illustrative example</p>
+        </div>
+
+        <ol class="mt-5 flex items-center justify-between gap-1" aria-label="Week strip">
+          {
+            weekDays.map((day) => (
+              <li class="flex flex-1 justify-center">
+                <span
+                  class:list={[
+                    "grid h-9 w-9 place-items-center rounded-full text-xs font-semibold",
+                    day.today
+                      ? "bg-lime text-ink"
+                      : "border border-white/12 text-mist",
+                  ]}
+                  aria-current={day.today ? "date" : undefined}
+                  aria-label={day.today ? `${day.label}, today` : day.label}
+                >
+                  {day.abbr}
+                </span>
+              </li>
+            ))
+          }
+        </ol>
+
+        <ul class="mt-5 divide-y divide-white/10 border-y border-white/10">
+          {
+            planSessions.map((session) => (
+              <li class="flex items-center justify-between gap-3 py-3">
+                <div class="min-w-0">
+                  <p class="text-[0.62rem] font-semibold tracking-wider text-mist uppercase">
+                    {session.day}
+                  </p>
+                  <p class="mt-1 truncate text-sm font-medium text-cloud">{session.title}</p>
+                </div>
+                {
+                  session.today ? (
+                    <span class="shrink-0 text-[0.62rem] font-semibold tracking-wider text-lime uppercase">
+                      Today
+                    </span>
+                  ) : null
+                }
+              </li>
+            ))
+          }
+        </ul>
+      </article>
+
+      <article
+        class="flex h-full flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
+        aria-labelledby="progress-view-title"
+      >
+        <div class="flex items-start justify-between gap-4">
+          <h3
+            id="progress-view-title"
+            class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
+          >
+            Progress
+          </h3>
+          <p class="text-[0.62rem] tracking-wider text-mist">Illustrative example</p>
+        </div>
+
+        <dl class="mt-5 divide-y divide-white/10 border-y border-white/10">
+          {
+            progressStats.map((stat) => (
+              <div class="flex items-baseline justify-between gap-4 py-3">
+                <dt class="text-sm text-mist">{stat.label}</dt>
+                <dd class="text-sm font-semibold text-cloud tabular-nums">{stat.value}</dd>
+              </div>
+            ))
+          }
+        </dl>
+      </article>
+    </div>
+  </div>
+</section>

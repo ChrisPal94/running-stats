@@ -12,26 +12,36 @@ Astro with TypeScript and Tailwind CSS.
 
 ## Users
 
-Primary users are runners who want a quick, motivating view of their recent activity and progress. Detailed user segments remain undecided.
+Primary users are runners who want to know what to run today, see the week at a glance, and track progress without noise. Detailed user segments remain undecided.
 
 ## Product Purpose
 
-Running Stats helps people track runs and understand progress through distance, pace, duration, and energy metrics.
+Running Stats is a coach AI for an adaptive training plan. One plan is shown as three views:
+
+- **Hoy (Today):** the next session to run.
+- **Plan:** the week, with no more than three sessions in focus.
+- **Progreso (Progress):** a short set of progress signals.
+
+When the plan changes, an **AdaptationEvent** explains what changed and why.
 
 ## Positioning
 
-The initial experience pairs performance data with a bold, athletic presentation. The product's longer-term differentiator remains undecided.
+A training plan that adapts after every run—so you always know what to run next, and why. The landing demonstrates Hoy / Plan / Progreso plus an explainable AdaptationEvent. Distance chips are not social proof. The longer-term differentiator is the adaptive, explainable plan.
 
 ## Operating Context
 
-Users evaluate the product on a marketing landing page before entering the tracking experience. The full application workflow remains undecided.
+Users evaluate the product on a marketing landing page before entering the tracking experience. The full application workflow, auth, and app shell remain undecided.
 
 ## Capabilities and Constraints
 
-- The initial scope is the landing page hero only.
+- The landing includes the hero (value, CTAs, nav) and the product preview of Hoy / Plan / Progreso with an AdaptationEvent inside Today.
 - English marketing copy is provisional and must remain easy to replace.
-- Activity data shown in the hero is illustrative, not a commercial claim.
+- Activity and plan data on the landing are illustrative examples, not commercial claims. Mock values must be marked **Illustrative example**.
+- The AdaptationEvent includes a visual “Why?” control. In this scope it is not interactive: no modal, no JavaScript behavior, and not a working link.
+- There is no interactive app behavior yet (no auth, no shell, no live plan edits).
+- Dedicated 390px polish is out of scope for this pass.
 - The experience must be responsive and accessible.
+- Future work must not fabricate testimonials, member counts, partners, awards, or performance claims.
 
 ## Brand Commitments
 
@@ -46,7 +56,8 @@ Users evaluate the product on a marketing landing page before entering the track
 
 ## Product Principles
 
-- Make progress legible at a glance.
-- Let real activity metrics carry the motivation.
+- Make Hoy, Plan, and Progreso legible at a glance.
+- When the plan adapts, say what changed and why (explainable AdaptationEvent).
+- Let real activity metrics carry the motivation; mark mock data clearly.
 - Keep the primary action unmistakable.
 - Preserve speed and clarity across device sizes.
