@@ -63,3 +63,7 @@ Users evaluate the product on a marketing landing page before entering the track
 - Let real activity metrics carry the motivation; mark mock data clearly.
 - Keep the primary action unmistakable.
 - Preserve speed and clarity across device sizes.
+
+## Security / deps (tech note)
+
+Astro 6.x: known critical image-opt advisories; upgrade to ≥7.2.8 scheduled post-auth. Sharp pinned to 0.35.4 for libvips/libheif advisories. Do not use `npm audit fix --force` (would major-bump Astro).
