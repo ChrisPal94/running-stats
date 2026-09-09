@@ -13,11 +13,12 @@
     "@astrojs/check": "^0.9.4",
     "@tailwindcss/vite": "^4.1.13",
     "astro": "^6.3.1",
-    "sharp": "^0.34.3",
+    "sharp": "0.35.4",
     "tailwindcss": "^4.1.13",
     "typescript": "^5.9.2"
   },
   "overrides": {
-    "vite": "^7"
+    "vite": "^7",
+    "sharp": "0.35.4"
   }
 }
