@@ -7,7 +7,7 @@ import RunStatCard from "./RunStatCard.astro";
 import SocialProof from "./SocialProof.astro";
 ---
 
-<main id="top" class="relative isolate min-h-svh overflow-hidden bg-ink">
+<main class="relative isolate min-h-svh overflow-hidden bg-ink">
   <Image
     src={heroBackground}
     alt=""
@@ -37,33 +37,40 @@ import SocialProof from "./SocialProof.astro";
         id="hero-title"
         class="max-w-[11ch] text-[clamp(3.25rem,8.5vw,6rem)] leading-[0.82] font-bold tracking-[-0.04em] text-cloud uppercase"
       >
-        Track
+        What
         <span class="mt-3 flex items-center gap-[0.16em] whitespace-nowrap">
           <span class="accent-mark" aria-hidden="true">//</span>
-          <span>Your run</span>
+          <span>To run</span>
         </span>
-        <span class="block text-lime">Own progress</span>
+        <span class="block text-lime">Today</span>
       </h1>
 
-      <div class="mt-8 flex max-w-xl flex-col gap-5 sm:flex-row sm:items-center">
+      <div class="mt-8 flex max-w-xl flex-col gap-6">
         <p class="max-w-[35rem] text-sm leading-6 text-[#d6ded6] sm:text-base">
-          Turn every stride into a clearer picture of where you are—and where you are going next.
+          A coach AI that answers what you should run today—and reshapes the plan when life gets in the way.
         </p>
-        <a
-          id="start"
-          href="#features"
-          class="group inline-flex shrink-0 items-center gap-3 self-start border-b border-lime pb-2 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
-        >
-          Explore your stats
-          <svg
-            class="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1"
-            viewBox="0 0 20 20"
-            fill="none"
-            aria-hidden="true"
+        <div class="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+          <a
+            href="/start"
+            class="inline-flex shrink-0 items-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
           >
-            <path d="M3 10h13M11 5l5 5-5 5" stroke="currentColor" stroke-width="1.8" />
-          </svg>
-        </a>
+            Start your plan
+          </a>
+          <a
+            href="/how-it-works"
+            class="group inline-flex shrink-0 items-center gap-3 border-b border-lime pb-2 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
+          >
+            See how it works
+            <svg
+              class="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1"
+              viewBox="0 0 20 20"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path d="M3 10h13M11 5l5 5-5 5" stroke="currentColor" stroke-width="1.8" />
+            </svg>
+          </a>
+        </div>
       </div>
     </section>
 
@@ -71,7 +78,7 @@ import SocialProof from "./SocialProof.astro";
       <ActivitySummary />
     </div>
 
-    <div id="features" class="grid gap-6 sm:grid-cols-[minmax(17rem,22rem)_1fr] sm:items-end lg:col-span-2 lg:grid-cols-[22rem_1fr]">
+    <div class="grid gap-6 sm:grid-cols-[minmax(17rem,22rem)_1fr] sm:items-end lg:col-span-2 lg:grid-cols-[22rem_1fr]">
       <RunStatCard />
       <SocialProof />
     </div>
