@@ -7,6 +7,7 @@ interface Props {
   description: string;
   heading: string;
   eyebrow?: string;
+  noindex?: boolean;
 }
 
 const {
@@ -14,10 +15,11 @@ const {
   description,
   heading,
   eyebrow = "Coach AI",
+  noindex = false,
 } = Astro.props;
 ---
 
-<BaseLayout title={title} description={description}>
+<BaseLayout title={title} description={description} noindex={noindex}>
   <div class="relative isolate min-h-svh bg-ink">
     <Header />
     <main class="mx-auto w-full max-w-3xl px-5 pb-16 pt-6 sm:px-8 sm:pt-8 lg:px-12">
