@@ -1,0 +1,39 @@
+---
+const runs = [
+  { day: "Today", distance: "9.90 KM", time: "51 MIN", status: "Strong finish" },
+  { day: "Sep 07", distance: "7.20 KM", time: "39 MIN", status: "Steady pace" },
+  { day: "Sep 04", distance: "12.0 KM", time: "68 MIN", status: "Long run" },
+];
+---
+
+<section class="w-full max-w-md lg:justify-self-end" aria-labelledby="activity-title">
+  <div class="mb-5 flex items-end justify-between gap-4">
+    <div>
+      <h2 id="activity-title" class="max-w-xs text-xl leading-tight font-medium text-cloud sm:text-2xl">
+        Your week, measured clearly.
+      </h2>
+      <p class="mt-2 text-xs leading-relaxed text-mist">
+        Distance, time, and effort—without the noise.
+      </p>
+    </div>
+    <span class="mb-1 h-px w-12 bg-lime" aria-hidden="true"></span>
+  </div>
+
+  <div class="border-y border-white/14 bg-black/12 backdrop-blur-sm">
+    {
+      runs.map((run, index) => (
+        <div
+          class:list={[
+            "grid grid-cols-[0.8fr_1fr_0.8fr] items-center gap-3 py-3.5 text-xs sm:grid-cols-[0.8fr_1fr_0.8fr_1fr]",
+            index !== runs.length - 1 && "border-b border-white/10",
+          ]}
+        >
+          <span class={index === 0 ? "font-semibold text-lime" : "text-mist"}>{run.day}</span>
+          <span class="font-medium text-cloud tabular-nums">{run.distance}</span>
+          <span class="text-right text-mist tabular-nums sm:text-left">{run.time}</span>
+          <span class="hidden text-right text-[0.65rem] text-mist sm:block">{run.status}</span>
+        </div>
+      ))
+    }
+  </div>
+</section>
