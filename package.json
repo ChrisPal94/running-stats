@@ -22,5 +22,8 @@
   "overrides": {
     "vite": "^7",
     "sharp": "0.35.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2"
   }
 }
