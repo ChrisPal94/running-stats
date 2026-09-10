@@ -8,7 +8,8 @@ interface Props {
 }
 
 const { session, feedback = null, adaptationEvent = null } = Astro.props;
-const adaptationReason = adaptationEvent?.reason || adaptationEvent?.summary || "";
+const adaptationSummary = adaptationEvent?.summary || "";
+const adaptationReason = adaptationEvent?.reason || "";
 
 const status =
   session?.outcome === "done"
@@ -81,14 +82,13 @@ const canAct = Boolean(session && !feedback);
             type="button"
             disabled
             aria-disabled="true"
-            title={adaptationReason}
             class="pointer-events-none cursor-default border-0 bg-transparent p-0 text-[0.62rem] font-semibold tracking-wider text-mist uppercase"
           >
             Why?
             <span class="sr-only">{adaptationReason || "Read only, not interactive"}</span>
           </button>
         </div>
-        <p class="mt-3 text-sm leading-6 text-cloud">{adaptationReason}</p>
+        {adaptationSummary ? <p class="mt-3 text-sm leading-6 text-cloud">{adaptationSummary}</p> : null}
       </div>
     )
   }

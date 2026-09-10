@@ -121,12 +121,13 @@ export type AdaptationEvent = {
   sessionId?: string;
   /** Guayaquil civil date the event should appear (the adapted session’s day). */
   date: string;
+  /** Always `Plan adjusted` for job-written events. Chip label. */
   title: string;
-  /** Why the plan changed — shown with the Today chip / Why? control. */
+  /** One line: what changes tomorrow. Shown with the chip. */
+  summary: string;
+  /** One line: why. Stored for Why?; the control stays disabled. */
   reason: string;
-  /** Display alias; the job writes the same text as `reason`. */
-  summary?: string;
-  /** Guayaquil day of the Feedback (or pending session) that triggered this event. */
+  /** Guayaquil day of the Feedback that triggered this event. */
   sourceDate?: string;
   createdAt: string;
 };
@@ -145,6 +146,7 @@ export type AdaptationDraft = {
   sessionId?: string;
   date: string;
   title: string;
+  summary: string;
   reason: string;
   sourceDate: string;
 };
@@ -244,11 +246,13 @@ function uniqueWeekdays(values: string[]): Weekday[] {
 }
 
 function normalizeAdaptationEvent(event: AdaptationEvent): AdaptationEvent {
-  const reason = event.reason || event.summary || "";
+  const summary = event.summary || "";
+  const reason = event.reason || "";
   return {
     ...event,
+    title: event.title || "Plan adjusted",
+    summary,
     reason,
-    summary: event.summary || reason || undefined,
   };
 }
 
@@ -442,8 +446,8 @@ export async function commitAdaptationRun(input: {
         sessionId: draft.sessionId,
         date: draft.date,
         title: draft.title,
+        summary: draft.summary,
         reason: draft.reason,
-        summary: draft.reason,
         sourceDate: draft.sourceDate,
         createdAt,
       };

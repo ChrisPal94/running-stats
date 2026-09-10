@@ -9,7 +9,8 @@
     "preview": "astro preview",
     "start": "node ./dist/server/entry.mjs",
     "check": "astro check",
-    "adapt": "tsx src/jobs/adapt.ts"
+    "adapt": "tsx src/jobs/adapt.ts",
+    "adapt:cron": "tsx src/jobs/adapt.ts --cron"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
