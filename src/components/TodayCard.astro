@@ -1,15 +1,24 @@
 ---
-import type { Session } from "../lib/training";
+import type { AdaptationEvent, Feedback, Session } from "../lib/training";
 
 interface Props {
   session: Session | null;
-  notedFeelingOff?: boolean;
+  feedback: Feedback | null;
+  adaptationEvent: AdaptationEvent | null;
 }
 
-const { session, notedFeelingOff = false } = Astro.props;
+const { session, feedback = null, adaptationEvent = null } = Astro.props;
 
-const status = session?.outcome === "done" ? "Done" : session?.outcome === "skipped" ? "Skipped" : "Up next";
-const canAct = Boolean(session && !session.outcome);
+const status =
+  session?.outcome === "done"
+    ? "Done"
+    : session?.outcome === "skipped"
+      ? "Skipped"
+      : feedback?.kind === "feeling-off"
+        ? "Noted"
+        : "Up next";
+
+const canAct = Boolean(session && !feedback);
 ---
 
 <article
@@ -28,20 +37,14 @@ const canAct = Boolean(session && !session.outcome);
         <span
           class:list={[
             "rounded-full border px-3 py-1 text-[0.62rem] font-semibold tracking-wider uppercase",
-            session.outcome === "done"
-              ? "border-lime/40 text-lime"
-              : session.outcome === "skipped"
-                ? "border-white/20 text-mist"
-                : "border-lime/40 text-lime",
+            session.outcome === "skipped" || feedback?.kind === "feeling-off"
+              ? "border-white/20 text-mist"
+              : "border-lime/40 text-lime",
           ]}
         >
           {status}
         </span>
-      ) : (
-        <span class="rounded-full border border-white/12 px-3 py-1 text-[0.62rem] font-semibold tracking-wider text-mist uppercase">
-          Rest day
-        </span>
-      )
+      ) : null
     }
   </div>
 
@@ -54,25 +57,47 @@ const canAct = Boolean(session && !session.outcome);
         <p class="mt-3 text-sm text-[#d6ded6]">{session.cue}</p>
       </>
     ) : (
-      <>
-        <p class="mt-8 text-[clamp(1.75rem,8vw,2.5rem)] leading-none font-semibold tracking-[-0.04em] text-cloud">
-          No session today
-        </p>
-        <p class="mt-3 text-sm text-[#d6ded6]">
-          Nothing on the plan for this calendar day. The week is on Plan.
-        </p>
-      </>
+      <p class="mt-8 text-[clamp(1.75rem,8vw,2.5rem)] leading-none font-semibold tracking-[-0.04em] text-cloud">
+        No session today
+      </p>
     )
   }
 
   {
-    notedFeelingOff && (
+    adaptationEvent && (
+      <div
+        class="mt-8 rounded-2xl border border-lime/30 bg-lime/8 p-4 sm:p-5"
+        aria-labelledby="adaptation-event-title"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <p
+            id="adaptation-event-title"
+            class="rounded-full border border-lime/40 px-3 py-1 text-[0.62rem] font-semibold tracking-wider text-lime uppercase"
+          >
+            {adaptationEvent.title}
+          </p>
+          <button
+            type="button"
+            disabled
+            aria-disabled="true"
+            class="pointer-events-none cursor-default border-0 bg-transparent p-0 text-[0.62rem] font-semibold tracking-wider text-mist uppercase"
+          >
+            Why?
+            <span class="sr-only">Read only, not interactive</span>
+          </button>
+        </div>
+        <p class="mt-3 text-sm leading-6 text-cloud">{adaptationEvent.summary}</p>
+      </div>
+    )
+  }
+
+  {
+    feedback?.kind === "feeling-off" && !adaptationEvent && (
       <p
         class="mt-6 rounded-2xl border border-white/12 bg-white/[0.03] px-4 py-3 text-sm leading-6 text-[#d6ded6]"
         role="status"
       >
-        Got it. How you’re feeling is noted for now — feedback lands later, and the plan is
-        unchanged.
+        Got it. How you’re feeling is noted. The plan is unchanged.
       </p>
     )
   }

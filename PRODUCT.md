@@ -40,10 +40,10 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - The AdaptationEvent includes a visual “Why?” control. In this scope it is not interactive: no modal, no JavaScript behavior, and not a working link. It must not use underline or other look-clickable styling.
 - Auth is email + password and Google (no Strava, not magic link). The stored identity is the user’s.
 - After signup (email or first Google), continue to `/onboarding`. After login (email or returning Google), continue to `/today` when a plan exists, otherwise `/onboarding`. Shell routes send signed-in users without a plan back to onboarding.
-- Onboarding is three steps (goal, level, days). Generate my plan writes onboarding answers plus Plan v1 and Sessions. No AdaptationEvent is created until the first Feedback.
+- Onboarding is three steps (goal, level, days). Generate my plan writes onboarding answers plus Plan v1 and Sessions. No AdaptationEvent is written here.
 - The app shell is mobile-first (~390) with a bottom nav: Today | Plan | Progress, plus an avatar/settings entry. Calendar “today” uses **America/Guayaquil**, not UTC.
-- Today shows the session dated for that Guayaquil calendar day (empty state only when there is no Session for today). Done / Skip persist on the session; Feeling off is stubbed and does not write an AdaptationEvent.
-- Plan shows a Monday–Sunday week strip and at most three remaining sessions this week. Progress shows three metrics (real session counts where possible; otherwise labeled provisional).
+- Today shows the session dated for that Guayaquil calendar day. Empty copy is **No session today**. Done / Skip / Feeling off each write Feedback. AdaptationEvents are read-only (displayed when present; never created here).
+- Plan shows a Monday–Sunday week strip and at most three remaining sessions this week. Progress labels are **Consistency**, **Easy pace**, and **Weekly distance** (Easy pace provisional until activity data exists).
 - There is no live plan editing yet, and no nightly AI job.
 - On ~390px widths, the hero fold must show the H1 and the primary CTA without a dedicated redesign—tighten spacing rather than inventing a new layout. Onboarding is mobile-first at the same width.
 - `/signup` is a real auth page and is indexable. Landing CTAs still go to `/signup`.
@@ -90,9 +90,9 @@ Users evaluate the product on a marketing landing page, then start or return to 
 
 - Signed-in with a plan only. Logged-out visits to `/today`, `/plan`, `/progress`, and `/settings` redirect to `/login`. Signed-in without a plan redirects to `/onboarding`.
 - Calendar day and “hoy” use `America/Guayaquil`. A new Guayaquil day starts at 05:00 UTC (UTC−5, no DST). Session dates in `training.json` are civil `YYYY-MM-DD` values compared to that calendar day — not `Date#toISOString()` UTC.
-- **Today (`/today`):** the Session whose `date` equals today’s Guayaquil date. Empty (rest day) only when none exists. CTAs: Done, Skip (stored as `outcome` on the session), Feeling off (query-param stub; no AdaptationEvent).
+- **Today (`/today`):** the Session whose `date` equals today’s Guayaquil date. Empty copy: **No session today**. CTAs Done / Skip / Feeling off each persist a Feedback record. Done / Skip also set session `outcome`. AdaptationEvents are loaded for display only (read-only Why?; never written).
 - **Plan (`/plan`):** week strip M–S for the Guayaquil week (Monday–Sunday) and up to three remaining sessions this week.
-- **Progress (`/progress`):** Consistency (done / planned this week) and weekly distance from sessions; Easy pace is labeled provisional until activity data exists.
+- **Progress (`/progress`):** labels **Consistency**, **Easy pace**, **Weekly distance**. Consistency and weekly distance come from this week’s sessions; Easy pace is labeled provisional.
 - **Settings (`/settings`):** avatar/settings entry — email and log out. Further account settings are later work.
 
 ## Security / deps (tech note)

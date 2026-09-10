@@ -19,6 +19,8 @@ export type Weekday = (typeof WEEKDAY_IDS)[number];
 
 export type SessionKind = "easy" | "intervals" | "tempo" | "long";
 export type SessionOutcome = "done" | "skipped";
+export const FEEDBACK_KINDS = ["done", "skip", "feeling-off"] as const;
+export type FeedbackKind = (typeof FEEDBACK_KINDS)[number];
 
 export const GOALS = [
   { id: "5k", label: "5K" },
@@ -102,16 +104,41 @@ export type Session = {
   outcomeAt?: string;
 };
 
+export type Feedback = {
+  id: string;
+  userId: string;
+  planId: string;
+  sessionId: string;
+  kind: FeedbackKind;
+  createdAt: string;
+};
+
+/** Stored for display only in this PR. Shell code never creates or updates these. */
+export type AdaptationEvent = {
+  id: string;
+  userId: string;
+  planId: string;
+  sessionId?: string;
+  date: string;
+  title: string;
+  summary: string;
+  createdAt: string;
+};
+
 type TrainingFile = {
   onboarding: OnboardingRecord[];
   plans: Plan[];
   sessions: Session[];
+  feedbacks: Feedback[];
+  adaptationEvents: AdaptationEvent[];
 };
 
 const EMPTY_TRAINING: TrainingFile = {
   onboarding: [],
   plans: [],
   sessions: [],
+  feedbacks: [],
+  adaptationEvents: [],
 };
 
 const WEEKLY_KM: Record<Goal, Record<Level, number>> = {
@@ -201,11 +228,21 @@ async function readTraining(): Promise<TrainingFile> {
     onboarding: Array.isArray(parsed.onboarding) ? parsed.onboarding : [],
     plans: Array.isArray(parsed.plans) ? parsed.plans : [],
     sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+    feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
+    adaptationEvents: Array.isArray(parsed.adaptationEvents) ? parsed.adaptationEvents : [],
   };
 }
 
+/** Persist training data without creating or mutating AdaptationEvents. */
 async function writeTraining(data: TrainingFile): Promise<void> {
-  await writeJsonFile(TRAINING_FILE, data);
+  const onDisk = await readJsonFile<TrainingFile>(TRAINING_FILE, EMPTY_TRAINING);
+  await writeJsonFile(TRAINING_FILE, {
+    onboarding: data.onboarding,
+    plans: data.plans,
+    sessions: data.sessions,
+    feedbacks: data.feedbacks,
+    adaptationEvents: Array.isArray(onDisk.adaptationEvents) ? onDisk.adaptationEvents : [],
+  });
 }
 
 export async function getOnboarding(userId: string): Promise<OnboardingRecord | null> {
@@ -295,36 +332,63 @@ export async function getProgressMetrics(userId: string): Promise<ProgressMetric
   ];
 }
 
-export async function setSessionOutcome(
+export async function getFeedbackForSession(userId: string, sessionId: string): Promise<Feedback | null> {
+  const data = await readTraining();
+  return data.feedbacks.find((entry) => entry.userId === userId && entry.sessionId === sessionId) ?? null;
+}
+
+export async function getAdaptationEventForToday(userId: string): Promise<AdaptationEvent | null> {
+  const today = calendarTodayYmd();
+  const data = await readTraining();
+  return (
+    data.adaptationEvents.find((event) => event.userId === userId && event.date === today) ?? null
+  );
+}
+
+function isFeedbackKind(value: string): value is FeedbackKind {
+  return (FEEDBACK_KINDS as readonly string[]).includes(value);
+}
+
+export async function submitSessionFeedback(
   userId: string,
   sessionId: string,
-  outcome: SessionOutcome,
-): Promise<Session | null> {
+  kind: FeedbackKind,
+): Promise<Feedback | null> {
   return enqueueWrite(async () => {
     const data = await readTraining();
     const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
     if (!session) return null;
-    if (session.outcome) return session;
-    session.outcome = outcome;
-    session.outcomeAt = new Date().toISOString();
+
+    const existing = data.feedbacks.find((entry) => entry.userId === userId && entry.sessionId === sessionId);
+    if (existing) return existing;
+
+    const createdAt = new Date().toISOString();
+    const feedback: Feedback = {
+      id: newId(),
+      userId,
+      planId: session.planId,
+      sessionId,
+      kind,
+      createdAt,
+    };
+    data.feedbacks.push(feedback);
+
+    if (kind === "done" || kind === "skip") {
+      session.outcome = kind === "done" ? "done" : "skipped";
+      session.outcomeAt = createdAt;
+    }
+
     await writeTraining(data);
-    return session;
+    return feedback;
   });
 }
 
 export async function handleTodayPost(userId: string, formData: FormData): Promise<TodayActionResult> {
   const intent = String(formData.get("intent") ?? "");
   const sessionId = String(formData.get("sessionId") ?? "");
-
-  if (intent === "feeling-off") {
-    return { redirect: "/today?noted=feeling-off" };
+  if (isFeedbackKind(intent) && sessionId) {
+    await submitSessionFeedback(userId, sessionId, intent);
   }
-
-  if ((intent === "done" || intent === "skip") && sessionId) {
-    await setSessionOutcome(userId, sessionId, intent === "done" ? "done" : "skipped");
-    return { redirect: "/today" };
-  }
-
   return { redirect: "/today" };
 }
 

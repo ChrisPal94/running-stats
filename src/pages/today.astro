@@ -5,7 +5,12 @@ import TodayCard from "../components/TodayCard.astro";
 import AppShell from "../layouts/AppShell.astro";
 import { isSameOrigin } from "../lib/auth";
 import { requireAppSession } from "../lib/app-session";
-import { getSessionForToday, handleTodayPost } from "../lib/training";
+import {
+  getAdaptationEventForToday,
+  getFeedbackForSession,
+  getSessionForToday,
+  handleTodayPost,
+} from "../lib/training";
 
 const gate = await requireAppSession(Astro.cookies);
 if (!gate.ok) {
@@ -23,7 +28,8 @@ if (Astro.request.method === "POST") {
 }
 
 const session = await getSessionForToday(user.id);
-const notedFeelingOff = Astro.url.searchParams.get("noted") === "feeling-off";
+const feedback = session ? await getFeedbackForSession(user.id, session.id) : null;
+const adaptationEvent = await getAdaptationEventForToday(user.id);
 ---
 
 <AppShell
@@ -32,5 +38,5 @@ const notedFeelingOff = Astro.url.searchParams.get("noted") === "feeling-off";
   current="today"
   email={user.email}
 >
-  <TodayCard session={session} notedFeelingOff={notedFeelingOff} />
+  <TodayCard session={session} feedback={feedback} adaptationEvent={adaptationEvent} />
 </AppShell>
