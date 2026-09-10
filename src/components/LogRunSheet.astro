@@ -1,14 +1,14 @@
 ---
 import RunMap from "./RunMap.astro";
 import {
-  emptyLoggedRunDraft,
+  emptyRunLogDraft,
   formatPaceInput,
   isPaceSoftOutOfRange,
   parseDurationToSeconds,
   parsePaceToSecPerKm,
   parsePositiveNumber,
   parseRunRoute,
-  type LoggedRunFormDraft,
+  type RunLogFormDraft,
 } from "../lib/training";
 
 interface Props {
@@ -16,11 +16,11 @@ interface Props {
   plannedDistanceKm: number;
   open?: boolean;
   error?: string;
-  draft?: LoggedRunFormDraft | null;
+  draft?: RunLogFormDraft | null;
 }
 
 const { sessionId, plannedDistanceKm, open = false, error = "", draft = null } = Astro.props;
-const values = draft ?? emptyLoggedRunDraft(plannedDistanceKm);
+const values = draft ?? emptyRunLogDraft(plannedDistanceKm);
 const route = parseRunRoute(values.routeJson);
 const distanceValue = values.distanceKm;
 const timeValue = values.time;
@@ -54,31 +54,37 @@ const inputClass =
   data-log-sheet
   data-open={open ? "true" : "false"}
   open={open}
+  aria-modal="true"
   aria-labelledby="log-run-title"
 >
   <div
     class="flex max-h-[min(92dvh,44rem)] flex-col overflow-hidden rounded-t-[1.75rem] border border-white/12 border-b-0 bg-[#111718] shadow-[0_-18px_50px_rgba(0,0,0,0.45)]"
+    data-log-panel
   >
-    <div class="flex justify-center pt-3" aria-hidden="true">
+    <div
+      class="flex cursor-grab touch-none justify-center pt-3 pb-1"
+      data-log-handle
+      aria-hidden="true"
+    >
       <span class="h-1 w-10 rounded-full bg-white/20"></span>
     </div>
-    <div class="flex items-start justify-between gap-3 px-5 pt-3">
-      <div>
-        <h2
-          id="log-run-title"
-          class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
-        >
-          Log this run
-        </h2>
-        <p class="mt-1 text-sm text-[#d6ded6]">Save the distance, time, and pace from today.</p>
-      </div>
-      <button
-        type="button"
-        data-close-log
-        class="rounded-full px-2 py-1 text-[0.62rem] font-semibold tracking-wider text-mist uppercase transition-colors hover:text-cloud"
+    <div class="flex items-center justify-between gap-3 px-5 pt-2">
+      <h2
+        id="log-run-title"
+        class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
       >
-        Close
-      </button>
+        Log this run
+      </h2>
+      <a
+        href="/today"
+        data-close-log
+        aria-label="Close"
+        class="grid h-8 w-8 place-items-center rounded-full text-mist transition-colors hover:bg-white/8 hover:text-cloud"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+      </a>
     </div>
 
     <form method="post" class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pt-4 pb-5" data-log-form>
@@ -114,7 +120,7 @@ const inputClass =
       </label>
 
       <label class="flex flex-col gap-2">
-        <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Time</span>
+        <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Time (hh:mm:ss)</span>
         <input
           type="text"
           name="loggedTime"
@@ -156,11 +162,24 @@ const inputClass =
         Save
       </button>
     </form>
+
+    <form method="post" class="px-5 pb-5" data-skip-map-form>
+      <input type="hidden" name="sessionId" value={sessionId} />
+      <input type="hidden" name="intent" value="skip-map" />
+      <button
+        type="submit"
+        class="inline-flex w-full items-center justify-center px-5 py-3 text-xs font-bold tracking-[0.13em] text-mist uppercase transition-colors hover:text-cloud"
+      >
+        Skip map
+      </button>
+    </form>
   </div>
 </dialog>
 
 <script>
   const sheet = document.querySelector("[data-log-sheet]");
+  const panel = document.querySelector("[data-log-panel]");
+  const handle = document.querySelector("[data-log-handle]");
   const openButtons = [...document.querySelectorAll("[data-open-log]")];
   const closeButtons = [...document.querySelectorAll("[data-close-log]")];
   const form = document.querySelector("[data-log-form]");
@@ -207,10 +226,13 @@ const inputClass =
     if (!(sheet instanceof HTMLDialogElement)) return;
     if (sheet.open) sheet.close();
     sheet.showModal();
+    const distance = sheet.querySelector<HTMLInputElement>("[data-log-distance]");
+    distance?.focus();
   };
 
   const closeSheet = () => {
     if (sheet instanceof HTMLDialogElement && sheet.open) sheet.close();
+    if (panel instanceof HTMLElement) panel.style.transform = "";
   };
 
   if (sheet instanceof HTMLDialogElement && sheet.dataset.open === "true") {
@@ -225,12 +247,71 @@ const inputClass =
   });
 
   closeButtons.forEach((button) => {
-    button.addEventListener("click", () => closeSheet());
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      closeSheet();
+    });
   });
 
   sheet?.addEventListener("click", (event) => {
     if (event.target === sheet) closeSheet();
   });
+
+  sheet?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeSheet();
+  });
+
+  if (handle instanceof HTMLElement && panel instanceof HTMLElement) {
+    let startY = 0;
+    let dragging = false;
+
+    const onStart = (clientY: number) => {
+      dragging = true;
+      startY = clientY;
+      panel.style.transition = "none";
+    };
+
+    const onMove = (clientY: number) => {
+      if (!dragging) return;
+      const dy = Math.max(0, clientY - startY);
+      panel.style.transform = `translateY(${dy}px)`;
+    };
+
+    const onEnd = (clientY: number) => {
+      if (!dragging) return;
+      dragging = false;
+      panel.style.transition = "";
+      const dy = clientY - startY;
+      if (dy > 72) closeSheet();
+      else panel.style.transform = "";
+    };
+
+    handle.addEventListener(
+      "touchstart",
+      (event) => {
+        const touch = event.changedTouches[0];
+        if (touch) onStart(touch.clientY);
+      },
+      { passive: true },
+    );
+    handle.addEventListener(
+      "touchmove",
+      (event) => {
+        const touch = event.changedTouches[0];
+        if (touch) onMove(touch.clientY);
+      },
+      { passive: true },
+    );
+    handle.addEventListener(
+      "touchend",
+      (event) => {
+        const touch = event.changedTouches[0];
+        if (touch) onEnd(touch.clientY);
+      },
+      { passive: true },
+    );
+  }
 
   if (form instanceof HTMLFormElement) {
     const distanceInput = form.querySelector<HTMLInputElement>("[data-log-distance]");

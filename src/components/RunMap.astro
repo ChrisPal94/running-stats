@@ -9,13 +9,13 @@ const { route } = Astro.props;
 const width = 300;
 const height = 140;
 const padding = 18;
-const points = route.kind === "polyline" ? route.points : [];
-const hasPolyline = points.length >= 2;
+const coords = route.type === "polyline" ? route.coords : [];
+const hasPolyline = coords.length >= 2;
 
 const svgPoints = hasPolyline
   ? (() => {
-      const lats = points.map((point) => point.lat);
-      const lngs = points.map((point) => point.lng);
+      const lats = coords.map((point) => point.lat);
+      const lngs = coords.map((point) => point.lng);
       const minLat = Math.min(...lats);
       const maxLat = Math.max(...lats);
       const minLng = Math.min(...lngs);
@@ -24,7 +24,7 @@ const svgPoints = hasPolyline
       const lngSpan = Math.max(maxLng - minLng, 0.00001);
       const innerW = width - padding * 2;
       const innerH = height - padding * 2;
-      return points.map((point) => ({
+      return coords.map((point) => ({
         x: padding + ((point.lng - minLng) / lngSpan) * innerW,
         y: padding + ((maxLat - point.lat) / latSpan) * innerH,
       }));

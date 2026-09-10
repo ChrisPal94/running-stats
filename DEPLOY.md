@@ -69,7 +69,7 @@ Use the Railway public HTTPS URL. Expect session cookies with `Secure`.
 2. **Signup** — email + password Continue → `/onboarding`.
 3. **Onboarding** — Goal → Level → Baseline → Days (min 3) → **Generate my plan** → `/today`.
 4. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`.
-5. **Today** — Skip / Feeling off persist immediately. Done opens **Log this run** (map + stats); Save persists. Empty copy is **No session today**. Why? stays non-interactive.
+5. **Today** — Skip / Feeling off persist immediately (no map). Done opens **Log this run** bottom sheet; Save writes a `RunLog` and toasts **Saved**; Skip map writes Feedback only. Empty copy is **No session today**. Why? stays non-interactive.
 6. **Login** — log out, then email Continue → `/today` (existing plan).
 7. **Google** (if env is set) — Continue with Google on `/signup` and `/login`; first Google → onboarding, returning Google with a plan → `/today`. Missing/wrong Google env → **Couldn’t connect to Google. Try email or try again.**
 8. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there.

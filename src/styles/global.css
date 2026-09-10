@@ -71,6 +71,20 @@ dialog.log-run-sheet::backdrop {
   background: rgb(5 9 11 / 0.75);
 }
 
+.saved-toast {
+  animation: saved-toast 1.8s ease forwards;
+}
+
+@keyframes saved-toast {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
