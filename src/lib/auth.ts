@@ -377,14 +377,19 @@ export function setGoogleOAuthState(
   return nonce;
 }
 
+export type TakenGoogleOAuthState =
+  | { ok: true; state: GoogleOAuthState }
+  | { ok: false; from: GoogleOAuthFrom | null };
+
 export function takeGoogleOAuthState(
   cookies: AstroCookies,
   nonce: string | null,
-): GoogleOAuthState | null {
+): TakenGoogleOAuthState {
   const data = readGoogleOAuthCookie(cookies.get(GOOGLE_OAUTH_COOKIE)?.value);
   cookies.delete(GOOGLE_OAUTH_COOKIE, { path: "/" });
-  if (!data || !nonce || data.nonce !== nonce) return null;
-  return { nonce: data.nonce, from: data.from, verifier: data.verifier };
+  if (!data) return { ok: false, from: null };
+  if (!nonce || data.nonce !== nonce) return { ok: false, from: data.from };
+  return { ok: true, state: { nonce: data.nonce, from: data.from, verifier: data.verifier } };
 }
 
 export async function upsertGoogleUser(

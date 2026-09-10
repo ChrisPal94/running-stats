@@ -98,15 +98,16 @@ export async function finishGoogleOAuth(
   cookies: AstroCookies,
 ): Promise<{ location: string }> {
   const url = new URL(request.url);
-  const state = takeGoogleOAuthState(cookies, url.searchParams.get("state"));
-  const from: GoogleOAuthFrom = state?.from ?? parseGoogleOAuthFrom(url.searchParams.get("from"));
+  const taken = takeGoogleOAuthState(cookies, url.searchParams.get("state"));
+  const from: GoogleOAuthFrom =
+    taken.ok ? taken.state.from : (taken.from ?? parseGoogleOAuthFrom(url.searchParams.get("from")));
   const errorLocation = googleAuthErrorPath(from);
 
   if (!isGoogleOAuthConfigured()) {
     return { location: errorLocation };
   }
 
-  if (url.searchParams.get("error") || !state) {
+  if (url.searchParams.get("error") || !taken.ok) {
     return { location: errorLocation };
   }
 
@@ -125,7 +126,7 @@ export async function finishGoogleOAuth(
         client_secret: googleClientSecret(),
         redirect_uri: googleCallbackUrl(),
         grant_type: "authorization_code",
-        code_verifier: state.verifier,
+        code_verifier: taken.state.verifier,
       }),
     });
 
