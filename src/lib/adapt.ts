@@ -23,6 +23,7 @@ import {
   type FeedbackCadence,
   type FeedbackKind,
   type Plan,
+  type RunLog,
   type Session,
   type SessionKind,
 } from "./training";
@@ -51,6 +52,56 @@ type LlmAdjustment = {
   distanceKm?: number;
   kind?: SessionKind;
 };
+
+type LlmActual = {
+  distanceKm: number;
+  timeSec: number;
+  paceSecPerKm: number;
+  source?: "manual" | "intervals";
+};
+
+function runLogForSession(
+  snapshot: AdaptationJobSnapshot,
+  session: Session | null,
+): RunLog | null {
+  if (!session) return null;
+  return (
+    snapshot.runLogs.find(
+      (entry) => entry.userId === session.userId && entry.sessionId === session.id,
+    ) ?? null
+  );
+}
+
+function runLogForSourceDay(
+  snapshot: AdaptationJobSnapshot,
+  userId: string,
+  sourceDate: string,
+  todaySession: Session | null,
+): RunLog | null {
+  const preferred = runLogForSession(snapshot, todaySession);
+  if (preferred) return preferred;
+
+  const sessionIds = new Set(
+    snapshot.sessions
+      .filter((session) => session.userId === userId && session.date === sourceDate)
+      .map((session) => session.id),
+  );
+  return (
+    snapshot.runLogs.find((entry) => entry.userId === userId && sessionIds.has(entry.sessionId)) ??
+    null
+  );
+}
+
+function llmActualFromRunLog(log: RunLog | null): LlmActual | null {
+  if (!log) return null;
+  const actual: LlmActual = {
+    distanceKm: log.distanceKm,
+    timeSec: log.timeSec,
+    paceSecPerKm: log.paceSecPerKm,
+  };
+  if (log.source === "manual" || log.source === "intervals") actual.source = log.source;
+  return actual;
+}
 
 function feedbackDay(feedback: Feedback, sessions: Session[]): string | null {
   const session = sessions.find((entry) => entry.id === feedback.sessionId);
@@ -251,6 +302,7 @@ async function callLlmOnce(
   decision: AdaptationDecision,
   tomorrow: Session | null,
   todaySession: Session | null,
+  actual: LlmActual | null,
 ): Promise<LlmAdjustment | null> {
   const apiKey = process.env.ADAPT_LLM_API_KEY?.trim();
   if (!apiKey) return null;
@@ -268,7 +320,7 @@ async function callLlmOnce(
       {
         role: "system",
         content:
-          'Return only JSON: {"title":"Plan adjusted","summary":string,"reason":string,"distanceKm":number,"kind":"easy"|"intervals"|"tempo"|"long"}. title must be Plan adjusted. summary: one line what changes tomorrow (e.g. Easy run shortened to 5 km). reason: one line why (e.g. Higher effort yesterday / You skipped Tuesday). Clear provisional English. No CTL/ATL/TSB jargon. No coach chat.',
+          'Return only JSON: {"title":"Plan adjusted","summary":string,"reason":string,"distanceKm":number,"kind":"easy"|"intervals"|"tempo"|"long"}. title must be Plan adjusted. summary: one line what changes tomorrow (e.g. Easy run shortened to 5 km). reason: one line why (e.g. Higher effort yesterday / You skipped Tuesday). If actual run stats are present, compare them to the planned session (shorter/longer than planned, pace) when writing reason/summary and when choosing tomorrow distanceKm/kind. Clear provisional English. No CTL/ATL/TSB jargon. No coach chat.',
       },
       {
         role: "user",
@@ -282,6 +334,7 @@ async function callLlmOnce(
                 distanceKm: todaySession.distanceKm,
               }
             : null,
+          actual,
           tomorrow: tomorrow
             ? {
                 date: tomorrow.date,
@@ -321,11 +374,12 @@ async function llmAdjustOrSkip(
   decision: AdaptationDecision,
   tomorrow: Session | null,
   todaySession: Session | null,
+  actual: LlmActual | null,
 ): Promise<AdaptationDecision | null> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= LLM_ATTEMPTS; attempt += 1) {
     try {
-      const overlay = await callLlmOnce(decision, tomorrow, todaySession);
+      const overlay = await callLlmOnce(decision, tomorrow, todaySession, actual);
       if (!overlay) return null;
       return applyLlmOverlay(decision, tomorrow, overlay);
     } catch (error) {
@@ -433,9 +487,12 @@ export async function runNocturnalAdaptation(now = new Date()): Promise<{
         (session) =>
           session.userId === decision.draft.userId && session.date === decision.draft.sourceDate,
       ) ?? null;
+    const actual = llmActualFromRunLog(
+      runLogForSourceDay(snapshot, decision.draft.userId, decision.draft.sourceDate, todaySession),
+    );
 
     if (llmConfigured()) {
-      const llmDecision = await llmAdjustOrSkip(decision, tomorrow, todaySession);
+      const llmDecision = await llmAdjustOrSkip(decision, tomorrow, todaySession, actual);
       if (!llmDecision) {
         llmFailed += 1;
         continue;

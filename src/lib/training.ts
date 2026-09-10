@@ -1067,6 +1067,7 @@ export type AdaptationJobSnapshot = {
   plans: Plan[];
   sessions: Session[];
   feedbacks: Feedback[];
+  runLogs: RunLog[];
   adaptationEvents: AdaptationEvent[];
 };
 
@@ -1076,6 +1077,7 @@ export async function getAdaptationJobSnapshot(): Promise<AdaptationJobSnapshot>
     plans: data.plans,
     sessions: data.sessions,
     feedbacks: data.feedbacks,
+    runLogs: data.runLogs,
     adaptationEvents: data.adaptationEvents,
   };
 }

@@ -110,7 +110,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - **Copy (provisional EN):** `title` is always `Plan adjusted`. `summary` is one line of what changes tomorrow (e.g. Easy run shortened to 5 km). `reason` is one line why (e.g. Higher effort yesterday / You skipped Tuesday). No CTL/ATL jargon, no freeform coach chat.
 - **Today UI:** chip shows `title` + `summary`. **Why?** opens the sheet with `reason` when non-empty; otherwise the control is omitted.
 - **Heuristic (when `ADAPT_LLM_API_KEY` is unset):** skip / feeling-off ease tomorrow (shorter; intervals/tempo/long become easy). Done shortens tomorrow after higher effort. SQLite store: `.data/app.db` (`AUTH_DATA_DIR`).
-- **LLM (optional):** if `ADAPT_LLM_API_KEY` is set, the job asks an OpenAI-compatible `/chat/completions` endpoint for **typed JSON** (`title`, `summary`, `reason`, `distanceKm`, `kind`). On failure it logs and **does not mutate** the plan (retry next run). Unset key = heuristic, still only when Feedback exists.
+- **LLM (optional):** if `ADAPT_LLM_API_KEY` is set, the job asks an OpenAI-compatible `/chat/completions` endpoint for **typed JSON** (`title`, `summary`, `reason`, `distanceKm`, `kind`), sending the planned Session plus optional actual `RunLog` stats (`distanceKm`, `timeSec`, `paceSecPerKm`, `source`) for the feedback day. On failure it logs and **does not mutate** the plan (retry next run). Unset key = heuristic, still only when Feedback exists.
 
 ## Deploy (Railway)
 
