@@ -77,8 +77,8 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - Identity: email + scrypt password hash and/or Google account id in a local JSON store (`.data/users.json` by default). HMAC-signed `rs_session` cookie.
 - Google: real OAuth redirect when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL` are set. If they are missing, Continue with Google shows “Couldn’t connect to Google. Try email or try again.” Email + password still works.
 - After signup (email or first Google), Continue goes to `/onboarding`. After login (email or returning Google), Continue goes to `/today` if a plan exists, otherwise `/onboarding`.
-- Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`. Adapt job: `ADAPT_CRON_SECRET` (required for `/api/adapt`). Optional LLM: `ADAPT_LLM_API_KEY`, `ADAPT_LLM_BASE_URL`, `ADAPT_LLM_MODEL`.
-- Build: `npm run build` still runs `astro check && astro build`. With the Node adapter, output is `dist/client` + `dist/server`. Preview with `AUTH_SECRET=... AUTH_COOKIE_SECURE=false npm run preview`, or `npm start` after build.
+- Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`. Adapt job: `ADAPT_CRON_SECRET` (required for `/api/adapt`). Optional LLM: `ADAPT_LLM_API_KEY`, `ADAPT_LLM_BASE_URL`, `ADAPT_LLM_MODEL`. No separate `SITE` / `APP_URL` — public origin is the request URL / `GOOGLE_CALLBACK_URL`.
+- Build: `npm run build` still runs `astro check && astro build`. With the Node adapter, output is `dist/client` + `dist/server`. Preview with `AUTH_SECRET=... AUTH_COOKIE_SECURE=false npm run preview`, or `npm start` after build (`HOST=0.0.0.0 node ./dist/server/entry.mjs`).
 
 ## Onboarding (MVP)
 
@@ -105,6 +105,14 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - **Today UI:** chip shows `title` + `summary`. Why? stays disabled; `reason` is stored on the event.
 - **Heuristic (when `ADAPT_LLM_API_KEY` is unset):** skip / feeling-off ease tomorrow (shorter; intervals/tempo/long become easy). Done shortens tomorrow after higher effort. JSON store: `.data/training.json` (`AUTH_DATA_DIR`).
 - **LLM (optional):** if `ADAPT_LLM_API_KEY` is set, the job asks an OpenAI-compatible `/chat/completions` endpoint for **typed JSON** (`title`, `summary`, `reason`, `distanceKm`, `kind`). On failure it logs and **does not mutate** the plan (retry next run). Unset key = heuristic, still only when Feedback exists.
+
+## Deploy (Railway)
+
+See **DEPLOY.md** for variables and Bowser smoke tests.
+
+- **Web:** build `npm run build`, start `HOST=0.0.0.0 node ./dist/server/entry.mjs` (`npm start`).
+- **Volume:** mounted at `.data` (default `AUTH_DATA_DIR`).
+- **Cron:** `0 2 * * *` UTC (= 21:00 America/Guayaquil) `curl` `POST` `/api/adapt` with `Authorization: Bearer $ADAPT_CRON_SECRET`.
 
 ## Security / deps (tech note)
 
