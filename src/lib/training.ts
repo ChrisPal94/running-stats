@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { addDaysYmd, calendarTodayYmd, endOfWeekSunday, startOfWeekMonday } from "./calendar";
+import { addDaysYmd, appTodayYmd, endOfWeekSunday, startOfWeekMonday } from "./calendar";
 import { enqueueWrite, readJsonFile, writeJsonFile } from "./json-store";
 
 const TRAINING_FILE = "training.json";
@@ -113,16 +113,42 @@ export type Feedback = {
   createdAt: string;
 };
 
-/** Stored for display only in this PR. Shell code never creates or updates these. */
+/** Written only by the nocturnal adaptation job. The shell displays these read-only. */
 export type AdaptationEvent = {
   id: string;
+  userId: string;
+  planId: string;
+  sessionId?: string;
+  /** Guayaquil civil date the event should appear (the adapted session’s day). */
+  date: string;
+  /** Always `Plan adjusted` for job-written events. Chip label. */
+  title: string;
+  /** One line: what changes tomorrow. Shown with the chip. */
+  summary: string;
+  /** One line: why. Stored for Why?; the control stays disabled. */
+  reason: string;
+  /** Guayaquil day of the Feedback that triggered this event. */
+  sourceDate?: string;
+  createdAt: string;
+};
+
+export type AdaptationSessionPatch = {
+  id: string;
+  distanceKm: number;
+  kind: SessionKind;
+  title: string;
+  cue: string;
+};
+
+export type AdaptationDraft = {
   userId: string;
   planId: string;
   sessionId?: string;
   date: string;
   title: string;
   summary: string;
-  createdAt: string;
+  reason: string;
+  sourceDate: string;
 };
 
 type TrainingFile = {
@@ -203,10 +229,7 @@ function isWeekday(value: string): value is Weekday {
   return (WEEKDAY_IDS as readonly string[]).includes(value);
 }
 
-/** Calendar “today” in America/Guayaquil (not UTC). */
-export function utcTodayYmd(): string {
-  return calendarTodayYmd();
-}
+export { appTodayYmd };
 
 export function isYmd(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -222,6 +245,17 @@ function uniqueWeekdays(values: string[]): Weekday[] {
   return WEEKDAY_IDS.filter((day) => seen.has(day));
 }
 
+function normalizeAdaptationEvent(event: AdaptationEvent): AdaptationEvent {
+  const summary = event.summary || "";
+  const reason = event.reason || "";
+  return {
+    ...event,
+    title: event.title || "Plan adjusted",
+    summary,
+    reason,
+  };
+}
+
 async function readTraining(): Promise<TrainingFile> {
   const parsed = await readJsonFile<TrainingFile>(TRAINING_FILE, EMPTY_TRAINING);
   return {
@@ -229,7 +263,9 @@ async function readTraining(): Promise<TrainingFile> {
     plans: Array.isArray(parsed.plans) ? parsed.plans : [],
     sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
     feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
-    adaptationEvents: Array.isArray(parsed.adaptationEvents) ? parsed.adaptationEvents : [],
+    adaptationEvents: Array.isArray(parsed.adaptationEvents)
+      ? parsed.adaptationEvents.map(normalizeAdaptationEvent)
+      : [],
   };
 }
 
@@ -265,7 +301,7 @@ export async function getSessionsForPlan(planId: string): Promise<Session[]> {
 export async function getNextSession(userId: string): Promise<Session | null> {
   const plan = await getPlanForUser(userId);
   if (!plan) return null;
-  const today = calendarTodayYmd();
+  const today = appTodayYmd();
   const sessions = await getSessionsForPlan(plan.id);
   return sessions.find((session) => session.date >= today) ?? sessions.at(-1) ?? null;
 }
@@ -273,7 +309,7 @@ export async function getNextSession(userId: string): Promise<Session | null> {
 export async function getSessionForToday(userId: string): Promise<Session | null> {
   const plan = await getPlanForUser(userId);
   if (!plan) return null;
-  const today = calendarTodayYmd();
+  const today = appTodayYmd();
   const sessions = await getSessionsForPlan(plan.id);
   return sessions.find((session) => session.date === today) ?? null;
 }
@@ -284,7 +320,7 @@ export async function getAppWeek(userId: string): Promise<{
   weekSessions: Session[];
   focusSessions: Session[];
 }> {
-  const today = calendarTodayYmd();
+  const today = appTodayYmd();
   const start = startOfWeekMonday(today);
   const end = endOfWeekSunday(today);
   const plan = await getPlanForUser(userId);
@@ -338,11 +374,96 @@ export async function getFeedbackForSession(userId: string, sessionId: string): 
 }
 
 export async function getAdaptationEventForToday(userId: string): Promise<AdaptationEvent | null> {
-  const today = calendarTodayYmd();
+  const today = appTodayYmd();
   const data = await readTraining();
-  return (
-    data.adaptationEvents.find((event) => event.userId === userId && event.date === today) ?? null
+  const matches = data.adaptationEvents.filter(
+    (event) => event.userId === userId && event.date === today,
   );
+  matches.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return matches.at(-1) ?? null;
+}
+
+export function presentSession(
+  kind: SessionKind,
+  distanceKm: number,
+): Pick<Session, "kind" | "distanceKm" | "title" | "cue"> {
+  const km = Math.max(MIN_SESSION_KM, Math.round(distanceKm));
+  const copy = SESSION_COPY[kind];
+  return {
+    kind,
+    distanceKm: km,
+    title: `${copy.title} · ${km} km`,
+    cue: copy.cue,
+  };
+}
+
+export type AdaptationJobSnapshot = {
+  plans: Plan[];
+  sessions: Session[];
+  feedbacks: Feedback[];
+  adaptationEvents: AdaptationEvent[];
+};
+
+export async function getAdaptationJobSnapshot(): Promise<AdaptationJobSnapshot> {
+  const data = await readTraining();
+  return {
+    plans: data.plans,
+    sessions: data.sessions,
+    feedbacks: data.feedbacks,
+    adaptationEvents: data.adaptationEvents,
+  };
+}
+
+/** Persist session patches + AdaptationEvents. Shell writes never call this. */
+export async function commitAdaptationRun(input: {
+  sessionPatches: AdaptationSessionPatch[];
+  drafts: AdaptationDraft[];
+}): Promise<AdaptationEvent[]> {
+  return enqueueWrite(async () => {
+    const data = await readTraining();
+    const written: AdaptationEvent[] = [];
+    const createdAt = new Date().toISOString();
+
+    for (const patch of input.sessionPatches) {
+      const session = data.sessions.find((entry) => entry.id === patch.id);
+      if (!session || session.outcome) continue;
+      session.distanceKm = patch.distanceKm;
+      session.kind = patch.kind;
+      session.title = patch.title;
+      session.cue = patch.cue;
+    }
+
+    for (const draft of input.drafts) {
+      const already = data.adaptationEvents.some(
+        (event) => event.userId === draft.userId && event.sourceDate === draft.sourceDate,
+      );
+      if (already) continue;
+
+      const event: AdaptationEvent = {
+        id: newId(),
+        userId: draft.userId,
+        planId: draft.planId,
+        sessionId: draft.sessionId,
+        date: draft.date,
+        title: draft.title,
+        summary: draft.summary,
+        reason: draft.reason,
+        sourceDate: draft.sourceDate,
+        createdAt,
+      };
+      data.adaptationEvents.push(event);
+      written.push(event);
+    }
+
+    await writeJsonFile(TRAINING_FILE, {
+      onboarding: data.onboarding,
+      plans: data.plans,
+      sessions: data.sessions,
+      feedbacks: data.feedbacks,
+      adaptationEvents: data.adaptationEvents,
+    });
+    return written;
+  });
 }
 
 function isFeedbackKind(value: string): value is FeedbackKind {
@@ -421,7 +542,7 @@ function parseRaceDate(raw: FormDataEntryValue | null, goal: Goal): string | nul
   const value = String(raw ?? "").trim();
   if (!value || goal === "consistent") return null;
   if (!isYmd(value)) return { error: "Enter a valid race date, or leave it blank." };
-  if (value < utcTodayYmd()) return { error: "Pick a race date from today on." };
+  if (value < appTodayYmd()) return { error: "Pick a race date from today on." };
   return value;
 }
 
@@ -489,7 +610,7 @@ function dateOnOrAfter(startYmd: string, weekday: Weekday): string {
 export function generatePlanV1(
   userId: string,
   answers: OnboardingAnswers,
-  fromYmd = utcTodayYmd(),
+  fromYmd = appTodayYmd(),
 ): { plan: Plan; sessions: Session[] } {
   const createdAt = new Date().toISOString();
   const plan: Plan = {
