@@ -68,8 +68,8 @@ Use the Railway public HTTPS URL. Expect session cookies with `Secure`.
 
 1. **Landing** — `/` loads; **Start your plan** goes to `/signup`.
 2. **Signup** — email + password Continue → `/onboarding`.
-3. **Onboarding** — Goal → Level → Baseline → Days (min 3) → **Generate my plan** → `/today`.
-4. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`.
+3. **Onboarding** — Goal → Level → Baseline → Days (min 3) → Cadence (Daily / Weekly / Monthly) → **Generate my plan** → `/today`.
+4. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`. Settings **You** can change Adaptation frequency (Daily / Weekly / Monthly) and Save.
 5. **Today** — Skip / Feeling off persist immediately (no map). Done opens **Log this run** bottom sheet; Save writes a `RunLog` and toasts **Saved**; Skip map writes Feedback only. Empty copy is **No session today**. AdaptationEvent **Why?** opens **Why this changed** when `reason` is present; no Why? control when `reason` is empty.
 6. **Login** — log out, then email Continue → `/today` (existing plan).
 7. **Google** (if env is set) — Continue with Google on `/signup` and `/login`; first Google → onboarding, returning Google with a plan → `/today`. Missing/wrong Google env → **Couldn’t connect to Google. Try email or try again.**

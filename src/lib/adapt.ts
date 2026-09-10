@@ -1,14 +1,26 @@
 import { timingSafeEqual } from "node:crypto";
-import { addDaysYmd, APP_TIME_ZONE, appTodayYmd, calendarTodayYmd, nextAppHourAt } from "./calendar";
+import {
+  addDaysYmd,
+  APP_TIME_ZONE,
+  appTodayYmd,
+  calendarTodayYmd,
+  isEndOfAppWeek,
+  isLastDayOfMonth,
+  nextAppHourAt,
+  startOfMonthYmd,
+  startOfWeekMonday,
+} from "./calendar";
 import {
   WEEKDAYS,
   commitAdaptationRun,
   getAdaptationJobSnapshot,
+  normalizeFeedbackCadence,
   presentSession,
   type AdaptationDraft,
   type AdaptationJobSnapshot,
   type AdaptationSessionPatch,
   type Feedback,
+  type FeedbackCadence,
   type FeedbackKind,
   type Plan,
   type Session,
@@ -48,18 +60,40 @@ function feedbackDay(feedback: Feedback, sessions: Session[]): string | null {
   return calendarTodayYmd(created);
 }
 
-function latestFeedbackForDay(
+function latestFeedbackInRange(
   feedbacks: Feedback[],
   sessions: Session[],
   userId: string,
-  ymd: string,
+  startYmd: string,
+  endYmd: string,
 ): Feedback | null {
   const matches = feedbacks.filter((entry) => {
     if (entry.userId !== userId) return false;
-    return feedbackDay(entry, sessions) === ymd;
+    const day = feedbackDay(entry, sessions);
+    return day !== null && day >= startYmd && day <= endYmd;
   });
   matches.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   return matches.at(-1) ?? null;
+}
+
+/** Daily: every night. Weekly: Sunday (end of Guayaquil week). Monthly: last civil day of the month. */
+export function cadenceAllowsAdapt(cadence: FeedbackCadence, ymd: string): boolean {
+  if (cadence === "daily") return true;
+  if (cadence === "weekly") return isEndOfAppWeek(ymd);
+  return isLastDayOfMonth(ymd);
+}
+
+export function adaptFeedbackWindow(
+  cadence: FeedbackCadence,
+  today: string,
+): { start: string; end: string } {
+  if (cadence === "weekly") {
+    return { start: startOfWeekMonday(today), end: today };
+  }
+  if (cadence === "monthly") {
+    return { start: startOfMonthYmd(today), end: today };
+  }
+  return { start: today, end: today };
 }
 
 function weekdayLabel(ymd: string, session?: Session | null): string {
@@ -334,18 +368,31 @@ export function planDecisions(
   const decisions: AdaptationDecision[] = [];
 
   for (const plan of snapshot.plans) {
-    const already = snapshot.adaptationEvents.some(
-      (event) => event.userId === plan.userId && event.sourceDate === today,
-    );
+    const cadence = normalizeFeedbackCadence(plan.feedbackCadence);
+    if (!cadenceAllowsAdapt(cadence, today)) continue;
+
+    const window = adaptFeedbackWindow(cadence, today);
+    const already = snapshot.adaptationEvents.some((event) => {
+      if (event.userId !== plan.userId || !event.sourceDate) return false;
+      return event.sourceDate >= window.start && event.sourceDate <= window.end;
+    });
     if (already) continue;
 
-    const feedback = latestFeedbackForDay(snapshot.feedbacks, snapshot.sessions, plan.userId, today);
+    const feedback = latestFeedbackInRange(
+      snapshot.feedbacks,
+      snapshot.sessions,
+      plan.userId,
+      window.start,
+      window.end,
+    );
     if (!feedback) continue;
 
+    const sourceDate = feedbackDay(feedback, snapshot.sessions) ?? today;
     const todaySession =
       snapshot.sessions.find((session) => session.id === feedback.sessionId) ??
       snapshot.sessions.find(
-        (session) => session.userId === plan.userId && session.planId === plan.id && session.date === today,
+        (session) =>
+          session.userId === plan.userId && session.planId === plan.id && session.date === sourceDate,
       ) ??
       null;
     const tomorrow = tomorrowSession(snapshot, plan, tomorrowYmd);
@@ -353,7 +400,7 @@ export function planDecisions(
     decisions.push(
       decideHeuristic({
         signal: feedback.kind,
-        sourceDate: today,
+        sourceDate,
         userId: plan.userId,
         planId: plan.id,
         todaySession,

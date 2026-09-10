@@ -1,6 +1,8 @@
 ---
 import {
   DEFAULT_DAYS,
+  DEFAULT_FEEDBACK_CADENCE,
+  FEEDBACK_CADENCES,
   GOALS,
   LEVELS,
   MIN_TRAINING_DAYS,
@@ -10,6 +12,7 @@ import {
   formatPace,
   isBaseline,
   isPaceSoftOutOfRange,
+  normalizeFeedbackCadence,
   raceDistanceIdFromKm,
   type OnboardingRecord,
   type OnboardingStep,
@@ -28,6 +31,7 @@ const selectedDays = draft?.days?.length ? draft.days : DEFAULT_DAYS;
 const raceDate = draft?.raceDate ?? "";
 const baseline = isBaseline(draft?.baseline) ? draft.baseline : null;
 const selectedKind = baseline?.kind ?? "last-race";
+const selectedCadence = normalizeFeedbackCadence(draft?.feedbackCadence ?? DEFAULT_FEEDBACK_CADENCE);
 const lastRace = baseline?.kind === "last-race" ? baseline : null;
 const cooper = baseline?.kind === "cooper" ? baseline : null;
 const lastRaceDistance = lastRace ? raceDistanceIdFromKm(lastRace.distanceKm) : "5k";
@@ -43,10 +47,11 @@ const headings = {
   2: { title: "Your level", sub: "We’ll scale the first plan to this." },
   3: { title: "Your baseline", sub: "How fit are you right now?" },
   4: { title: "Your days", sub: "Pick at least three days you can run." },
+  5: { title: "How often should we adapt?", sub: "The plan updates after your runs on this schedule." },
 } as const;
 
 const heading = headings[step];
-const steps = [1, 2, 3, 4] as const;
+const steps = [1, 2, 3, 4, 5] as const;
 const kindToggleClass =
   "flex min-h-11 flex-1 cursor-pointer items-center justify-center rounded-full border border-white/12 px-1.5 py-2 text-center text-[0.62rem] font-semibold leading-tight text-mist uppercase transition-colors has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink";
 const chipClass =
@@ -55,7 +60,7 @@ const chipClass =
 
 <div class="flex max-w-md flex-col gap-5">
   <div>
-    <p class="text-[0.66rem] font-semibold tracking-[0.13em] text-lime uppercase">{step} / 4</p>
+    <p class="text-[0.66rem] font-semibold tracking-[0.13em] text-lime uppercase">{step} / 5</p>
     <div class="mt-3 flex gap-1.5" aria-hidden="true">
       {
         steps.map((index) => (
@@ -68,7 +73,7 @@ const chipClass =
         ))
       }
     </div>
-    <p class="sr-only">Step {step} of 4</p>
+    <p class="sr-only">Step {step} of 5</p>
   </div>
 
   <div>
@@ -326,7 +331,7 @@ const chipClass =
   {
     step === 4 && (
       <form method="post" class="flex flex-col gap-5" data-days-form>
-        <input type="hidden" name="intent" value="generate" />
+        <input type="hidden" name="intent" value="days" />
         <fieldset>
           <legend class="sr-only">Days you can run</legend>
           <div class="flex items-center justify-between gap-1" role="group" aria-label="Days you can run">
@@ -349,18 +354,60 @@ const chipClass =
           </div>
         </fieldset>
         <p class="text-xs leading-5 text-mist" data-days-hint>
-          {MIN_TRAINING_DAYS} days selected is enough to generate a plan.
+          {MIN_TRAINING_DAYS} days selected is enough to continue.
         </p>
         <button
           type="submit"
-          data-generate
+          data-continue-days
           class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow,opacity] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)] disabled:pointer-events-none disabled:translate-y-0 disabled:opacity-40 disabled:shadow-none"
+        >
+          Continue
+        </button>
+        <p>
+          <a
+            href="/onboarding?step=3"
+            class="inline-flex items-center gap-2 border-b border-lime pb-1 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
+          >
+            Back
+          </a>
+        </p>
+      </form>
+    )
+  }
+
+  {
+    step === 5 && (
+      <form method="post" class="flex flex-col gap-5">
+        <input type="hidden" name="intent" value="generate" />
+        <fieldset>
+          <legend class="sr-only">How often should we adapt?</legend>
+          <div class="flex flex-col gap-2" role="radiogroup" aria-label="Adaptation frequency">
+            {FEEDBACK_CADENCES.map((cadence) => (
+              <label
+                class="cursor-pointer rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-left transition-colors hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime/10"
+              >
+                <input
+                  class="sr-only"
+                  type="radio"
+                  name="feedbackCadence"
+                  value={cadence.id}
+                  checked={selectedCadence === cadence.id}
+                />
+                <span class="block text-sm font-semibold text-cloud">{cadence.label}</span>
+                <span class="mt-1 block text-xs leading-5 font-normal text-mist">{cadence.help}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <button
+          type="submit"
+          class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
         >
           Generate my plan
         </button>
         <p>
           <a
-            href="/onboarding?step=3"
+            href="/onboarding?step=4"
             class="inline-flex items-center gap-2 border-b border-lime pb-1 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
           >
             Back
@@ -375,7 +422,7 @@ const chipClass =
   const form = document.querySelector("[data-days-form]");
   if (form instanceof HTMLFormElement) {
     const boxes = [...form.querySelectorAll<HTMLInputElement>("[data-day-toggle]")];
-    const generate = form.querySelector<HTMLButtonElement>("[data-generate]");
+    const generate = form.querySelector<HTMLButtonElement>("[data-continue-days]");
     const hint = form.querySelector("[data-days-hint]");
     const minDays = 3;
 
@@ -386,7 +433,7 @@ const chipClass =
         hint.textContent =
           count < minDays
             ? `Pick at least ${minDays} days you can run.`
-            : `${minDays} days selected is enough to generate a plan.`;
+            : `${minDays} days selected is enough to continue.`;
       }
     };
 

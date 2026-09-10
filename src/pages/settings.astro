@@ -3,14 +3,40 @@ export const prerender = false;
 
 import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession, userInitial } from "../lib/app-session";
+import { isSameOrigin } from "../lib/auth";
+import {
+  FEEDBACK_CADENCES,
+  handleSettingsPost,
+  normalizeFeedbackCadence,
+  type FeedbackCadence,
+} from "../lib/training";
 
 const gate = await requireAppSession(Astro.cookies);
 if (!gate.ok) {
   return Astro.redirect(gate.redirect);
 }
 
-const { user } = gate;
+const { user, plan } = gate;
 const initial = userInitial(user.email);
+
+let error = "";
+let selectedCadence: FeedbackCadence = normalizeFeedbackCadence(plan.feedbackCadence);
+
+if (Astro.request.method === "POST") {
+  const formData = await Astro.request.formData();
+  selectedCadence = normalizeFeedbackCadence(String(formData.get("feedbackCadence") ?? ""));
+  if (!isSameOrigin(Astro.request)) {
+    error = "This request could not be verified. Try again.";
+  } else {
+    const result = await handleSettingsPost(user.id, formData);
+    if (result.ok) {
+      return Astro.redirect(result.redirect);
+    }
+    error = result.error;
+  }
+}
+
+const saved = Astro.url.searchParams.get("saved") === "1";
 ---
 
 <AppShell
@@ -19,26 +45,80 @@ const initial = userInitial(user.email);
   current="settings"
   email={user.email}
 >
-  <article
-    class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
-  >
-    <h1 class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Account</h1>
-    <div class="mt-6 flex items-center gap-4">
-      <span class="grid h-12 w-12 place-items-center rounded-full bg-lime text-lg font-bold text-ink">
-        {initial}
-      </span>
-      <p class="min-w-0 truncate text-sm text-cloud">{user.email}</p>
-    </div>
-    <p class="mt-6 text-sm leading-6 text-[#d6ded6]">
-      More account settings land later. This page is the shell entry for now.
-    </p>
-    <form method="post" action="/logout" class="mt-8">
-      <button
-        type="submit"
-        class="inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]"
-      >
-        Log out
-      </button>
-    </form>
-  </article>
+  <div class="flex flex-col gap-4">
+    <article
+      class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
+    >
+      <h1 class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">You</h1>
+      <form method="post" class="mt-6 flex flex-col gap-5">
+        <fieldset>
+          <legend class="text-sm font-semibold text-cloud">Adaptation frequency</legend>
+          <p class="mt-1 text-xs leading-5 text-mist">The plan updates after your runs on this schedule.</p>
+          {
+            error && (
+              <p
+                class="mt-3 rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
+                role="alert"
+              >
+                {error}
+              </p>
+            )
+          }
+          {
+            saved && !error && (
+              <p
+                class="mt-3 rounded-xl border border-lime/25 bg-lime/8 px-4 py-3 text-sm leading-6 text-[#d6ded6]"
+                role="status"
+              >
+                Saved
+              </p>
+            )
+          }
+          <div class="mt-4 flex flex-col gap-2" role="radiogroup" aria-label="Adaptation frequency">
+            {FEEDBACK_CADENCES.map((cadence) => (
+              <label
+                class="cursor-pointer rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-left transition-colors hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime/10"
+              >
+                <input
+                  class="sr-only"
+                  type="radio"
+                  name="feedbackCadence"
+                  value={cadence.id}
+                  checked={selectedCadence === cadence.id}
+                />
+                <span class="block text-sm font-semibold text-cloud">{cadence.label}</span>
+                <span class="mt-1 block text-xs leading-5 font-normal text-mist">{cadence.help}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <button
+          type="submit"
+          class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
+        >
+          Save
+        </button>
+      </form>
+    </article>
+
+    <article
+      class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
+    >
+      <h2 class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Account</h2>
+      <div class="mt-6 flex items-center gap-4">
+        <span class="grid h-12 w-12 place-items-center rounded-full bg-lime text-lg font-bold text-ink">
+          {initial}
+        </span>
+        <p class="min-w-0 truncate text-sm text-cloud">{user.email}</p>
+      </div>
+      <form method="post" action="/logout" class="mt-8">
+        <button
+          type="submit"
+          class="inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]"
+        >
+          Log out
+        </button>
+      </form>
+    </article>
+  </div>
 </AppShell>

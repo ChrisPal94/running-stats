@@ -16,6 +16,11 @@ export type Level = (typeof LEVEL_IDS)[number];
 export const WEEKDAY_IDS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 export type Weekday = (typeof WEEKDAY_IDS)[number];
 
+export const FEEDBACK_CADENCE_IDS = ["daily", "weekly", "monthly"] as const;
+export type FeedbackCadence = (typeof FEEDBACK_CADENCE_IDS)[number];
+/** Default MVP: "daily" (current nocturnal job). */
+export const DEFAULT_FEEDBACK_CADENCE: FeedbackCadence = "daily";
+
 export type SessionKind = "easy" | "intervals" | "tempo" | "long";
 export type SessionOutcome = "done" | "skipped";
 export const FEEDBACK_KINDS = ["done", "skip", "feeling-off"] as const;
@@ -58,6 +63,24 @@ export const WEEKDAYS = [
 ] as const satisfies ReadonlyArray<{ id: Weekday; abbr: string; label: string }>;
 
 export const DEFAULT_DAYS: Weekday[] = ["tue", "thu", "sat"];
+
+export const FEEDBACK_CADENCES = [
+  {
+    id: "daily",
+    label: "Daily",
+    help: "After each day's feedback",
+  },
+  {
+    id: "weekly",
+    label: "Weekly",
+    help: "Once a week, looking back at the week",
+  },
+  {
+    id: "monthly",
+    label: "Monthly",
+    help: "A bigger monthly check-in",
+  },
+] as const satisfies ReadonlyArray<{ id: FeedbackCadence; label: string; help: string }>;
 
 export const BASELINE_KINDS = ["last-race", "cooper", "skip"] as const;
 export type BaselineKind = (typeof BASELINE_KINDS)[number];
@@ -104,6 +127,7 @@ export type OnboardingAnswers = {
   level: Level;
   days: Weekday[];
   baseline?: Baseline;
+  feedbackCadence: FeedbackCadence;
 };
 
 export type OnboardingRecord = {
@@ -113,6 +137,7 @@ export type OnboardingRecord = {
   level?: Level;
   days?: Weekday[];
   baseline?: Baseline;
+  feedbackCadence?: FeedbackCadence;
   updatedAt: string;
   completedAt?: string;
   planId?: string;
@@ -128,6 +153,8 @@ export type Plan = {
   level: Level;
   days: Weekday[];
   baseline?: Baseline;
+  /** Default `"daily"` — existing plans without a stored value keep nightly adapt. */
+  feedbackCadence: FeedbackCadence;
 };
 
 export type GeoPoint = {
@@ -262,7 +289,11 @@ const WEEKDAY_INDEX: Record<Weekday, number> = {
   sat: 6,
 };
 
-export type OnboardingStep = 1 | 2 | 3 | 4;
+export type OnboardingStep = 1 | 2 | 3 | 4 | 5;
+
+export type SettingsFormResult =
+  | { ok: true; redirect: string }
+  | { ok: false; error: string };
 
 export type OnboardingFormResult =
   | { ok: true; redirect: string }
@@ -301,6 +332,14 @@ function isLevel(value: string): value is Level {
 
 function isWeekday(value: string): value is Weekday {
   return (WEEKDAY_IDS as readonly string[]).includes(value);
+}
+
+export function isFeedbackCadence(value: string): value is FeedbackCadence {
+  return (FEEDBACK_CADENCE_IDS as readonly string[]).includes(value);
+}
+
+export function normalizeFeedbackCadence(value: unknown): FeedbackCadence {
+  return typeof value === "string" && isFeedbackCadence(value) ? value : DEFAULT_FEEDBACK_CADENCE;
 }
 
 function isBaselineKind(value: string): value is BaselineKind {
@@ -716,6 +755,21 @@ function uniqueWeekdays(values: string[]): Weekday[] {
   return WEEKDAY_IDS.filter((day) => seen.has(day));
 }
 
+function normalizeOnboardingRecord(record: OnboardingRecord): OnboardingRecord {
+  if (record.feedbackCadence === undefined) return record;
+  return {
+    ...record,
+    feedbackCadence: normalizeFeedbackCadence(record.feedbackCadence),
+  };
+}
+
+function normalizePlanRecord(plan: Plan): Plan {
+  return {
+    ...plan,
+    feedbackCadence: normalizeFeedbackCadence(plan.feedbackCadence),
+  };
+}
+
 function normalizeAdaptationEvent(event: AdaptationEvent): AdaptationEvent {
   const summary = event.summary || "";
   const reason = event.reason || "";
@@ -748,8 +802,10 @@ function normalizeRunLogRecord(value: unknown): RunLog | undefined {
 async function readTraining(): Promise<TrainingFile> {
   const parsed = loadTrainingSnapshot();
   return {
-    onboarding: Array.isArray(parsed.onboarding) ? parsed.onboarding : [],
-    plans: Array.isArray(parsed.plans) ? parsed.plans : [],
+    onboarding: Array.isArray(parsed.onboarding)
+      ? parsed.onboarding.map(normalizeOnboardingRecord)
+      : [],
+    plans: Array.isArray(parsed.plans) ? parsed.plans.map(normalizePlanRecord) : [],
     sessions: Array.isArray(parsed.sessions) ? parsed.sessions.map(normalizeSessionRecord) : [],
     feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks.map(normalizeFeedbackRecord) : [],
     runLogs: Array.isArray(parsed.runLogs)
@@ -1108,7 +1164,7 @@ function upsertOnboarding(data: TrainingFile, record: OnboardingRecord): void {
 
 export async function saveOnboardingDraft(
   userId: string,
-  patch: Partial<Pick<OnboardingRecord, "goal" | "raceDate" | "level" | "days" | "baseline">>,
+  patch: Partial<Pick<OnboardingRecord, "goal" | "raceDate" | "level" | "days" | "baseline" | "feedbackCadence">>,
 ): Promise<OnboardingRecord> {
   return enqueueWrite(async () => {
     const data = await readTraining();
@@ -1245,6 +1301,7 @@ export function generatePlanV1(
     raceDate: answers.raceDate,
     level: answers.level,
     days: answers.days,
+    feedbackCadence: normalizeFeedbackCadence(answers.feedbackCadence),
     ...(answers.baseline ? { baseline: answers.baseline } : {}),
   };
 
@@ -1331,6 +1388,7 @@ export async function completeOnboarding(
       level: answers.level,
       days: answers.days,
       baseline: answers.baseline,
+      feedbackCadence: normalizeFeedbackCadence(answers.feedbackCadence),
       updatedAt: now,
       completedAt: now,
       planId: plan.id,
@@ -1349,6 +1407,9 @@ function draftAnswers(draft: OnboardingRecord | null): Partial<OnboardingAnswers
     level: draft?.level,
     days: draft?.days,
     baseline: isBaseline(draft?.baseline) ? draft?.baseline : undefined,
+    feedbackCadence: draft?.feedbackCadence
+      ? normalizeFeedbackCadence(draft.feedbackCadence)
+      : undefined,
   };
 }
 
@@ -1357,17 +1418,20 @@ export function onboardingStep(
   requested: number | null,
 ): OnboardingStep {
   const max: OnboardingStep =
-    draft?.goal && draft?.level && isBaseline(draft.baseline)
-      ? 4
-      : draft?.goal && draft?.level
-        ? 3
-        : draft?.goal
-          ? 2
-          : 1;
+    draft?.goal && draft?.level && isBaseline(draft.baseline) && (draft.days?.length ?? 0) >= MIN_TRAINING_DAYS
+      ? 5
+      : draft?.goal && draft?.level && isBaseline(draft.baseline)
+        ? 4
+        : draft?.goal && draft?.level
+          ? 3
+          : draft?.goal
+            ? 2
+            : 1;
   if (requested === 1) return 1;
   if (requested === 2) return max >= 2 ? 2 : max;
   if (requested === 3) return max >= 3 ? 3 : max;
   if (requested === 4) return max >= 4 ? 4 : max;
+  if (requested === 5) return max >= 5 ? 5 : max;
   return max;
 }
 
@@ -1422,6 +1486,28 @@ export async function handleOnboardingPost(
     return { ok: true, redirect: "/onboarding?step=4" };
   }
 
+  if (intent === "days") {
+    if (!draft?.goal) {
+      return { ok: false, error: "Pick a goal first.", step: 1 };
+    }
+    if (!draft?.level) {
+      return { ok: false, error: "Pick a level first.", step: 2 };
+    }
+    if (!isBaseline(draft.baseline)) {
+      return { ok: false, error: "Choose a baseline, or skip for now.", step: 3 };
+    }
+    const days = uniqueWeekdays(formData.getAll("days").map((value) => String(value)));
+    await saveOnboardingDraft(userId, { days });
+    if (days.length < MIN_TRAINING_DAYS) {
+      return {
+        ok: false,
+        error: `Pick at least ${MIN_TRAINING_DAYS} days you can run.`,
+        step: 4,
+      };
+    }
+    return { ok: true, redirect: "/onboarding?step=5" };
+  }
+
   if (intent === "generate") {
     const answers = draftAnswers(draft);
     if (!answers.goal) {
@@ -1434,7 +1520,9 @@ export async function handleOnboardingPost(
       return { ok: false, error: "Choose a baseline, or skip for now.", step: 3 };
     }
 
-    const days = uniqueWeekdays(formData.getAll("days").map((value) => String(value)));
+    const days = uniqueWeekdays(
+      formData.getAll("days").map((value) => String(value)).concat(answers.days ?? []),
+    );
     if (days.length < MIN_TRAINING_DAYS) {
       await saveOnboardingDraft(userId, { days });
       return {
@@ -1444,6 +1532,13 @@ export async function handleOnboardingPost(
       };
     }
 
+    const cadenceRaw = String(formData.get("feedbackCadence") ?? "").trim();
+    if (cadenceRaw && !isFeedbackCadence(cadenceRaw)) {
+      return { ok: false, error: "Pick how often we should adapt.", step: 5 };
+    }
+    const feedbackCadence = isFeedbackCadence(cadenceRaw) ? cadenceRaw : DEFAULT_FEEDBACK_CADENCE;
+    await saveOnboardingDraft(userId, { days, feedbackCadence });
+
     try {
       await completeOnboarding(userId, {
         goal: answers.goal,
@@ -1451,13 +1546,48 @@ export async function handleOnboardingPost(
         level: answers.level,
         days,
         baseline: answers.baseline,
+        feedbackCadence,
       });
       return { ok: true, redirect: "/today" };
     } catch (error) {
       console.error("[training] generate plan failed", error);
-      return { ok: false, error: "Something went wrong. Try again.", step: 4 };
+      return { ok: false, error: "Something went wrong. Try again.", step: 5 };
     }
   }
 
   return { ok: false, error: "Something went wrong. Try again.", step: onboardingStep(draft, null) };
+}
+
+export async function updateFeedbackCadence(
+  userId: string,
+  cadence: FeedbackCadence,
+): Promise<Plan | null> {
+  return enqueueWrite(async () => {
+    const data = await readTraining();
+    const plan = data.plans.find((entry) => entry.userId === userId);
+    if (!plan) return null;
+    plan.feedbackCadence = cadence;
+    const onboarding = data.onboarding.find((entry) => entry.userId === userId);
+    if (onboarding) {
+      onboarding.feedbackCadence = cadence;
+      onboarding.updatedAt = new Date().toISOString();
+    }
+    await writeTraining(data);
+    return plan;
+  });
+}
+
+export async function handleSettingsPost(
+  userId: string,
+  formData: FormData,
+): Promise<SettingsFormResult> {
+  const cadenceRaw = String(formData.get("feedbackCadence") ?? "").trim();
+  if (!isFeedbackCadence(cadenceRaw)) {
+    return { ok: false, error: "Pick Daily, Weekly, or Monthly." };
+  }
+  const plan = await updateFeedbackCadence(userId, cadenceRaw);
+  if (!plan) {
+    return { ok: false, error: "Couldn't save. Try again." };
+  }
+  return { ok: true, redirect: "/settings?saved=1" };
 }
