@@ -60,6 +60,7 @@ type OnboardingRow = {
   level: string | null;
   daysJson: string | null;
   baselineJson: string | null;
+  feedbackCadence: string | null;
   updatedAt: string;
   completedAt: string | null;
   planId: string | null;
@@ -75,6 +76,7 @@ type PlanRow = {
   level: string;
   daysJson: string;
   baselineJson: string | null;
+  feedbackCadence: string | null;
 };
 
 type SessionRow = {
@@ -212,6 +214,7 @@ function applySchema(database: DatabaseSync): void {
       level TEXT,
       daysJson TEXT,
       baselineJson TEXT,
+      feedbackCadence TEXT,
       updatedAt TEXT NOT NULL,
       completedAt TEXT,
       planId TEXT
@@ -226,7 +229,8 @@ function applySchema(database: DatabaseSync): void {
       raceDate TEXT,
       level TEXT NOT NULL,
       daysJson TEXT NOT NULL,
-      baselineJson TEXT
+      baselineJson TEXT,
+      feedbackCadence TEXT NOT NULL DEFAULT 'daily'
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -285,6 +289,18 @@ function applySchema(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS run_logs_userId_sessionId ON run_logs(userId, sessionId);
     CREATE INDEX IF NOT EXISTS adaptation_events_userId_date ON adaptation_events(userId, date);
   `);
+  ensureColumn(database, "onboarding", "feedbackCadence", "TEXT");
+  ensureColumn(database, "plans", "feedbackCadence", "TEXT NOT NULL DEFAULT 'daily'");
+}
+
+function tableColumns(database: DatabaseSync, table: string): Set<string> {
+  const rows = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return new Set(rows.map((row) => row.name));
+}
+
+function ensureColumn(database: DatabaseSync, table: string, column: string, ddl: string): void {
+  if (tableColumns(database, table).has(column)) return;
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
 }
 
 function isEnoent(error: unknown): boolean {
@@ -427,12 +443,19 @@ function onboardingFromRow(row: OnboardingRow): OnboardingRecord {
   if (days) record.days = days;
   const baseline = parseJsonValue<OnboardingRecord["baseline"]>(row.baselineJson, undefined);
   if (baseline) record.baseline = baseline;
+  if (row.feedbackCadence === "daily" || row.feedbackCadence === "weekly" || row.feedbackCadence === "monthly") {
+    record.feedbackCadence = row.feedbackCadence;
+  }
   if (row.completedAt) record.completedAt = row.completedAt;
   if (row.planId) record.planId = row.planId;
   return record;
 }
 
 function planFromRow(row: PlanRow): Plan {
+  const cadence =
+    row.feedbackCadence === "weekly" || row.feedbackCadence === "monthly" || row.feedbackCadence === "daily"
+      ? row.feedbackCadence
+      : "daily";
   const plan: Plan = {
     id: row.id,
     userId: row.userId,
@@ -442,6 +465,7 @@ function planFromRow(row: PlanRow): Plan {
     raceDate: row.raceDate,
     level: row.level as Plan["level"],
     days: parseJsonValue(row.daysJson, []),
+    feedbackCadence: cadence,
   };
   const baseline = parseJsonValue<Plan["baseline"]>(row.baselineJson, undefined);
   if (baseline) plan.baseline = baseline;
@@ -528,14 +552,15 @@ function insertOnboardingRow(record: OnboardingRecord): void {
   const raceDate =
     record.raceDate === undefined ? null : record.raceDate === null ? null : record.raceDate;
   run(
-    `INSERT INTO onboarding (userId, goal, raceDate, level, daysJson, baselineJson, updatedAt, completedAt, planId)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO onboarding (userId, goal, raceDate, level, daysJson, baselineJson, feedbackCadence, updatedAt, completedAt, planId)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     record.userId,
     text(record.goal),
     raceDate,
     text(record.level),
     jsonText(record.days),
     jsonText(record.baseline),
+    text(record.feedbackCadence),
     record.updatedAt,
     text(record.completedAt),
     text(record.planId),
@@ -543,9 +568,13 @@ function insertOnboardingRow(record: OnboardingRecord): void {
 }
 
 function insertPlanRow(plan: Plan): void {
+  const cadence =
+    plan.feedbackCadence === "weekly" || plan.feedbackCadence === "monthly" || plan.feedbackCadence === "daily"
+      ? plan.feedbackCadence
+      : "daily";
   run(
-    `INSERT INTO plans (id, userId, version, createdAt, goal, raceDate, level, daysJson, baselineJson)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO plans (id, userId, version, createdAt, goal, raceDate, level, daysJson, baselineJson, feedbackCadence)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     plan.id,
     plan.userId,
     plan.version,
@@ -555,6 +584,7 @@ function insertPlanRow(plan: Plan): void {
     plan.level,
     JSON.stringify(plan.days),
     jsonText(plan.baseline),
+    cadence,
   );
 }
 
@@ -687,14 +717,14 @@ export function loadTrainingSnapshot(): TrainingSnapshot {
   const onboarding = (
     database
       .prepare(
-        "SELECT userId, goal, raceDate, level, daysJson, baselineJson, updatedAt, completedAt, planId FROM onboarding",
+        "SELECT userId, goal, raceDate, level, daysJson, baselineJson, feedbackCadence, updatedAt, completedAt, planId FROM onboarding",
       )
       .all() as OnboardingRow[]
   ).map(onboardingFromRow);
   const plans = (
     database
       .prepare(
-        "SELECT id, userId, version, createdAt, goal, raceDate, level, daysJson, baselineJson FROM plans",
+        "SELECT id, userId, version, createdAt, goal, raceDate, level, daysJson, baselineJson, feedbackCadence FROM plans",
       )
       .all() as PlanRow[]
   ).map(planFromRow);

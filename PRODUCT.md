@@ -30,7 +30,7 @@ A training plan that adapts after every run—so you always know what to run nex
 
 ## Operating Context
 
-Users evaluate the product on a marketing landing page, then start or return to a plan with email and password or Google. Signed-in users complete a four-step onboarding that creates Plan v1, then land in the Hoy / Plan / Progreso app shell.
+Users evaluate the product on a marketing landing page, then start or return to a plan with email and password or Google. Signed-in users complete a five-step onboarding that creates Plan v1, then land in the Hoy / Plan / Progreso app shell.
 
 ## Capabilities and Constraints
 
@@ -40,11 +40,11 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - The landing AdaptationEvent includes a visual “Why?” control that stays non-interactive (illustrative example: no modal, no JS, not a working link, no underline). In the Today shell, **Why?** opens a bottom sheet when `reason` is non-empty.
 - Auth is email + password and Google (no Strava, not magic link). The stored identity is the user’s.
 - After signup (email or first Google), continue to `/onboarding`. After login (email or returning Google), continue to `/today` when a plan exists, otherwise `/onboarding`. Shell routes send signed-in users without a plan back to onboarding.
-- Onboarding is four steps (goal, level, baseline, days). Generate my plan writes onboarding answers plus Plan v1 and Sessions. No AdaptationEvent is written here. Skip baseline uses the same Plan v1 heuristic as before; last-race / Cooper may adjust volumes and intensities by at most ±20%.
+- Onboarding is five steps (goal, level, baseline, days, cadence). Generate my plan writes onboarding answers plus Plan v1 and Sessions. No AdaptationEvent is written here. Skip baseline uses the same Plan v1 heuristic as before; last-race / Cooper may adjust volumes and intensities by at most ±20%.
 - The app shell is mobile-first (~390) with a bottom nav: Today | Plan | Progress, plus an avatar/settings entry. Calendar “today” uses **America/Guayaquil**, not UTC.
 - Today shows the session dated for that Guayaquil calendar day. Empty copy is **No session today**. Skip / Feeling off write Feedback immediately and never open a map. **Done** opens a bottom sheet **Log this run**; **Save** writes Feedback plus a separate `RunLog`; **Skip map** writes Feedback only. AdaptationEvents are read-only in the shell (chip = `title` + `summary`). **Why?** opens a bottom sheet with `reason` when it is non-empty; if there is no `reason`, Why? is not shown. Written only by the 21:00 job, and only when Feedback exists that day.
 - Plan shows a Monday–Sunday week strip and at most three remaining sessions this week. Progress labels are **Consistency**, **Easy pace**, and **Weekly distance** (Easy pace uses logged easy-run paces when present; otherwise provisional).
-- There is no live plan editing yet. A 21:00 `America/Guayaquil` Node job (`npm run adapt` / `POST /api/adapt`) writes AdaptationEvents and may ease tomorrow’s session only — never a full Plan rewrite.
+- There is no live plan editing yet. A 21:00 `America/Guayaquil` Node job (`npm run adapt` / `POST /api/adapt`) reads `Plan.feedbackCadence` and writes AdaptationEvents (same shape) and may ease tomorrow’s session only — never a full Plan rewrite. Daily keeps the current nightly path; weekly/monthly skip unless the schedule matches.
 - On ~390px widths, the hero fold must show the H1 and the primary CTA without a dedicated redesign—tighten spacing rather than inventing a new layout. Onboarding is mobile-first at the same width.
 - `/signup` is a real auth page and is indexable. Landing CTAs still go to `/signup`.
 - Marketing pages share basic Open Graph tags (title, description, url). Do not invent share imagery.
@@ -83,9 +83,10 @@ Users evaluate the product on a marketing landing page, then start or return to 
 ## Onboarding (MVP)
 
 - Signed-in only. Logged-out visits to `/onboarding` redirect to `/signup`.
-- Four steps with progress 1/4–4/4: **Goal** (5K, 10K, Half, Marathon, Just consistent; optional race date), **Level** (Beginner, Intermediate, Advanced), **Baseline** (Last race | Cooper test | Skip for now), **Days** (M–S toggles, minimum 3). CTA **Generate my plan** creates Plan v1 + Sessions and continues to `/today`.
-- Baseline is stored on `OnboardingRecord`, `OnboardingAnswers`, and `Plan` (`version: 1`) as the same optional discriminated union: `{ kind: "last-race"; distanceKm; timeSec; paceSecPerKm; date? }` | `{ kind: "cooper"; distanceKm; durationSec: 720 }` | `{ kind: "skip" }`. Last-race `paceSecPerKm` is computed server-side as `timeSec / distanceKm` (client pace is display-only; typical band ~150–720 s/km). Cooper distance is 0.5–5 km and `durationSec` is always 720. Skip, omit, or null keeps the current Plan v1 heuristic. Last-race / Cooper may change session volumes/intensities by at most ±20% vs that heuristic. Wizard steps are 1|2|3|4 (Baseline=3, Days=4).
-- Answers, plans, sessions, Baseline, Feedback, and RunLogs persist in `.data/app.db` (same `AUTH_DATA_DIR` as users). No AdaptationEvent is written here.
+- Five steps with progress 1/5–5/5: **Goal** (5K, 10K, Half, Marathon, Just consistent; optional race date), **Level** (Beginner, Intermediate, Advanced), **Baseline** (Last race | Cooper test | Skip for now), **Days** (M–S toggles, minimum 3, CTA **Continue**), **Cadence** (Daily | Weekly | Monthly; default Daily). CTA **Generate my plan** creates Plan v1 + Sessions and continues to `/today`.
+- Baseline is stored on `OnboardingRecord`, `OnboardingAnswers`, and `Plan` (`version: 1`) as the same optional discriminated union: `{ kind: "last-race"; distanceKm; timeSec; paceSecPerKm; date? }` | `{ kind: "cooper"; distanceKm; durationSec: 720 }` | `{ kind: "skip" }`. Last-race `paceSecPerKm` is computed server-side as `timeSec / distanceKm` (client pace is display-only; typical band ~150–720 s/km). Cooper distance is 0.5–5 km and `durationSec` is always 720. Skip, omit, or null keeps the current Plan v1 heuristic. Last-race / Cooper may change session volumes/intensities by at most ±20% vs that heuristic. Wizard steps are 1|2|3|4|5 (Baseline=3, Days=4, Cadence=5).
+- `feedbackCadence` (`"daily" | "weekly" | "monthly"`, default `"daily"`) lives on `OnboardingRecord`, `OnboardingAnswers`, and `Plan` — not Session. It is chosen on the Cadence step and can be changed later in Settings / You. Persist through the training store APIs (SQLite `.data/app.db`).
+- Answers, plans, sessions, Baseline, cadence, Feedback, and RunLogs persist in `.data/app.db` (same `AUTH_DATA_DIR` as users). No AdaptationEvent is written here.
 
 ## App shell (MVP)
 
@@ -97,13 +98,13 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - **RunLog (Zelda):** stored in `.data/app.db` (`run_logs`), separate from Feedback. Shape: `{ id, userId, sessionId, planId, distanceKm, timeSec, paceSecPerKm, route?: { type: "polyline"; coords } | { type: "none" }, createdAt }`. 1:1 with `Feedback.sessionId`. Skip map = no write.
 - **Plan (`/plan`):** week strip M–S for the Guayaquil week (Monday–Sunday) and up to three remaining sessions this week.
 - **Progress (`/progress`):** labels **Consistency**, **Easy pace**, **Weekly distance**. Consistency and weekly distance come from this week’s planned sessions. Easy pace uses this week’s `RunLog` paces on easy sessions when present; otherwise it stays provisional.
-- **Settings (`/settings`):** avatar/settings entry — email and log out. Further account settings are later work.
+- **Settings (`/settings`):** **You** — Adaptation frequency (Daily / Weekly / Monthly, same options as onboarding; Save updates `Plan.feedbackCadence` and the onboarding record). **Account** — email and log out.
 
 ## Nocturnal adaptation (MVP)
 
 - **When:** 21:00 `America/Guayaquil`. Locally: `npm run adapt` (once) or `npm run adapt:cron` (waits until 21:00, then every night). HTTP: `POST` or `GET` `/api/adapt` with `Authorization: Bearer $ADAPT_CRON_SECRET` (or `X-Adapt-Cron-Secret`). Crontab: `CRON_TZ=America/Guayaquil` + `0 21 * * * curl -fsS -X POST -H "Authorization: Bearer $ADAPT_CRON_SECRET" https://host/api/adapt` — or UTC `0 2 * * *` (21:00 ECT, UTC−5, no DST).
-- **Input:** Sessions + Feedback for that Guayaquil day (Done / Skip / Feeling off). If there is **no Feedback that day**, the job does not create an AdaptationEvent and does not touch tomorrow’s Sessions.
-- **Who writes AdaptationEvents:** only this job. Onboarding and Today CTAs never create them.
+- **Input:** Sessions + Feedback for that Guayaquil day (Done / Skip / Feeling off), gated by `Plan.feedbackCadence` (default `"daily"`). Daily: if there is **no Feedback that day**, the job does not create an AdaptationEvent and does not touch tomorrow’s Sessions. Weekly: skip unless today is Sunday (end of the Monday–Sunday Guayaquil week); then use the latest Feedback in that week. Monthly: skip unless today is the last civil day of the month; then use the latest Feedback in that month. No Feedback in the window → no write.
+- **Who writes AdaptationEvents:** only this job. Onboarding and Today CTAs never create them. AdaptationEvent shape is unchanged (`title` / `summary` / `reason` / `sourceDate`).
 - **If Feedback exists:** write one AdaptationEvent and adjust **tomorrow’s Session(s) only** — never an opaque full Plan rewrite. Idempotent per user + source day.
 - **Copy (provisional EN):** `title` is always `Plan adjusted`. `summary` is one line of what changes tomorrow (e.g. Easy run shortened to 5 km). `reason` is one line why (e.g. Higher effort yesterday / You skipped Tuesday). No CTL/ATL jargon, no freeform coach chat.
 - **Today UI:** chip shows `title` + `summary`. **Why?** opens the sheet with `reason` when non-empty; otherwise the control is omitted.

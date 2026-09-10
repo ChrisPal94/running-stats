@@ -40,6 +40,19 @@ export function endOfWeekSunday(ymd: string): string {
   return addDaysYmd(startOfWeekMonday(ymd), 6);
 }
 
+/** True on the Sunday that closes the Monday–Sunday Guayaquil week. */
+export function isEndOfAppWeek(ymd: string): boolean {
+  return ymd === endOfWeekSunday(ymd);
+}
+
+export function startOfMonthYmd(ymd: string): string {
+  return `${ymd.slice(0, 7)}-01`;
+}
+
+export function isLastDayOfMonth(ymd: string): boolean {
+  return addDaysYmd(ymd, 1).slice(0, 7) !== ymd.slice(0, 7);
+}
+
 /**
  * Next instant when `hour` (0–23) occurs in America/Guayaquil.
  * Guayaquil is UTC−5 year-round (no DST).
