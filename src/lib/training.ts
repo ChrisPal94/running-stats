@@ -66,7 +66,7 @@ export type BaselineKind = (typeof BASELINE_KINDS)[number];
 export const RACE_DISTANCE_IDS = ["5k", "10k", "half", "marathon", "custom"] as const;
 export type RaceDistanceId = (typeof RACE_DISTANCE_IDS)[number];
 
-export const COOPER_DURATION_SECONDS = 12 * 60;
+export const COOPER_DURATION_SEC = 720 as const;
 export const COOPER_MIN_KM = 0.5;
 export const COOPER_MAX_KM = 5;
 /** Soft pace band: 2:30–12:00 /km. Out of range warns; it does not block Continue. */
@@ -90,34 +90,17 @@ export const RACE_DISTANCES = [
   { id: "custom", label: "Custom", km: null },
 ] as const satisfies ReadonlyArray<{ id: RaceDistanceId; label: string; km: number | null }>;
 
-export type LastRaceBaseline = {
-  kind: "last-race";
-  distanceId: RaceDistanceId;
-  distanceKm: number;
-  timeSeconds: number;
-  /** Seconds /km, computed server-side from distance + time. */
-  paceSecPerKm: number;
-  raceDate: string | null;
-};
-
-export type CooperBaseline = {
-  kind: "cooper";
-  distanceKm: number;
-  durationSeconds: typeof COOPER_DURATION_SECONDS;
-};
-
-export type SkipBaseline = {
-  kind: "skip";
-};
-
-export type Baseline = LastRaceBaseline | CooperBaseline | SkipBaseline;
+export type Baseline =
+  | { kind: "last-race"; distanceKm: number; timeSec: number; paceSecPerKm: number; date?: string }
+  | { kind: "cooper"; distanceKm: number; durationSec: 720 }
+  | { kind: "skip" };
 
 export type OnboardingAnswers = {
   goal: Goal;
   raceDate: string | null;
   level: Level;
   days: Weekday[];
-  baseline: Baseline;
+  baseline?: Baseline;
 };
 
 export type OnboardingRecord = {
@@ -141,6 +124,7 @@ export type Plan = {
   raceDate: string | null;
   level: Level;
   days: Weekday[];
+  baseline?: Baseline;
 };
 
 export type Session = {
@@ -316,13 +300,18 @@ export function formatPace(secPerKm: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")} /km`;
 }
 
-export function computePaceSecPerKm(distanceKm: number, timeSeconds: number): number {
-  if (!(distanceKm > 0) || !(timeSeconds > 0)) return 0;
-  return timeSeconds / distanceKm;
+export function computePaceSecPerKm(distanceKm: number, timeSec: number): number {
+  if (!(distanceKm > 0) || !(timeSec > 0)) return 0;
+  return timeSec / distanceKm;
 }
 
 export function isPaceSoftOutOfRange(paceSecPerKm: number): boolean {
   return paceSecPerKm < PACE_SOFT_MIN_SEC_PER_KM || paceSecPerKm > PACE_SOFT_MAX_SEC_PER_KM;
+}
+
+export function raceDistanceIdFromKm(distanceKm: number): RaceDistanceId {
+  const match = RACE_DISTANCES.find((distance) => distance.km !== null && Math.abs(distance.km - distanceKm) < 0.001);
+  return match?.id ?? "custom";
 }
 
 function parsePositiveNumber(raw: string): number | null {
@@ -333,24 +322,40 @@ function parsePositiveNumber(raw: string): number | null {
   return amount;
 }
 
+/** Skip, omit, and null all mean “no baseline” — current Plan v1 heuristic. */
+export function isSkippedBaseline(baseline?: Baseline | null): boolean {
+  return !baseline || baseline.kind === "skip";
+}
+
+export function isPresentBaseline(
+  baseline?: Baseline | null,
+): baseline is Extract<Baseline, { kind: "last-race" } | { kind: "cooper" }> {
+  return Boolean(baseline && baseline.kind !== "skip");
+}
+
 export function isBaseline(value: unknown): value is Baseline {
   if (!value || typeof value !== "object") return false;
   const record = value as Partial<Baseline> & { kind?: string };
   if (record.kind === "skip") return true;
   if (record.kind === "cooper") {
-    const km = (record as CooperBaseline).distanceKm;
-    return typeof km === "number" && km >= COOPER_MIN_KM && km <= COOPER_MAX_KM;
+    const cooper = record as Extract<Baseline, { kind: "cooper" }>;
+    return (
+      typeof cooper.distanceKm === "number" &&
+      cooper.distanceKm >= COOPER_MIN_KM &&
+      cooper.distanceKm <= COOPER_MAX_KM &&
+      cooper.durationSec === COOPER_DURATION_SEC
+    );
   }
   if (record.kind === "last-race") {
-    const race = record as LastRaceBaseline;
+    const race = record as Extract<Baseline, { kind: "last-race" }>;
     return (
-      isRaceDistanceId(String(race.distanceId ?? "")) &&
       typeof race.distanceKm === "number" &&
       race.distanceKm > 0 &&
-      typeof race.timeSeconds === "number" &&
-      race.timeSeconds > 0 &&
+      typeof race.timeSec === "number" &&
+      race.timeSec > 0 &&
       typeof race.paceSecPerKm === "number" &&
-      race.paceSecPerKm > 0
+      race.paceSecPerKm > 0 &&
+      (race.date === undefined || typeof race.date === "string")
     );
   }
   return false;
@@ -375,16 +380,16 @@ function clampBaselineFactor(value: number): number {
   return Math.min(BASELINE_ADJUSTMENT_MAX, Math.max(BASELINE_ADJUSTMENT_MIN, value));
 }
 
-function riegelEquivalentPaceSecPerKm(distanceKm: number, timeSeconds: number, targetKm = 5): number {
-  const equivalentTime = timeSeconds * (targetKm / distanceKm) ** 1.06;
+function riegelEquivalentPaceSecPerKm(distanceKm: number, timeSec: number, targetKm = 5): number {
+  const equivalentTime = timeSec * (targetKm / distanceKm) ** 1.06;
   return equivalentTime / targetKm;
 }
 
-/** Fitness vs the selected level. Skip is 1. Last-race / Cooper are clamped to ±20%. */
-export function baselineFitnessFactor(baseline: Baseline, level: Level): number {
-  if (baseline.kind === "skip") return 1;
+/** Fitness vs the selected level. Skip / omit / null is 1. Last-race / Cooper are clamped to ±20%. */
+export function baselineFitnessFactor(baseline: Baseline | null | undefined, level: Level): number {
+  if (!isPresentBaseline(baseline)) return 1;
   if (baseline.kind === "last-race") {
-    const actual = riegelEquivalentPaceSecPerKm(baseline.distanceKm, baseline.timeSeconds);
+    const actual = riegelEquivalentPaceSecPerKm(baseline.distanceKm, baseline.timeSec);
     if (!(actual > 0)) return 1;
     return clampBaselineFactor(EXPECTED_PACE_SEC_PER_KM[level] / actual);
   }
@@ -415,7 +420,7 @@ export function parseBaselineForm(
     }
     return {
       ok: true,
-      baseline: { kind: "cooper", distanceKm, durationSeconds: COOPER_DURATION_SECONDS },
+      baseline: { kind: "cooper", distanceKm, durationSec: COOPER_DURATION_SEC },
     };
   }
 
@@ -435,36 +440,32 @@ export function parseBaselineForm(
     distanceKm = RACE_DISTANCE_KM[distanceIdRaw];
   }
 
-  const timeSeconds = parseHmsToSeconds(String(formData.get("lastRaceTime") ?? ""));
-  if (timeSeconds === null) {
+  const timeSec = parseHmsToSeconds(String(formData.get("lastRaceTime") ?? ""));
+  if (timeSec === null) {
     return { ok: false, error: "Enter your time as hh:mm:ss." };
   }
-  if (timeSeconds <= 0) {
+  if (timeSec <= 0) {
     return { ok: false, error: "Time must be greater than zero." };
   }
 
-  const raceDateRaw = String(formData.get("lastRaceDate") ?? "").trim();
-  let raceDate: string | null = null;
-  if (raceDateRaw) {
-    if (!isYmd(raceDateRaw)) {
+  const dateRaw = String(formData.get("lastRaceDate") ?? "").trim();
+  let date: string | undefined;
+  if (dateRaw) {
+    if (!isYmd(dateRaw)) {
       return { ok: false, error: "Enter a valid last-race date, or leave it blank." };
     }
-    if (raceDateRaw > appTodayYmd()) {
+    if (dateRaw > appTodayYmd()) {
       return { ok: false, error: "Last race date can’t be in the future." };
     }
-    raceDate = raceDateRaw;
+    date = dateRaw;
   }
 
+  const paceSecPerKm = computePaceSecPerKm(distanceKm, timeSec);
   return {
     ok: true,
-    baseline: {
-      kind: "last-race",
-      distanceId: distanceIdRaw,
-      distanceKm,
-      timeSeconds,
-      paceSecPerKm: computePaceSecPerKm(distanceKm, timeSeconds),
-      raceDate,
-    },
+    baseline: date
+      ? { kind: "last-race", distanceKm, timeSec, paceSecPerKm, date }
+      : { kind: "last-race", distanceKm, timeSec, paceSecPerKm },
   };
 }
 
@@ -844,7 +845,7 @@ function applyBaselineAdjustment(
   days: Weekday[],
   kinds: Record<Weekday, SessionKind>,
   baseDistances: Record<Weekday, number>,
-  baseline: Exclude<Baseline, SkipBaseline>,
+  baseline: Extract<Baseline, { kind: "last-race" } | { kind: "cooper" }>,
   level: Level,
 ): Record<Weekday, number> {
   const factor = baselineFitnessFactor(baseline, level);
@@ -869,10 +870,10 @@ function planDistances(
   kinds: Record<Weekday, SessionKind>,
   goal: Goal,
   level: Level,
-  baseline: Baseline,
+  baseline?: Baseline,
 ): Record<Weekday, number> {
   const base = allocateDistances(days, kinds, WEEKLY_KM[goal][level]);
-  if (baseline.kind === "skip") return base;
+  if (isSkippedBaseline(baseline) || !isPresentBaseline(baseline)) return base;
   return applyBaselineAdjustment(days, kinds, base, baseline, level);
 }
 
@@ -897,6 +898,7 @@ export function generatePlanV1(
     raceDate: answers.raceDate,
     level: answers.level,
     days: answers.days,
+    ...(answers.baseline ? { baseline: answers.baseline } : {}),
   };
 
   const kinds = assignKinds(answers.days);

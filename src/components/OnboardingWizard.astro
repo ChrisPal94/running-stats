@@ -10,6 +10,7 @@ import {
   formatPace,
   isBaseline,
   isPaceSoftOutOfRange,
+  raceDistanceIdFromKm,
   type OnboardingRecord,
   type OnboardingStep,
 } from "../lib/training";
@@ -29,10 +30,10 @@ const baseline = isBaseline(draft?.baseline) ? draft.baseline : null;
 const selectedKind = baseline?.kind ?? "last-race";
 const lastRace = baseline?.kind === "last-race" ? baseline : null;
 const cooper = baseline?.kind === "cooper" ? baseline : null;
-const lastRaceDistance = lastRace?.distanceId ?? "5k";
-const lastRaceTime = lastRace ? formatHms(lastRace.timeSeconds) : "";
-const lastRaceCustomKm = lastRace?.distanceId === "custom" ? String(lastRace.distanceKm) : "";
-const lastRaceDate = lastRace?.raceDate ?? "";
+const lastRaceDistance = lastRace ? raceDistanceIdFromKm(lastRace.distanceKm) : "5k";
+const lastRaceTime = lastRace ? formatHms(lastRace.timeSec) : "";
+const lastRaceCustomKm = lastRaceDistance === "custom" && lastRace ? String(lastRace.distanceKm) : "";
+const lastRaceDate = lastRace?.date ?? "";
 const lastRacePace = lastRace ? formatPace(lastRace.paceSecPerKm) : "";
 const showPaceWarning = lastRace ? isPaceSoftOutOfRange(lastRace.paceSecPerKm) : false;
 const cooperDistance = cooper ? String(cooper.distanceKm) : "";

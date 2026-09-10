@@ -84,7 +84,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 
 - Signed-in only. Logged-out visits to `/onboarding` redirect to `/signup`.
 - Four steps with progress 1/4–4/4: **Goal** (5K, 10K, Half, Marathon, Just consistent; optional race date), **Level** (Beginner, Intermediate, Advanced), **Baseline** (Last race | Cooper test | Skip for now), **Days** (M–S toggles, minimum 3). CTA **Generate my plan** creates Plan v1 + Sessions and continues to `/today`.
-- Baseline is stored on `OnboardingRecord` as a discriminated union (`last-race` | `cooper` | `skip`). Last-race pace is computed server-side from distance + `hh:mm:ss` (client pace is display-only). Skip does not block Generate and keeps the current Plan v1 heuristic. Last-race / Cooper may change session volumes/intensities by at most ±20% vs that heuristic.
+- Baseline is stored on `OnboardingRecord`, `OnboardingAnswers`, and `Plan` (`version: 1`) as the same optional discriminated union: `{ kind: "last-race"; distanceKm; timeSec; paceSecPerKm; date? }` | `{ kind: "cooper"; distanceKm; durationSec: 720 }` | `{ kind: "skip" }`. Last-race `paceSecPerKm` is computed server-side as `timeSec / distanceKm` (client pace is display-only; typical band ~150–720 s/km). Cooper distance is 0.5–5 km and `durationSec` is always 720. Skip, omit, or null keeps the current Plan v1 heuristic. Last-race / Cooper may change session volumes/intensities by at most ±20% vs that heuristic. Wizard steps are 1|2|3|4 (Baseline=3, Days=4).
 - Answers, plans, and sessions persist in `.data/training.json` (same `AUTH_DATA_DIR` JSON store pattern as users). No AdaptationEvent is written here.
 
 ## App shell (MVP)
