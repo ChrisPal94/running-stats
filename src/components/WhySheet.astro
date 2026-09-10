@@ -1,0 +1,192 @@
+---
+import type { FeedbackKind } from "../lib/training";
+
+interface Props {
+  reason: string;
+  basedOn?: FeedbackKind | null;
+}
+
+const BASED_ON_COPY: Record<FeedbackKind, string> = {
+  done: "Done",
+  skip: "Skip",
+  "feeling-off": "Feeling off",
+};
+
+const { reason, basedOn = null } = Astro.props;
+const explanation = reason.trim();
+const basedOnLabel = basedOn ? BASED_ON_COPY[basedOn] : "";
+---
+
+{
+  explanation ? (
+    <div>
+      <button
+        type="button"
+        data-open-why
+        aria-haspopup="dialog"
+        aria-controls="why-sheet"
+        class="border-0 bg-transparent p-0 text-[0.62rem] font-semibold tracking-wider text-lime uppercase transition-colors hover:text-cloud"
+      >
+        Why?
+      </button>
+
+      <dialog
+        id="why-sheet"
+        class="app-sheet mx-auto w-full max-w-md border-0 bg-transparent p-0 text-cloud"
+        data-why-sheet
+        aria-modal="true"
+        aria-labelledby="why-sheet-title"
+        aria-describedby="why-sheet-reason"
+      >
+        <div
+          class="flex max-h-[min(92dvh,44rem)] flex-col overflow-hidden rounded-t-[1.75rem] border border-white/12 border-b-0 bg-[#111718] shadow-[0_-18px_50px_rgba(0,0,0,0.45)]"
+          data-why-panel
+        >
+          <div
+            class="flex cursor-grab touch-none justify-center pt-3 pb-1"
+            data-why-handle
+            aria-hidden="true"
+          >
+            <span class="h-1 w-10 rounded-full bg-white/20"></span>
+          </div>
+          <div class="flex items-center justify-between gap-3 px-5 pt-2">
+            <h2
+              id="why-sheet-title"
+              class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
+            >
+              Why this changed
+            </h2>
+            <button
+              type="button"
+              data-close-why
+              aria-label="Close"
+              class="grid h-8 w-8 place-items-center rounded-full text-mist transition-colors hover:bg-white/8 hover:text-cloud"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M3.5 3.5l9 9M12.5 3.5l-9 9"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pt-4 pb-5">
+            <p id="why-sheet-reason" class="text-sm leading-6 text-cloud">
+              {explanation}
+            </p>
+            {basedOnLabel ? (
+              <p class="text-[0.62rem] tracking-wider text-mist">
+                Based on: {basedOnLabel}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              data-close-why
+              class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      </dialog>
+    </div>
+  ) : null
+}
+
+<script>
+  const sheet = document.querySelector("[data-why-sheet]");
+  const panel = document.querySelector("[data-why-panel]");
+  const handle = document.querySelector("[data-why-handle]");
+  const openButtons = [...document.querySelectorAll("[data-open-why]")];
+  const closeButtons = [...document.querySelectorAll("[data-close-why]")];
+
+  const openSheet = () => {
+    if (!(sheet instanceof HTMLDialogElement)) return;
+    if (sheet.open) sheet.close();
+    sheet.showModal();
+    const close = sheet.querySelector<HTMLButtonElement>("[data-close-why]");
+    close?.focus();
+  };
+
+  const closeSheet = () => {
+    if (sheet instanceof HTMLDialogElement && sheet.open) sheet.close();
+    if (panel instanceof HTMLElement) panel.style.transform = "";
+  };
+
+  openButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      openSheet();
+    });
+  });
+
+  closeButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      closeSheet();
+    });
+  });
+
+  sheet?.addEventListener("click", (event) => {
+    if (event.target === sheet) closeSheet();
+  });
+
+  sheet?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeSheet();
+  });
+
+  if (handle instanceof HTMLElement && panel instanceof HTMLElement) {
+    let startY = 0;
+    let dragging = false;
+
+    const onStart = (clientY: number) => {
+      dragging = true;
+      startY = clientY;
+      panel.style.transition = "none";
+    };
+
+    const onMove = (clientY: number) => {
+      if (!dragging) return;
+      const dy = Math.max(0, clientY - startY);
+      panel.style.transform = `translateY(${dy}px)`;
+    };
+
+    const onEnd = (clientY: number) => {
+      if (!dragging) return;
+      dragging = false;
+      panel.style.transition = "";
+      const dy = clientY - startY;
+      if (dy > 72) closeSheet();
+      else panel.style.transform = "";
+    };
+
+    handle.addEventListener(
+      "touchstart",
+      (event) => {
+        const touch = event.changedTouches[0];
+        if (touch) onStart(touch.clientY);
+      },
+      { passive: true },
+    );
+    handle.addEventListener(
+      "touchmove",
+      (event) => {
+        const touch = event.changedTouches[0];
+        if (touch) onMove(touch.clientY);
+      },
+      { passive: true },
+    );
+    handle.addEventListener(
+      "touchend",
+      (event) => {
+        const touch = event.changedTouches[0];
+        if (touch) onEnd(touch.clientY);
+      },
+      { passive: true },
+    );
+  }
+</script>

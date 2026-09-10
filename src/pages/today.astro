@@ -7,6 +7,7 @@ import { isSameOrigin } from "../lib/auth";
 import { requireAppSession } from "../lib/app-session";
 import {
   getAdaptationEventForToday,
+  getFeedbackForDate,
   getFeedbackForSession,
   getRunLogForSession,
   getSessionForToday,
@@ -43,6 +44,9 @@ const session = await getSessionForToday(user.id);
 const feedback = session ? await getFeedbackForSession(user.id, session.id) : null;
 const runLog = session ? await getRunLogForSession(user.id, session.id) : null;
 const adaptationEvent = await getAdaptationEventForToday(user.id);
+const sourceFeedback = adaptationEvent?.sourceDate
+  ? await getFeedbackForDate(user.id, adaptationEvent.sourceDate)
+  : null;
 const savedToast = Astro.url.searchParams.get("saved") === "1";
 ---
 
@@ -57,6 +61,7 @@ const savedToast = Astro.url.searchParams.get("saved") === "1";
     feedback={feedback}
     runLog={runLog}
     adaptationEvent={adaptationEvent}
+    sourceFeedbackKind={sourceFeedback?.kind ?? null}
     logOpen={logOpen}
     logError={logError}
     logDraft={logDraft}
