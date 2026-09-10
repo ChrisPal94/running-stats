@@ -75,4 +75,4 @@ Use the Railway public HTTPS URL. Expect session cookies with `Secure`.
 8. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there.
 9. **Adapt HTTP** — `POST /api/adapt` without `Authorization` → `401`. With `Authorization: Bearer $ADAPT_CRON_SECRET` → `200` JSON (`processed` / `written` / `skipped` / `patched`). No Feedback that day → `written: 0` is success, not a failure.
 
-Out of scope for this deploy pass: screenshots, Astro 7, Strava, live plan editing.
+Out of scope for this deploy pass: screenshots, Strava, live plan editing.

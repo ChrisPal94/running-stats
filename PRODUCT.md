@@ -73,7 +73,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 ## Auth (MVP)
 
 - Routes: `/signup`, `/login`, `/logout` (POST), `/auth/google`, `/auth/google/callback`, `/onboarding`, `/today`, `/plan`, `/progress`, `/settings`.
-- Stack: Astro 6 + Vite 7, `@astrojs/node` 10.1.x (`standalone`; 11.x needs Astro 7). Landing stays prerendered; auth, onboarding, and shell routes set `prerender = false`.
+- Stack: Astro 7 + Vite 8, `@astrojs/node` 11.x (`standalone`). Landing stays prerendered; auth, onboarding, and shell routes set `prerender = false`.
 - Identity: email + scrypt password hash and/or Google account id in a local JSON store (`.data/users.json` by default). HMAC-signed `rs_session` cookie.
 - Google: real OAuth redirect when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL` are set. If they are missing, Continue with Google shows “Couldn’t connect to Google. Try email or try again.” Email + password still works.
 - After signup (email or first Google), Continue goes to `/onboarding`. After login (email or returning Google), Continue goes to `/today` if a plan exists, otherwise `/onboarding`.
@@ -117,4 +117,4 @@ See **DEPLOY.md** for variables and Bowser smoke tests.
 
 ## Security / deps (tech note)
 
-Astro 6.x: known critical image-opt advisories; upgrade to ≥7.2.8 scheduled post-auth. Sharp pinned to 0.35.4 for libvips/libheif advisories. Do not use `npm audit fix --force` (would major-bump Astro).
+Astro ≥7.2.8 (image-opt RCE fixed in 7.2.8+). Sharp pinned to 0.35.4 for libvips/libheif advisories. Do not use `npm audit fix --force`.
