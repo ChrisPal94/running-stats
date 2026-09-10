@@ -10,6 +10,9 @@ import {
   setUserGoogleId,
 } from "./db";
 import { loadLocalEnv } from "./load-env";
+import { isSameOrigin } from "./public-origin";
+
+export { isSameOrigin, publicOrigin } from "./public-origin";
 
 loadLocalEnv();
 
@@ -105,12 +108,6 @@ function validateCredentials(email: string, password: string): string | null {
     return `Password must be at most ${PASSWORD_MAX} characters.`;
   }
   return null;
-}
-
-export function isSameOrigin(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  if (!origin) return true;
-  return origin === new URL(request.url).origin;
 }
 
 async function hashPassword(password: string): Promise<string> {

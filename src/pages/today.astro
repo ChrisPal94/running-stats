@@ -3,7 +3,7 @@ export const prerender = false;
 
 import TodayCard from "../components/TodayCard.astro";
 import AppShell from "../layouts/AppShell.astro";
-import { isSameOrigin } from "../lib/auth";
+import { isSameOrigin } from "../lib/public-origin";
 import { requireAppSession } from "../lib/app-session";
 import {
   getAdaptationEventForToday,

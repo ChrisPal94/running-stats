@@ -40,6 +40,22 @@ Google Cloud Console: add the production authorized redirect URI before testing 
 
 Do not commit a production `.env`. Railway variables are enough at runtime (`process.env`); no `.env` file is required on the host.
 
+## Reverse proxy / CSRF
+
+Railway (and similar TLS-terminating proxies) must forward `X-Forwarded-Proto` and `X-Forwarded-Host` (Railway does this by default). Form POSTs — signup, login, onboarding, Today, Settings — compare the browser `Origin` (or `Referer`) to that **public** origin, not the internal `http://…` `request.url`.
+
+If those headers are stripped, Astro’s origin check returns **403** `Cross-site POST form submissions are forbidden` because the socket origin is `http://…` while the public site is `https://<host>`. Use the public HTTPS URL for POSTs (browser or curl). CSRF is not disabled: a cross-site `Origin` still fails.
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}\n" -X POST \
+  -H "Origin: https://<public-host>" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data "email=test@example.com&password=testpass1" \
+  https://<public-host>/login
+```
+
+Expect **200** (invalid credentials still render the form), not **403**.
+
 ## Cron
 
 21:00 `America/Guayaquil` is `02:00` UTC (ECT is UTC−5, no DST).
@@ -66,7 +82,7 @@ Local equivalent (not used on Railway): `npm run adapt` once, or `npm run adapt:
 
 ## Smoke tests (Bowser)
 
-Use the Railway public HTTPS URL. Expect session cookies with `Secure`.
+Use the Railway public HTTPS URL. Expect session cookies with `Secure`. Signup/login POSTs must not return 403 (see Reverse proxy / CSRF above).
 
 1. **Landing** — `/` loads; **Start your plan** goes to `/signup`.
 2. **Signup** — email + password Continue → `/onboarding`.

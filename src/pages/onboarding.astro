@@ -4,7 +4,8 @@ export const prerender = false;
 import OnboardingWizard from "../components/OnboardingWizard.astro";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
-import { getCurrentUser, isSameOrigin } from "../lib/auth";
+import { getCurrentUser } from "../lib/auth";
+import { isSameOrigin } from "../lib/public-origin";
 import {
   getOnboarding,
   getPlanForUser,
