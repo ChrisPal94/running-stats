@@ -73,7 +73,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - Identity: email + scrypt password hash and/or Google account id in a local JSON store (`.data/users.json` by default). HMAC-signed `rs_session` cookie.
 - Google: real OAuth redirect when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL` are set. If they are missing, Continue with Google shows “Couldn’t connect to Google. Try email or try again.” Email + password still works.
 - After signup (email or first Google), Continue goes to `/onboarding`. After login (email or returning Google), Continue goes to `/today`. Those routes are placeholders until onboarding and the app shell land.
-- Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`, Google client id/secret/callback.
+- Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`.
 - Build: `npm run build` still runs `astro check && astro build`. With the Node adapter, output is `dist/client` + `dist/server`. Preview with `AUTH_SECRET=... AUTH_COOKIE_SECURE=false npm run preview`, or `npm start` after build.
 
 ## Security / deps (tech note)
