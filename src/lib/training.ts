@@ -1,6 +1,21 @@
 import { randomBytes } from "node:crypto";
 import { addDaysYmd, appTodayYmd, calendarTodayYmd, endOfWeekSunday, startOfWeekMonday } from "./calendar";
 import { enqueueWrite, loadTrainingSnapshot, saveTrainingSnapshot } from "./db";
+import {
+  connectIntervals,
+  disconnectIntervals,
+  getIntervalsConnection,
+  INTERVALS_SYNC_ERROR,
+  loadIntervalsRunsForSync,
+  markIntervalsSyncError,
+  markIntervalsSyncSuccess,
+  parseIntervalsRunChoice,
+  parseIntervalsRunChoiceList,
+  pickClosestRun,
+  type IntervalsRunChoice,
+  type IntervalsRunPickerState,
+  type IntervalsRunStats,
+} from "./intervals";
 
 const PLAN_WEEKS = 4;
 const MIN_SESSION_KM = 2;
@@ -166,7 +181,9 @@ export type RunRoute =
   | { type: "polyline"; coords: GeoPoint[] }
   | { type: "none" };
 
-/** Actuals from post-Done “Log this run”. 1:1 with Feedback.sessionId. */
+/** Actuals from post-Done “Log this run” or Intervals.icu import. 1:1 with Session. */
+export type RunLogSource = "manual" | "intervals";
+
 export type RunLog = {
   id: string;
   userId: string;
@@ -177,6 +194,8 @@ export type RunLog = {
   paceSecPerKm: number;
   route?: RunRoute;
   createdAt: string;
+  /** Missing / `manual` = Log this run. Import never overwrites that. */
+  source?: RunLogSource;
 };
 
 export type RunLogStats = {
@@ -293,7 +312,10 @@ export type OnboardingStep = 1 | 2 | 3 | 4 | 5;
 
 export type SettingsFormResult =
   | { ok: true; redirect: string }
-  | { ok: false; error: string };
+  | { ok: true; picker: IntervalsRunPickerState }
+  | { ok: false; error: string; section?: "cadence" | "intervals" };
+
+export type { IntervalsRunChoice, IntervalsRunPickerState };
 
 export type OnboardingFormResult =
   | { ok: true; redirect: string }
@@ -377,6 +399,21 @@ export function formatPaceInput(secPerKm: number): string {
   const minutes = Math.floor(rounded / 60);
   const seconds = rounded % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+export function formatDistanceKm(km: number): string {
+  const rounded = Math.round(km * 10) / 10;
+  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  return `${text} km`;
+}
+
+export function formatRunningTime(totalSeconds: number): string {
+  const safe = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  if (hours <= 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
 }
 
 export function computePaceSecPerKm(distanceKm: number, timeSec: number): number {
@@ -519,6 +556,7 @@ export function normalizeRunLog(value: unknown): RunLog | undefined {
     paceSecPerKm: record.paceSecPerKm,
     route: normalizeRunRoute(record.route),
     createdAt: record.createdAt,
+    source: record.source === "intervals" ? "intervals" : "manual",
   };
 }
 
@@ -894,21 +932,46 @@ export async function getAppWeek(userId: string): Promise<{
   return { today, days, weekSessions, focusSessions };
 }
 
+export function isManualRunLog(log: Pick<RunLog, "source">): boolean {
+  return log.source !== "intervals";
+}
+
 export async function getProgressMetrics(userId: string): Promise<ProgressMetric[]> {
-  const { weekSessions } = await getAppWeek(userId);
+  const { today, weekSessions } = await getAppWeek(userId);
   const data = await readTraining();
   const planned = weekSessions.length;
   const done = weekSessions.filter((session) => session.outcome === "done").length;
-  const weeklyKm = weekSessions.reduce((sum, session) => sum + session.distanceKm, 0);
   const logsBySession = new Map(
     data.runLogs.filter((entry) => entry.userId === userId).map((entry) => [entry.sessionId, entry]),
   );
+  const weeklyKm = weekSessions.reduce((sum, session) => {
+    const log = logsBySession.get(session.id);
+    return sum + (log ? log.distanceKm : session.distanceKm);
+  }, 0);
   const easyPaces = weekSessions
-    .filter((session) => session.kind === "easy" && session.outcome === "done")
+    .filter((session) => session.kind === "easy")
     .map((session) => logsBySession.get(session.id)?.paceSecPerKm)
     .filter((pace): pace is number => typeof pace === "number" && pace > 0);
   const easyPace =
     easyPaces.length > 0 ? easyPaces.reduce((sum, pace) => sum + pace, 0) / easyPaces.length : 0;
+
+  const start7 = addDaysYmd(today, -6);
+  const start28 = addDaysYmd(today, -27);
+  const datedLogs = data.runLogs
+    .filter((entry) => entry.userId === userId)
+    .map((log) => {
+      const session = data.sessions.find((entry) => entry.id === log.sessionId && entry.userId === userId);
+      return session ? { log, date: session.date } : null;
+    })
+    .filter((entry): entry is { log: RunLog; date: string } => Boolean(entry));
+
+  const logs7d = datedLogs.filter((entry) => entry.date >= start7 && entry.date <= today);
+  const logs28d = datedLogs.filter((entry) => entry.date >= start28 && entry.date <= today);
+
+  const distance7d = logs7d.reduce((sum, entry) => sum + entry.log.distanceKm, 0);
+  const time7d = logs7d.reduce((sum, entry) => sum + entry.log.timeSec, 0);
+  const avgPace7d = distance7d > 0 && time7d > 0 ? time7d / distance7d : 0;
+  const longest28d = logs28d.reduce((max, entry) => Math.max(max, entry.log.distanceKm), 0);
 
   return [
     {
@@ -923,7 +986,22 @@ export async function getProgressMetrics(userId: string): Promise<ProgressMetric
     },
     {
       label: "Weekly distance",
-      value: `${weeklyKm} km`,
+      value: formatDistanceKm(weeklyKm),
+      provisional: false,
+    },
+    {
+      label: "Avg pace (7d)",
+      value: avgPace7d > 0 ? formatPace(avgPace7d) : "—",
+      provisional: false,
+    },
+    {
+      label: "Longest run (28d)",
+      value: longest28d > 0 ? formatDistanceKm(longest28d) : "—",
+      provisional: false,
+    },
+    {
+      label: "Time running (7d)",
+      value: time7d > 0 ? formatRunningTime(time7d) : "—",
       provisional: false,
     },
   ];
@@ -1093,19 +1171,26 @@ export async function submitSessionFeedback(
     }
 
     if (kind === "done" && runLogStats) {
-      const already = data.runLogs.some((entry) => entry.userId === userId && entry.sessionId === sessionId);
-      if (!already) {
-        data.runLogs.push({
-          id: newId(),
-          userId,
-          sessionId,
-          planId: session.planId,
-          distanceKm: runLogStats.distanceKm,
-          timeSec: runLogStats.timeSec,
-          paceSecPerKm: runLogStats.paceSecPerKm,
-          route: runLogStats.route,
-          createdAt,
-        });
+      const log: RunLog = {
+        id: newId(),
+        userId,
+        sessionId,
+        planId: session.planId,
+        distanceKm: runLogStats.distanceKm,
+        timeSec: runLogStats.timeSec,
+        paceSecPerKm: runLogStats.paceSecPerKm,
+        route: runLogStats.route,
+        createdAt,
+        source: "manual",
+      };
+      const existingIndex = data.runLogs.findIndex(
+        (entry) => entry.userId === userId && entry.sessionId === sessionId,
+      );
+      if (existingIndex >= 0) {
+        const existing = data.runLogs[existingIndex];
+        data.runLogs[existingIndex] = { ...log, id: existing.id };
+      } else {
+        data.runLogs.push(log);
       }
     }
 
@@ -1577,17 +1662,232 @@ export async function updateFeedbackCadence(
   });
 }
 
+export async function applyIntervalsRuns(
+  userId: string,
+  runs: IntervalsRunStats[],
+): Promise<{
+  imported: number;
+  skippedNoSession: number;
+  skippedManual: number;
+  pendingChoices: IntervalsRunChoice[];
+}> {
+  return enqueueWrite(async () => {
+    const data = await readTraining();
+    const sessions = data.sessions.filter((entry) => entry.userId === userId);
+    const byDate = new Map<string, Session>();
+    for (const session of sessions) {
+      if (!byDate.has(session.date)) byDate.set(session.date, session);
+    }
+
+    const runsByDate = new Map<string, IntervalsRunStats[]>();
+    for (const run of runs) {
+      const list = runsByDate.get(run.date) ?? [];
+      list.push(run);
+      runsByDate.set(run.date, list);
+    }
+
+    let imported = 0;
+    let skippedNoSession = 0;
+    let skippedManual = 0;
+    const pendingChoices: IntervalsRunChoice[] = [];
+    const createdAt = new Date().toISOString();
+
+    const dates = [...runsByDate.keys()].sort();
+    for (const date of dates) {
+      const dayRuns = runsByDate.get(date) ?? [];
+      const session = byDate.get(date);
+      if (!session) {
+        skippedNoSession += 1;
+        continue;
+      }
+      const existingIndex = data.runLogs.findIndex(
+        (entry) => entry.userId === userId && entry.sessionId === session.id,
+      );
+      const existing = existingIndex >= 0 ? data.runLogs[existingIndex] : undefined;
+      if (existing && isManualRunLog(existing)) {
+        skippedManual += 1;
+        continue;
+      }
+      if (dayRuns.length > 1) {
+        const closest = pickClosestRun(dayRuns, session.distanceKm);
+        if (!closest) continue;
+        pendingChoices.push({
+          date,
+          sessionId: session.id,
+          sessionDistanceKm: session.distanceKm,
+          runs: dayRuns,
+          defaultActivityId: closest.activityId,
+        });
+        continue;
+      }
+      const run = dayRuns[0];
+      if (!run) continue;
+      upsertImportedRunLog(data, userId, session, run, existing, createdAt);
+      imported += 1;
+    }
+
+    await writeTraining(data);
+    return { imported, skippedNoSession, skippedManual, pendingChoices };
+  });
+}
+
+function upsertImportedRunLog(
+  data: TrainingFile,
+  userId: string,
+  session: Session,
+  run: IntervalsRunStats,
+  existing: RunLog | undefined,
+  createdAt: string,
+): void {
+  const log: RunLog = {
+    id: existing?.id ?? newId(),
+    userId,
+    sessionId: session.id,
+    planId: session.planId,
+    distanceKm: run.distanceKm,
+    timeSec: run.timeSec,
+    paceSecPerKm: computePaceSecPerKm(run.distanceKm, run.timeSec),
+    route: existing?.route ?? { type: "none" },
+    createdAt: existing?.createdAt ?? createdAt,
+    source: "intervals",
+  };
+  if (!(log.paceSecPerKm > 0)) return;
+  if (existing) {
+    const index = data.runLogs.findIndex((entry) => entry.id === existing.id);
+    if (index >= 0) data.runLogs[index] = log;
+    else data.runLogs.push(log);
+  } else {
+    data.runLogs.push(log);
+  }
+}
+
+function pickerResult(
+  pending: IntervalsRunChoice[],
+  skippedNoSession: boolean,
+): Extract<SettingsFormResult, { picker: IntervalsRunPickerState }> | null {
+  const [choice, ...remaining] = pending;
+  if (!choice) return null;
+  return { ok: true, picker: { choice, remaining, skippedNoSession } };
+}
+
+function syncFinishedRedirect(skippedNoSession: boolean): Extract<SettingsFormResult, { redirect: string }> {
+  return skippedNoSession
+    ? { ok: true, redirect: "/settings?toast=no-session" }
+    : { ok: true, redirect: "/settings" };
+}
+
+export async function applyChosenIntervalsRun(
+  userId: string,
+  run: IntervalsRunStats,
+  sessionId: string,
+): Promise<boolean> {
+  return enqueueWrite(async () => {
+    const data = await readTraining();
+    const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
+    if (!session || session.date !== run.date) return false;
+    const existingIndex = data.runLogs.findIndex(
+      (entry) => entry.userId === userId && entry.sessionId === session.id,
+    );
+    const existing = existingIndex >= 0 ? data.runLogs[existingIndex] : undefined;
+    if (existing && isManualRunLog(existing)) return false;
+    upsertImportedRunLog(data, userId, session, run, existing, new Date().toISOString());
+    await writeTraining(data);
+    return true;
+  });
+}
+
+export async function syncIntervalsForUser(userId: string): Promise<
+  | { ok: true; skippedNoSession: number; pendingChoices: IntervalsRunChoice[] }
+  | { ok: false; error: string }
+> {
+  if (!getIntervalsConnection(userId)) {
+    return { ok: false, error: INTERVALS_SYNC_ERROR };
+  }
+  const data = await readTraining();
+  const today = appTodayYmd();
+  const sessionDates = data.sessions.filter((entry) => entry.userId === userId).map((entry) => entry.date);
+  const oldestFromSessions =
+    sessionDates.length > 0 ? sessionDates.reduce((min, date) => (date < min ? date : min)) : today;
+  const oldest = oldestFromSessions < addDaysYmd(today, -27) ? oldestFromSessions : addDaysYmd(today, -27);
+  const fetched = await loadIntervalsRunsForSync(oldest, today);
+  if (!fetched.ok) {
+    await markIntervalsSyncError(userId);
+    return { ok: false, error: fetched.error };
+  }
+  const result = await applyIntervalsRuns(userId, fetched.runs);
+  await markIntervalsSyncSuccess(userId);
+  return {
+    ok: true,
+    skippedNoSession: result.skippedNoSession,
+    pendingChoices: result.pendingChoices,
+  };
+}
+
 export async function handleSettingsPost(
   userId: string,
   formData: FormData,
 ): Promise<SettingsFormResult> {
+  const intent = String(formData.get("intent") ?? "").trim();
+
+  if (intent === "intervals-connect") {
+    const result = await connectIntervals(userId);
+    if (!result.ok) return { ok: false, error: result.error, section: "intervals" };
+    return { ok: true, redirect: "/settings" };
+  }
+
+  if (intent === "intervals-sync") {
+    const result = await syncIntervalsForUser(userId);
+    if (!result.ok) {
+      if (!getIntervalsConnection(userId)) {
+        return { ok: false, error: result.error, section: "intervals" };
+      }
+      return { ok: true, redirect: "/settings" };
+    }
+    const picker = pickerResult(result.pendingChoices, result.skippedNoSession > 0);
+    if (picker) return picker;
+    return syncFinishedRedirect(result.skippedNoSession > 0);
+  }
+
+  if (intent === "intervals-pick-run" || intent === "intervals-skip-pick") {
+    const remaining = parseIntervalsRunChoiceList(String(formData.get("pickerRemaining") ?? ""));
+    const skippedNoSession = String(formData.get("skippedNoSession") ?? "") === "1";
+    if (intent === "intervals-pick-run") {
+      let postedRuns: unknown = [];
+      try {
+        postedRuns = JSON.parse(String(formData.get("pickerRuns") ?? "[]")) as unknown;
+      } catch {
+        postedRuns = [];
+      }
+      const current = parseIntervalsRunChoice({
+        date: String(formData.get("pickerDate") ?? ""),
+        sessionId: String(formData.get("pickerSessionId") ?? ""),
+        sessionDistanceKm: Number(formData.get("pickerSessionDistanceKm") ?? ""),
+        runs: postedRuns,
+        defaultActivityId: String(formData.get("activityId") ?? ""),
+      });
+      const selectedId = String(formData.get("activityId") ?? "");
+      const selected = current?.runs.find((run) => run.activityId === selectedId);
+      if (current && selected) {
+        await applyChosenIntervalsRun(userId, selected, current.sessionId);
+      }
+    }
+    const picker = pickerResult(remaining, skippedNoSession);
+    if (picker) return picker;
+    return syncFinishedRedirect(skippedNoSession);
+  }
+
+  if (intent === "intervals-disconnect") {
+    await disconnectIntervals(userId);
+    return { ok: true, redirect: "/settings" };
+  }
+
   const cadenceRaw = String(formData.get("feedbackCadence") ?? "").trim();
   if (!isFeedbackCadence(cadenceRaw)) {
-    return { ok: false, error: "Pick Daily, Weekly, or Monthly." };
+    return { ok: false, error: "Pick Daily, Weekly, or Monthly.", section: "cadence" };
   }
   const plan = await updateFeedbackCadence(userId, cadenceRaw);
   if (!plan) {
-    return { ok: false, error: "Couldn't save. Try again." };
+    return { ok: false, error: "Couldn't save. Try again.", section: "cadence" };
   }
   return { ok: true, redirect: "/settings?saved=1" };
 }
