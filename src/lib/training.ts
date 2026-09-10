@@ -60,11 +60,47 @@ export const WEEKDAYS = [
 
 export const DEFAULT_DAYS: Weekday[] = ["tue", "thu", "sat"];
 
+export const BASELINE_KINDS = ["last-race", "cooper", "skip"] as const;
+export type BaselineKind = (typeof BASELINE_KINDS)[number];
+
+export const RACE_DISTANCE_IDS = ["5k", "10k", "half", "marathon", "custom"] as const;
+export type RaceDistanceId = (typeof RACE_DISTANCE_IDS)[number];
+
+export const COOPER_DURATION_SEC = 720 as const;
+export const COOPER_MIN_KM = 0.5;
+export const COOPER_MAX_KM = 5;
+/** Soft pace band: 2:30–12:00 /km. Out of range warns; it does not block Continue. */
+export const PACE_SOFT_MIN_SEC_PER_KM = 150;
+export const PACE_SOFT_MAX_SEC_PER_KM = 720;
+export const BASELINE_ADJUSTMENT_MIN = 0.8;
+export const BASELINE_ADJUSTMENT_MAX = 1.2;
+
+export const RACE_DISTANCE_KM: Record<Exclude<RaceDistanceId, "custom">, number> = {
+  "5k": 5,
+  "10k": 10,
+  half: 21.0975,
+  marathon: 42.195,
+};
+
+export const RACE_DISTANCES = [
+  { id: "5k", label: "5K", km: 5 },
+  { id: "10k", label: "10K", km: 10 },
+  { id: "half", label: "Half", km: 21.0975 },
+  { id: "marathon", label: "Marathon", km: 42.195 },
+  { id: "custom", label: "Custom", km: null },
+] as const satisfies ReadonlyArray<{ id: RaceDistanceId; label: string; km: number | null }>;
+
+export type Baseline =
+  | { kind: "last-race"; distanceKm: number; timeSec: number; paceSecPerKm: number; date?: string }
+  | { kind: "cooper"; distanceKm: number; durationSec: 720 }
+  | { kind: "skip" };
+
 export type OnboardingAnswers = {
   goal: Goal;
   raceDate: string | null;
   level: Level;
   days: Weekday[];
+  baseline?: Baseline;
 };
 
 export type OnboardingRecord = {
@@ -73,6 +109,7 @@ export type OnboardingRecord = {
   raceDate?: string | null;
   level?: Level;
   days?: Weekday[];
+  baseline?: Baseline;
   updatedAt: string;
   completedAt?: string;
   planId?: string;
@@ -87,6 +124,7 @@ export type Plan = {
   raceDate: string | null;
   level: Level;
   days: Weekday[];
+  baseline?: Baseline;
 };
 
 export type Session = {
@@ -192,9 +230,11 @@ const WEEKDAY_INDEX: Record<Weekday, number> = {
   sat: 6,
 };
 
+export type OnboardingStep = 1 | 2 | 3 | 4;
+
 export type OnboardingFormResult =
   | { ok: true; redirect: string }
-  | { ok: false; error: string; step: 1 | 2 | 3 };
+  | { ok: false; error: string; step: OnboardingStep };
 
 export type TodayActionResult = { redirect: string };
 
@@ -227,6 +267,206 @@ function isLevel(value: string): value is Level {
 
 function isWeekday(value: string): value is Weekday {
   return (WEEKDAY_IDS as readonly string[]).includes(value);
+}
+
+function isBaselineKind(value: string): value is BaselineKind {
+  return (BASELINE_KINDS as readonly string[]).includes(value);
+}
+
+function isRaceDistanceId(value: string): value is RaceDistanceId {
+  return (RACE_DISTANCE_IDS as readonly string[]).includes(value);
+}
+
+export function parseHmsToSeconds(raw: string): number | null {
+  const value = raw.trim();
+  const match = /^(\d{1,2}):([0-5]\d):([0-5]\d)$/.exec(value);
+  if (!match) return null;
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+export function formatHms(totalSeconds: number): string {
+  const safe = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+export function formatPace(secPerKm: number): string {
+  if (!Number.isFinite(secPerKm) || secPerKm <= 0) return "";
+  const rounded = Math.round(secPerKm);
+  const minutes = Math.floor(rounded / 60);
+  const seconds = rounded % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")} /km`;
+}
+
+export function computePaceSecPerKm(distanceKm: number, timeSec: number): number {
+  if (!(distanceKm > 0) || !(timeSec > 0)) return 0;
+  return timeSec / distanceKm;
+}
+
+export function isPaceSoftOutOfRange(paceSecPerKm: number): boolean {
+  return paceSecPerKm < PACE_SOFT_MIN_SEC_PER_KM || paceSecPerKm > PACE_SOFT_MAX_SEC_PER_KM;
+}
+
+export function raceDistanceIdFromKm(distanceKm: number): RaceDistanceId {
+  const match = RACE_DISTANCES.find((distance) => distance.km !== null && Math.abs(distance.km - distanceKm) < 0.001);
+  return match?.id ?? "custom";
+}
+
+function parsePositiveNumber(raw: string): number | null {
+  const value = raw.trim().replace(",", ".");
+  if (!value) return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return amount;
+}
+
+/** Skip, omit, and null all mean “no baseline” — current Plan v1 heuristic. */
+export function isSkippedBaseline(baseline?: Baseline | null): boolean {
+  return !baseline || baseline.kind === "skip";
+}
+
+export function isPresentBaseline(
+  baseline?: Baseline | null,
+): baseline is Extract<Baseline, { kind: "last-race" } | { kind: "cooper" }> {
+  return Boolean(baseline && baseline.kind !== "skip");
+}
+
+export function isBaseline(value: unknown): value is Baseline {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<Baseline> & { kind?: string };
+  if (record.kind === "skip") return true;
+  if (record.kind === "cooper") {
+    const cooper = record as Extract<Baseline, { kind: "cooper" }>;
+    return (
+      typeof cooper.distanceKm === "number" &&
+      cooper.distanceKm >= COOPER_MIN_KM &&
+      cooper.distanceKm <= COOPER_MAX_KM &&
+      cooper.durationSec === COOPER_DURATION_SEC
+    );
+  }
+  if (record.kind === "last-race") {
+    const race = record as Extract<Baseline, { kind: "last-race" }>;
+    return (
+      typeof race.distanceKm === "number" &&
+      race.distanceKm > 0 &&
+      typeof race.timeSec === "number" &&
+      race.timeSec > 0 &&
+      typeof race.paceSecPerKm === "number" &&
+      race.paceSecPerKm > 0 &&
+      (race.date === undefined || typeof race.date === "string")
+    );
+  }
+  return false;
+}
+
+/** Expected equivalent 5K pace (sec/km) for the selected level. */
+const EXPECTED_PACE_SEC_PER_KM: Record<Level, number> = {
+  beginner: 420,
+  intermediate: 330,
+  advanced: 270,
+};
+
+/** Expected Cooper 12-minute distance (km) for the selected level. */
+const EXPECTED_COOPER_KM: Record<Level, number> = {
+  beginner: 1.8,
+  intermediate: 2.4,
+  advanced: 3.0,
+};
+
+function clampBaselineFactor(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return Math.min(BASELINE_ADJUSTMENT_MAX, Math.max(BASELINE_ADJUSTMENT_MIN, value));
+}
+
+function riegelEquivalentPaceSecPerKm(distanceKm: number, timeSec: number, targetKm = 5): number {
+  const equivalentTime = timeSec * (targetKm / distanceKm) ** 1.06;
+  return equivalentTime / targetKm;
+}
+
+/** Fitness vs the selected level. Skip / omit / null is 1. Last-race / Cooper are clamped to ±20%. */
+export function baselineFitnessFactor(baseline: Baseline | null | undefined, level: Level): number {
+  if (!isPresentBaseline(baseline)) return 1;
+  if (baseline.kind === "last-race") {
+    const actual = riegelEquivalentPaceSecPerKm(baseline.distanceKm, baseline.timeSec);
+    if (!(actual > 0)) return 1;
+    return clampBaselineFactor(EXPECTED_PACE_SEC_PER_KM[level] / actual);
+  }
+  return clampBaselineFactor(baseline.distanceKm / EXPECTED_COOPER_KM[level]);
+}
+
+export function parseBaselineForm(
+  formData: FormData,
+): { ok: true; baseline: Baseline } | { ok: false; error: string } {
+  const kindRaw = String(formData.get("baselineKind") ?? "");
+  if (!isBaselineKind(kindRaw)) {
+    return { ok: false, error: "Choose Last race, Cooper test, or Skip for now." };
+  }
+
+  if (kindRaw === "skip") {
+    return { ok: true, baseline: { kind: "skip" } };
+  }
+
+  if (kindRaw === "cooper") {
+    const amount = parsePositiveNumber(String(formData.get("cooperDistance") ?? ""));
+    if (amount === null) {
+      return { ok: false, error: "Enter the distance you covered." };
+    }
+    const unit = String(formData.get("cooperUnit") ?? "km");
+    const distanceKm = Math.round((unit === "m" ? amount / 1000 : amount) * 1000) / 1000;
+    if (distanceKm < COOPER_MIN_KM || distanceKm > COOPER_MAX_KM) {
+      return { ok: false, error: "Cooper distance must be between 0.5 and 5 km." };
+    }
+    return {
+      ok: true,
+      baseline: { kind: "cooper", distanceKm, durationSec: COOPER_DURATION_SEC },
+    };
+  }
+
+  const distanceIdRaw = String(formData.get("lastRaceDistance") ?? "");
+  if (!isRaceDistanceId(distanceIdRaw)) {
+    return { ok: false, error: "Pick a last-race distance." };
+  }
+
+  let distanceKm: number;
+  if (distanceIdRaw === "custom") {
+    const customKm = parsePositiveNumber(String(formData.get("lastRaceCustomKm") ?? ""));
+    if (customKm === null) {
+      return { ok: false, error: "Enter a custom distance in km." };
+    }
+    distanceKm = customKm;
+  } else {
+    distanceKm = RACE_DISTANCE_KM[distanceIdRaw];
+  }
+
+  const timeSec = parseHmsToSeconds(String(formData.get("lastRaceTime") ?? ""));
+  if (timeSec === null) {
+    return { ok: false, error: "Enter your time as hh:mm:ss." };
+  }
+  if (timeSec <= 0) {
+    return { ok: false, error: "Time must be greater than zero." };
+  }
+
+  const dateRaw = String(formData.get("lastRaceDate") ?? "").trim();
+  let date: string | undefined;
+  if (dateRaw) {
+    if (!isYmd(dateRaw)) {
+      return { ok: false, error: "Enter a valid last-race date, or leave it blank." };
+    }
+    if (dateRaw > appTodayYmd()) {
+      return { ok: false, error: "Last race date can’t be in the future." };
+    }
+    date = dateRaw;
+  }
+
+  const paceSecPerKm = computePaceSecPerKm(distanceKm, timeSec);
+  return {
+    ok: true,
+    baseline: date
+      ? { kind: "last-race", distanceKm, timeSec, paceSecPerKm, date }
+      : { kind: "last-race", distanceKm, timeSec, paceSecPerKm },
+  };
 }
 
 export { appTodayYmd };
@@ -521,7 +761,7 @@ function upsertOnboarding(data: TrainingFile, record: OnboardingRecord): void {
 
 export async function saveOnboardingDraft(
   userId: string,
-  patch: Partial<Pick<OnboardingRecord, "goal" | "raceDate" | "level" | "days">>,
+  patch: Partial<Pick<OnboardingRecord, "goal" | "raceDate" | "level" | "days" | "baseline">>,
 ): Promise<OnboardingRecord> {
   return enqueueWrite(async () => {
     const data = await readTraining();
@@ -601,6 +841,42 @@ function allocateDistances(
   return distances;
 }
 
+function applyBaselineAdjustment(
+  days: Weekday[],
+  kinds: Record<Weekday, SessionKind>,
+  baseDistances: Record<Weekday, number>,
+  baseline: Extract<Baseline, { kind: "last-race" } | { kind: "cooper" }>,
+  level: Level,
+): Record<Weekday, number> {
+  const factor = baselineFitnessFactor(baseline, level);
+  const adjusted = { ...baseDistances };
+  for (const day of days) {
+    const base = baseDistances[day];
+    const kind = kinds[day];
+    const scaled = kind === "easy" ? base * (2 - factor) : base * factor;
+    const min = Math.max(MIN_SESSION_KM, Math.ceil(base * BASELINE_ADJUSTMENT_MIN));
+    const max = Math.max(MIN_SESSION_KM, Math.floor(base * BASELINE_ADJUSTMENT_MAX));
+    if (min > max) {
+      adjusted[day] = base;
+    } else {
+      adjusted[day] = Math.min(max, Math.max(min, Math.round(scaled)));
+    }
+  }
+  return adjusted;
+}
+
+function planDistances(
+  days: Weekday[],
+  kinds: Record<Weekday, SessionKind>,
+  goal: Goal,
+  level: Level,
+  baseline?: Baseline,
+): Record<Weekday, number> {
+  const base = allocateDistances(days, kinds, WEEKLY_KM[goal][level]);
+  if (isSkippedBaseline(baseline) || !isPresentBaseline(baseline)) return base;
+  return applyBaselineAdjustment(days, kinds, base, baseline, level);
+}
+
 function dateOnOrAfter(startYmd: string, weekday: Weekday): string {
   const start = new Date(`${startYmd}T12:00:00.000Z`);
   const delta = (WEEKDAY_INDEX[weekday] - start.getUTCDay() + 7) % 7;
@@ -622,13 +898,16 @@ export function generatePlanV1(
     raceDate: answers.raceDate,
     level: answers.level,
     days: answers.days,
+    ...(answers.baseline ? { baseline: answers.baseline } : {}),
   };
 
   const kinds = assignKinds(answers.days);
-  const distances = allocateDistances(
+  const distances = planDistances(
     answers.days,
     kinds,
-    WEEKLY_KM[answers.goal][answers.level],
+    answers.goal,
+    answers.level,
+    answers.baseline,
   );
   const cutoff = answers.raceDate;
 
@@ -704,6 +983,7 @@ export async function completeOnboarding(
       raceDate: answers.raceDate,
       level: answers.level,
       days: answers.days,
+      baseline: answers.baseline,
       updatedAt: now,
       completedAt: now,
       planId: plan.id,
@@ -721,14 +1001,26 @@ function draftAnswers(draft: OnboardingRecord | null): Partial<OnboardingAnswers
     raceDate: draft?.raceDate ?? null,
     level: draft?.level,
     days: draft?.days,
+    baseline: isBaseline(draft?.baseline) ? draft?.baseline : undefined,
   };
 }
 
-export function onboardingStep(draft: OnboardingRecord | null, requested: number | null): 1 | 2 | 3 {
-  const max: 1 | 2 | 3 = draft?.goal && draft?.level ? 3 : draft?.goal ? 2 : 1;
+export function onboardingStep(
+  draft: OnboardingRecord | null,
+  requested: number | null,
+): OnboardingStep {
+  const max: OnboardingStep =
+    draft?.goal && draft?.level && isBaseline(draft.baseline)
+      ? 4
+      : draft?.goal && draft?.level
+        ? 3
+        : draft?.goal
+          ? 2
+          : 1;
   if (requested === 1) return 1;
   if (requested === 2) return max >= 2 ? 2 : max;
   if (requested === 3) return max >= 3 ? 3 : max;
+  if (requested === 4) return max >= 4 ? 4 : max;
   return max;
 }
 
@@ -768,6 +1060,21 @@ export async function handleOnboardingPost(
     return { ok: true, redirect: "/onboarding?step=3" };
   }
 
+  if (intent === "baseline") {
+    if (!draft?.goal) {
+      return { ok: false, error: "Pick a goal first.", step: 1 };
+    }
+    if (!draft?.level) {
+      return { ok: false, error: "Pick a level first.", step: 2 };
+    }
+    const parsed = parseBaselineForm(formData);
+    if (!parsed.ok) {
+      return { ok: false, error: parsed.error, step: 3 };
+    }
+    await saveOnboardingDraft(userId, { baseline: parsed.baseline });
+    return { ok: true, redirect: "/onboarding?step=4" };
+  }
+
   if (intent === "generate") {
     const answers = draftAnswers(draft);
     if (!answers.goal) {
@@ -776,6 +1083,9 @@ export async function handleOnboardingPost(
     if (!answers.level) {
       return { ok: false, error: "Pick a level first.", step: 2 };
     }
+    if (!answers.baseline) {
+      return { ok: false, error: "Choose a baseline, or skip for now.", step: 3 };
+    }
 
     const days = uniqueWeekdays(formData.getAll("days").map((value) => String(value)));
     if (days.length < MIN_TRAINING_DAYS) {
@@ -783,7 +1093,7 @@ export async function handleOnboardingPost(
       return {
         ok: false,
         error: `Pick at least ${MIN_TRAINING_DAYS} days you can run.`,
-        step: 3,
+        step: 4,
       };
     }
 
@@ -793,11 +1103,12 @@ export async function handleOnboardingPost(
         raceDate: answers.goal === "consistent" ? null : (answers.raceDate ?? null),
         level: answers.level,
         days,
+        baseline: answers.baseline,
       });
       return { ok: true, redirect: "/today" };
     } catch (error) {
       console.error("[training] generate plan failed", error);
-      return { ok: false, error: "Something went wrong. Try again.", step: 3 };
+      return { ok: false, error: "Something went wrong. Try again.", step: 4 };
     }
   }
 
