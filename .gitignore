@@ -8,3 +8,5 @@ dist/
 .DS_Store
 .impeccable/review/
 .impeccable/build/
+# Local Pi runtime state
+.atl/

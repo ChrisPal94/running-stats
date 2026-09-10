@@ -3,6 +3,9 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { AstroCookies } from "astro";
+import { loadLocalEnv } from "./load-env";
+
+loadLocalEnv();
 
 const scrypt = promisify(scryptCallback);
 
