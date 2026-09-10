@@ -5,7 +5,7 @@ import ConnectedApps from "../components/ConnectedApps.astro";
 import WhichRunSheet from "../components/WhichRunSheet.astro";
 import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession, userInitial } from "../lib/app-session";
-import { isSameOrigin } from "../lib/auth";
+import { isSameOrigin } from "../lib/public-origin";
 import { getIntervalsConnectionView, INTERVALS_NO_SESSION_TOAST } from "../lib/intervals";
 import {
   FEEDBACK_CADENCES,
