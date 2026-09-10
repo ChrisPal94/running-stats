@@ -1,8 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { addDaysYmd, appTodayYmd, calendarTodayYmd, endOfWeekSunday, startOfWeekMonday } from "./calendar";
-import { enqueueWrite, readJsonFile, writeJsonFile } from "./json-store";
+import { enqueueWrite, loadTrainingSnapshot, saveTrainingSnapshot } from "./db";
 
-const TRAINING_FILE = "training.json";
 const PLAN_WEEKS = 4;
 const MIN_SESSION_KM = 2;
 
@@ -236,15 +235,6 @@ type TrainingFile = {
   feedbacks: Feedback[];
   runLogs: RunLog[];
   adaptationEvents: AdaptationEvent[];
-};
-
-const EMPTY_TRAINING: TrainingFile = {
-  onboarding: [],
-  plans: [],
-  sessions: [],
-  feedbacks: [],
-  runLogs: [],
-  adaptationEvents: [],
 };
 
 const WEEKLY_KM: Record<Goal, Record<Level, number>> = {
@@ -756,7 +746,7 @@ function normalizeRunLogRecord(value: unknown): RunLog | undefined {
 }
 
 async function readTraining(): Promise<TrainingFile> {
-  const parsed = await readJsonFile<TrainingFile>(TRAINING_FILE, EMPTY_TRAINING);
+  const parsed = loadTrainingSnapshot();
   return {
     onboarding: Array.isArray(parsed.onboarding) ? parsed.onboarding : [],
     plans: Array.isArray(parsed.plans) ? parsed.plans : [],
@@ -773,15 +763,17 @@ async function readTraining(): Promise<TrainingFile> {
 
 /** Persist training data without creating or mutating AdaptationEvents. */
 async function writeTraining(data: TrainingFile): Promise<void> {
-  const onDisk = await readJsonFile<TrainingFile>(TRAINING_FILE, EMPTY_TRAINING);
-  await writeJsonFile(TRAINING_FILE, {
-    onboarding: data.onboarding,
-    plans: data.plans,
-    sessions: data.sessions,
-    feedbacks: data.feedbacks,
-    runLogs: data.runLogs,
-    adaptationEvents: Array.isArray(onDisk.adaptationEvents) ? onDisk.adaptationEvents : [],
-  });
+  saveTrainingSnapshot(
+    {
+      onboarding: data.onboarding,
+      plans: data.plans,
+      sessions: data.sessions,
+      feedbacks: data.feedbacks,
+      runLogs: data.runLogs,
+      adaptationEvents: data.adaptationEvents,
+    },
+    "preserve",
+  );
 }
 
 export async function getOnboarding(userId: string): Promise<OnboardingRecord | null> {
@@ -995,14 +987,17 @@ export async function commitAdaptationRun(input: {
       written.push(event);
     }
 
-    await writeJsonFile(TRAINING_FILE, {
-      onboarding: data.onboarding,
-      plans: data.plans,
-      sessions: data.sessions,
-      feedbacks: data.feedbacks,
-      runLogs: data.runLogs,
-      adaptationEvents: data.adaptationEvents,
-    });
+    saveTrainingSnapshot(
+      {
+        onboarding: data.onboarding,
+        plans: data.plans,
+        sessions: data.sessions,
+        feedbacks: data.feedbacks,
+        runLogs: data.runLogs,
+        adaptationEvents: data.adaptationEvents,
+      },
+      "replace",
+    );
     return written;
   });
 }

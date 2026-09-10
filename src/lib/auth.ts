@@ -1,8 +1,14 @@
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { promisify } from "node:util";
 import type { AstroCookies } from "astro";
+import {
+  enqueueWrite,
+  getUserByEmail,
+  getUserByGoogleId,
+  getUserById,
+  insertUser,
+  setUserGoogleId,
+} from "./db";
 import { loadLocalEnv } from "./load-env";
 
 loadLocalEnv();
@@ -37,10 +43,6 @@ type SessionPayload = {
   exp: number;
 };
 
-type UsersFile = {
-  users: StoredUser[];
-};
-
 export type AuthFormResult =
   | { ok: true; user: AuthUser }
   | { ok: false; error: string; email: string };
@@ -57,25 +59,6 @@ export type UpsertGoogleUserResult = {
   user: AuthUser;
   created: boolean;
 };
-
-let writeQueue: Promise<void> = Promise.resolve();
-
-function dataDir(): string {
-  return process.env.AUTH_DATA_DIR?.trim() || join(process.cwd(), ".data");
-}
-
-function usersPath(): string {
-  return join(dataDir(), "users.json");
-}
-
-function enqueueWrite<T>(fn: () => Promise<T>): Promise<T> {
-  const run = writeQueue.then(fn, fn);
-  writeQueue = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
 
 function getAuthSecret(): string {
   const secret = process.env.AUTH_SECRET?.trim();
@@ -152,28 +135,6 @@ function publicUser(user: StoredUser): AuthUser {
   return { id: user.id, email: user.email, createdAt: user.createdAt };
 }
 
-async function readUsers(): Promise<StoredUser[]> {
-  try {
-    const raw = await readFile(usersPath(), "utf8");
-    const parsed = JSON.parse(raw) as UsersFile;
-    return Array.isArray(parsed.users) ? parsed.users : [];
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-}
-
-async function writeUsers(users: StoredUser[]): Promise<void> {
-  const dir = dataDir();
-  await mkdir(dir, { recursive: true });
-  const dest = usersPath();
-  const tmp = `${dest}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(tmp, `${JSON.stringify({ users }, null, 2)}\n`, "utf8");
-  await rename(tmp, dest);
-}
-
 function signSession(userId: string): string {
   const payload = Buffer.from(
     JSON.stringify({
@@ -223,8 +184,7 @@ export function clearSessionCookie(cookies: AstroCookies): void {
 export async function getCurrentUser(cookies: AstroCookies): Promise<AuthUser | null> {
   const session = readSession(cookies.get(SESSION_COOKIE)?.value);
   if (!session) return null;
-  const users = await readUsers();
-  const user = users.find((entry) => entry.id === session.sub);
+  const user = getUserById(session.sub);
   return user ? publicUser(user) : null;
 }
 
@@ -245,8 +205,7 @@ export async function signupFromForm(
 
   try {
     return await enqueueWrite(async () => {
-      const users = await readUsers();
-      if (users.some((user) => user.email === email)) {
+      if (getUserByEmail(email)) {
         return {
           ok: false,
           error: "An account with this email already exists. Log in to continue.",
@@ -260,8 +219,7 @@ export async function signupFromForm(
         passwordHash: await hashPassword(password),
         createdAt: new Date().toISOString(),
       };
-      users.push(user);
-      await writeUsers(users);
+      insertUser(user);
       setSessionCookie(cookies, user.id);
       return { ok: true, user: publicUser(user) };
     });
@@ -287,8 +245,7 @@ export async function loginFromForm(
   if (invalid) return { ok: false, error: "Email or password is incorrect.", email };
 
   try {
-    const users = await readUsers();
-    const user = users.find((entry) => entry.email === email);
+    const user = getUserByEmail(email);
     const matches = user ? await verifyPassword(password, user.passwordHash) : false;
     if (!user || !matches) {
       return { ok: false, error: "Email or password is incorrect.", email };
@@ -405,17 +362,15 @@ export async function upsertGoogleUser(
   }
 
   return enqueueWrite(async () => {
-    const users = await readUsers();
-    const byGoogle = users.find((user) => user.googleId === googleId);
+    const byGoogle = getUserByGoogleId(googleId);
     if (byGoogle) {
       return { user: publicUser(byGoogle), created: false };
     }
 
-    const byEmail = users.find((user) => user.email === normalized);
+    const byEmail = getUserByEmail(normalized);
     if (byEmail) {
-      byEmail.googleId = googleId;
-      await writeUsers(users);
-      return { user: publicUser(byEmail), created: false };
+      setUserGoogleId(byEmail.id, googleId);
+      return { user: publicUser({ ...byEmail, googleId }), created: false };
     }
 
     const user: StoredUser = {
@@ -424,8 +379,7 @@ export async function upsertGoogleUser(
       googleId,
       createdAt: new Date().toISOString(),
     };
-    users.push(user);
-    await writeUsers(users);
+    insertUser(user);
     return { user: publicUser(user), created: true };
   });
 }
