@@ -10,6 +10,7 @@ import {
   getPlanForUser,
   handleOnboardingPost,
   onboardingStep,
+  type OnboardingStep,
 } from "../lib/training";
 
 const user = await getCurrentUser(Astro.cookies);
@@ -23,7 +24,7 @@ if (existingPlan && Astro.request.method !== "POST") {
 }
 
 let error = "";
-let step: 1 | 2 | 3 = 1;
+let step: OnboardingStep = 1;
 
 if (Astro.request.method === "POST") {
   if (!isSameOrigin(Astro.request)) {
@@ -50,13 +51,14 @@ const draft = await getOnboarding(user.id);
 const titles = {
   1: "Your goal",
   2: "Your level",
-  3: "Your days",
+  3: "Your baseline",
+  4: "Your days",
 } as const;
 ---
 
 <BaseLayout
   title={`${titles[step]} — Running Stats`}
-  description="Set up your adaptive training plan in three steps."
+  description="Set up your adaptive training plan in four steps."
 >
   <div class="relative isolate min-h-svh bg-ink">
     <Header />

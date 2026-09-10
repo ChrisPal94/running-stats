@@ -67,7 +67,7 @@ Use the Railway public HTTPS URL. Expect session cookies with `Secure`.
 
 1. **Landing** — `/` loads; **Start your plan** goes to `/signup`.
 2. **Signup** — email + password Continue → `/onboarding`.
-3. **Onboarding** — Goal → Level → Days (min 3) → **Generate my plan** → `/today`.
+3. **Onboarding** — Goal → Level → Baseline → Days (min 3) → **Generate my plan** → `/today`.
 4. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`.
 5. **Today** — Done / Skip / Feeling off persist. Empty copy is **No session today**. Why? stays non-interactive.
 6. **Login** — log out, then email Continue → `/today` (existing plan).
