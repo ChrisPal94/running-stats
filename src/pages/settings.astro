@@ -1,14 +1,18 @@
 ---
 export const prerender = false;
 
+import ConnectedApps from "../components/ConnectedApps.astro";
+import WhichRunSheet from "../components/WhichRunSheet.astro";
 import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession, userInitial } from "../lib/app-session";
 import { isSameOrigin } from "../lib/auth";
+import { getIntervalsConnectionView, INTERVALS_NO_SESSION_TOAST } from "../lib/intervals";
 import {
   FEEDBACK_CADENCES,
   handleSettingsPost,
   normalizeFeedbackCadence,
   type FeedbackCadence,
+  type IntervalsRunPickerState,
 } from "../lib/training";
 
 const gate = await requireAppSession(Astro.cookies);
@@ -19,24 +23,40 @@ if (!gate.ok) {
 const { user, plan } = gate;
 const initial = userInitial(user.email);
 
-let error = "";
+let cadenceError = "";
+let intervalsError = "";
+let runPicker: IntervalsRunPickerState | null = null;
 let selectedCadence: FeedbackCadence = normalizeFeedbackCadence(plan.feedbackCadence);
 
 if (Astro.request.method === "POST") {
   const formData = await Astro.request.formData();
-  selectedCadence = normalizeFeedbackCadence(String(formData.get("feedbackCadence") ?? ""));
+  const intent = String(formData.get("intent") ?? "");
+  if (intent === "save-cadence") {
+    selectedCadence = normalizeFeedbackCadence(String(formData.get("feedbackCadence") ?? ""));
+  }
   if (!isSameOrigin(Astro.request)) {
-    error = "This request could not be verified. Try again.";
+    const unverified = "This request could not be verified. Try again.";
+    if (intent.startsWith("intervals-")) intervalsError = unverified;
+    else cadenceError = unverified;
   } else {
     const result = await handleSettingsPost(user.id, formData);
     if (result.ok) {
-      return Astro.redirect(result.redirect);
+      if ("picker" in result) {
+        runPicker = result.picker;
+      } else {
+        return Astro.redirect(result.redirect);
+      }
+    } else if (result.section === "intervals") {
+      intervalsError = result.error;
+    } else {
+      cadenceError = result.error;
     }
-    error = result.error;
   }
 }
 
 const saved = Astro.url.searchParams.get("saved") === "1";
+const noSessionToast = Astro.url.searchParams.get("toast") === "no-session";
+const connection = getIntervalsConnectionView(user.id);
 ---
 
 <AppShell
@@ -51,21 +71,22 @@ const saved = Astro.url.searchParams.get("saved") === "1";
     >
       <h1 class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">You</h1>
       <form method="post" class="mt-6 flex flex-col gap-5">
+        <input type="hidden" name="intent" value="save-cadence" />
         <fieldset>
           <legend class="text-sm font-semibold text-cloud">Adaptation frequency</legend>
           <p class="mt-1 text-xs leading-5 text-mist">The plan updates after your runs on this schedule.</p>
           {
-            error && (
+            cadenceError && (
               <p
                 class="mt-3 rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
                 role="alert"
               >
-                {error}
+                {cadenceError}
               </p>
             )
           }
           {
-            saved && !error && (
+            saved && !cadenceError && (
               <p
                 class="mt-3 rounded-xl border border-lime/25 bg-lime/8 px-4 py-3 text-sm leading-6 text-[#d6ded6]"
                 role="status"
@@ -101,6 +122,8 @@ const saved = Astro.url.searchParams.get("saved") === "1";
       </form>
     </article>
 
+    <ConnectedApps connection={connection} error={intervalsError} />
+
     <article
       class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
     >
@@ -122,3 +145,31 @@ const saved = Astro.url.searchParams.get("saved") === "1";
     </article>
   </div>
 </AppShell>
+
+{runPicker ? <WhichRunSheet picker={runPicker} /> : null}
+
+{
+  noSessionToast ? (
+    <p
+      class="saved-toast pointer-events-none fixed inset-x-0 bottom-24 z-50 mx-auto w-max max-w-[min(100%-2rem,28rem)] rounded-full bg-lime px-4 py-2 text-center text-xs font-bold text-ink shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
+      data-no-session-toast
+      role="status"
+    >
+      {INTERVALS_NO_SESSION_TOAST}
+    </p>
+  ) : null
+}
+
+{
+  noSessionToast ? (
+    <script>
+      const toast = document.querySelector("[data-no-session-toast]");
+      window.setTimeout(() => {
+        if (toast instanceof HTMLElement) toast.hidden = true;
+        if (window.location.search.includes("toast=no-session")) {
+          history.replaceState({}, "", "/settings");
+        }
+      }, 1800);
+    </script>
+  ) : null
+}

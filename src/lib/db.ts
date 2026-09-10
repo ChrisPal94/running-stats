@@ -45,6 +45,15 @@ export type TrainingSnapshot = {
   adaptationEvents: AdaptationEvent[];
 };
 
+/** API key is env-only and is never stored here. */
+export type IntervalsConnection = {
+  userId: string;
+  athleteId: string;
+  connectedAt: string;
+  lastSyncAt?: string;
+  lastSyncError?: string;
+};
+
 type UserRow = {
   id: string;
   email: string;
@@ -113,6 +122,7 @@ type RunLogRow = {
   paceSecPerKm: number;
   routeJson: string | null;
   createdAt: string;
+  source: string | null;
 };
 
 type AdaptationEventRow = {
@@ -126,6 +136,14 @@ type AdaptationEventRow = {
   reason: string;
   sourceDate: string | null;
   createdAt: string;
+};
+
+type IntervalsConnectionRow = {
+  userId: string;
+  athleteId: string;
+  connectedAt: string;
+  lastSyncAt: string | null;
+  lastSyncError: string | null;
 };
 
 let db: DatabaseSync | null = null;
@@ -266,7 +284,8 @@ function applySchema(database: DatabaseSync): void {
       timeSec INTEGER NOT NULL,
       paceSecPerKm REAL NOT NULL,
       routeJson TEXT,
-      createdAt TEXT NOT NULL
+      createdAt TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual'
     );
 
     CREATE TABLE IF NOT EXISTS adaptation_events (
@@ -282,6 +301,14 @@ function applySchema(database: DatabaseSync): void {
       createdAt TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS intervals_connections (
+      userId TEXT PRIMARY KEY,
+      athleteId TEXT NOT NULL,
+      connectedAt TEXT NOT NULL,
+      lastSyncAt TEXT,
+      lastSyncError TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS plans_userId ON plans(userId);
     CREATE INDEX IF NOT EXISTS sessions_planId ON sessions(planId);
     CREATE INDEX IF NOT EXISTS sessions_userId_date ON sessions(userId, date);
@@ -291,6 +318,7 @@ function applySchema(database: DatabaseSync): void {
   `);
   ensureColumn(database, "onboarding", "feedbackCadence", "TEXT");
   ensureColumn(database, "plans", "feedbackCadence", "TEXT NOT NULL DEFAULT 'daily'");
+  ensureColumn(database, "run_logs", "source", "TEXT NOT NULL DEFAULT 'manual'");
 }
 
 function tableColumns(database: DatabaseSync, table: string): Set<string> {
@@ -511,10 +539,22 @@ function runLogFromRow(row: RunLogRow): RunLog {
     timeSec: row.timeSec,
     paceSecPerKm: row.paceSecPerKm,
     createdAt: row.createdAt,
+    source: row.source === "intervals" ? "intervals" : "manual",
   };
   const route = parseJsonValue<RunLog["route"]>(row.routeJson, undefined);
   if (route) log.route = route;
   return log;
+}
+
+function intervalsConnectionFromRow(row: IntervalsConnectionRow): IntervalsConnection {
+  const connection: IntervalsConnection = {
+    userId: row.userId,
+    athleteId: row.athleteId,
+    connectedAt: row.connectedAt,
+  };
+  if (row.lastSyncAt) connection.lastSyncAt = row.lastSyncAt;
+  if (row.lastSyncError) connection.lastSyncError = row.lastSyncError;
+  return connection;
 }
 
 function adaptationFromRow(row: AdaptationEventRow): AdaptationEvent {
@@ -621,8 +661,8 @@ function insertFeedbackRow(feedback: Feedback): void {
 
 function insertRunLogRow(log: RunLog): void {
   run(
-    `INSERT INTO run_logs (id, userId, sessionId, planId, distanceKm, timeSec, paceSecPerKm, routeJson, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO run_logs (id, userId, sessionId, planId, distanceKm, timeSec, paceSecPerKm, routeJson, createdAt, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     log.id,
     log.userId,
     log.sessionId,
@@ -632,6 +672,7 @@ function insertRunLogRow(log: RunLog): void {
     log.paceSecPerKm,
     jsonText(log.route),
     log.createdAt,
+    log.source === "intervals" ? "intervals" : "manual",
   );
 }
 
@@ -743,7 +784,7 @@ export function loadTrainingSnapshot(): TrainingSnapshot {
   const runLogs = (
     database
       .prepare(
-        "SELECT id, userId, sessionId, planId, distanceKm, timeSec, paceSecPerKm, routeJson, createdAt FROM run_logs",
+        "SELECT id, userId, sessionId, planId, distanceKm, timeSec, paceSecPerKm, routeJson, createdAt, source FROM run_logs",
       )
       .all() as RunLogRow[]
   ).map(runLogFromRow);
@@ -764,4 +805,38 @@ export function saveTrainingSnapshot(
   adaptationEvents: "preserve" | "replace" = "preserve",
 ): void {
   withTransaction(() => replaceTraining(data, adaptationEvents));
+}
+
+export function getIntervalsConnection(userId: string): IntervalsConnection | null {
+  const row = getDb()
+    .prepare(
+      "SELECT userId, athleteId, connectedAt, lastSyncAt, lastSyncError FROM intervals_connections WHERE userId = ?",
+    )
+    .get(userId) as IntervalsConnectionRow | undefined;
+  return row ? intervalsConnectionFromRow(row) : null;
+}
+
+export function upsertIntervalsConnection(connection: IntervalsConnection): void {
+  withTransaction(() => {
+    run(
+      `INSERT INTO intervals_connections (userId, athleteId, connectedAt, lastSyncAt, lastSyncError)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(userId) DO UPDATE SET
+         athleteId = excluded.athleteId,
+         connectedAt = excluded.connectedAt,
+         lastSyncAt = excluded.lastSyncAt,
+         lastSyncError = excluded.lastSyncError`,
+      connection.userId,
+      connection.athleteId,
+      connection.connectedAt,
+      text(connection.lastSyncAt),
+      text(connection.lastSyncError),
+    );
+  });
+}
+
+export function deleteIntervalsConnection(userId: string): void {
+  withTransaction(() => {
+    run("DELETE FROM intervals_connections WHERE userId = ?", userId);
+  });
 }

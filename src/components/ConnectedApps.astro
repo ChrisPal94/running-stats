@@ -1,0 +1,82 @@
+---
+import {
+  INTERVALS_CONNECT_COPY,
+  type IntervalsConnectionView,
+} from "../lib/intervals";
+
+interface Props {
+  connection: IntervalsConnectionView;
+  error?: string;
+}
+
+const { connection, error = "" } = Astro.props;
+const secondaryClass =
+  "inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]";
+const primaryClass =
+  "inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]";
+---
+
+<article
+  class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
+>
+  <h2 class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Connected apps</h2>
+  <div class="mt-6 flex items-start justify-between gap-4">
+    <div class="min-w-0">
+      <p class="text-sm font-semibold text-cloud">Intervals.icu</p>
+      <p class="mt-1 text-xs leading-5 text-mist">{connection.statusLabel}</p>
+    </div>
+  </div>
+
+  {
+    error && (
+      <p
+        class="mt-4 rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
+        role="alert"
+      >
+        {error}
+      </p>
+    )
+  }
+
+  {
+    connection.connected ? (
+      <>
+        {connection.lastSyncLabel ? (
+          <p
+            class:list={[
+              "mt-4 text-xs leading-5",
+              connection.lastSyncError ? "text-[#ffb4aa]" : "text-mist",
+            ]}
+            role={connection.lastSyncError ? "status" : undefined}
+          >
+            {connection.lastSyncLabel}
+          </p>
+        ) : null}
+        <div class="mt-5 flex flex-col gap-2 sm:flex-row">
+          <form method="post" class="sm:flex-1">
+            <input type="hidden" name="intent" value="intervals-sync" />
+            <button type="submit" class={primaryClass}>
+              Sync now
+            </button>
+          </form>
+          <form method="post" class="sm:flex-1">
+            <input type="hidden" name="intent" value="intervals-disconnect" />
+            <button type="submit" class={secondaryClass}>
+              Disconnect
+            </button>
+          </form>
+        </div>
+      </>
+    ) : (
+      <>
+        <p class="mt-4 text-xs leading-5 text-mist">{INTERVALS_CONNECT_COPY}</p>
+        <form method="post" class="mt-5">
+          <input type="hidden" name="intent" value="intervals-connect" />
+          <button type="submit" class={primaryClass}>
+            Connect
+          </button>
+        </form>
+      </>
+    )
+  }
+</article>
