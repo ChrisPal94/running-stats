@@ -1,0 +1,32 @@
+---
+export const prerender = false;
+
+import PageLayout from "../layouts/PageLayout.astro";
+import { getCurrentUser } from "../lib/auth";
+
+const user = await getCurrentUser(Astro.cookies);
+if (!user) {
+  return Astro.redirect("/signup");
+}
+---
+
+<PageLayout
+  title="Onboarding — Running Stats"
+  description="Set up your adaptive training plan."
+  heading="You're in"
+  eyebrow="Onboarding"
+>
+  <p>
+    Your account is ready. The next step is a short onboarding flow to start your
+    plan—that work lands in a later PR.
+  </p>
+  <p class="text-mist">Signed in as {user.email}</p>
+  <form method="post" action="/logout">
+    <button
+      type="submit"
+      class="inline-flex items-center gap-2 border-b border-lime pb-1 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
+    >
+      Log out
+    </button>
+  </form>
+</PageLayout>

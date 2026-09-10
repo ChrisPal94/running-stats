@@ -1,0 +1,42 @@
+---
+export const prerender = false;
+
+import AuthForm from "../components/AuthForm.astro";
+import PageLayout from "../layouts/PageLayout.astro";
+import { authPageError, getCurrentUser, loginFromForm } from "../lib/auth";
+
+const existing = await getCurrentUser(Astro.cookies);
+if (existing) {
+  return Astro.redirect("/today");
+}
+
+let formError = "";
+let email = "";
+
+if (Astro.request.method === "POST") {
+  const result = await loginFromForm(Astro.request, Astro.cookies);
+  if (result.ok) {
+    return Astro.redirect("/today");
+  }
+  formError = result.error;
+  email = result.email;
+}
+
+const error = authPageError(Astro.url, formError);
+---
+
+<PageLayout
+  title="Welcome back — Running Stats"
+  description="Welcome back. Sign in to continue today's run."
+  heading="Welcome back"
+>
+  <p>Welcome back. Sign in with email and password, or continue with Google.</p>
+  <AuthForm
+    email={email}
+    error={error}
+    passwordAutocomplete="current-password"
+    footerHref="/signup"
+    footerLabel="New here? Start your plan"
+    googleFrom="login"
+  />
+</PageLayout>

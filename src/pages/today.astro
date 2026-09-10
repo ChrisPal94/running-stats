@@ -1,0 +1,32 @@
+---
+export const prerender = false;
+
+import PageLayout from "../layouts/PageLayout.astro";
+import { getCurrentUser } from "../lib/auth";
+
+const user = await getCurrentUser(Astro.cookies);
+if (!user) {
+  return Astro.redirect("/login");
+}
+---
+
+<PageLayout
+  title="Today — Running Stats"
+  description="Today's session will live here."
+  heading="Today"
+  eyebrow="Hoy"
+>
+  <p>
+    Welcome back. Today's session, the week, and progress will live in the app
+    shell—that work lands in a later PR.
+  </p>
+  <p class="text-mist">Signed in as {user.email}</p>
+  <form method="post" action="/logout">
+    <button
+      type="submit"
+      class="inline-flex items-center gap-2 border-b border-lime pb-1 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
+    >
+      Log out
+    </button>
+  </form>
+</PageLayout>

@@ -1,6 +1,10 @@
 node_modules/
 dist/
 .astro/
+.data/
+.env
+.env.*
+!.env.example
 .DS_Store
 .impeccable/review/
 .impeccable/build/

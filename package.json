@@ -7,10 +7,12 @@
     "dev": "astro dev",
     "build": "astro check && astro build",
     "preview": "astro preview",
+    "start": "node ./dist/server/entry.mjs",
     "check": "astro check"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
+    "@astrojs/node": "^10.1.4",
     "@tailwindcss/vite": "^4.1.13",
     "astro": "^6.3.1",
     "sharp": "0.35.4",
@@ -20,5 +22,8 @@
   "overrides": {
     "vite": "^7",
     "sharp": "0.35.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2"
   }
 }
