@@ -74,7 +74,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 
 - Routes: `/signup`, `/login`, `/logout` (POST), `/auth/google`, `/auth/google/callback`, `/onboarding`, `/today`, `/plan`, `/progress`, `/settings`.
 - Stack: Astro 7 + Vite 8, `@astrojs/node` 11.x (`standalone`). Landing stays prerendered; auth, onboarding, and shell routes set `prerender = false`.
-- Identity: email + scrypt password hash and/or Google account id in a local JSON store (`.data/users.json` by default). HMAC-signed `rs_session` cookie.
+- Identity: email + scrypt password hash and/or Google account id in SQLite (`.data/app.db` by default, or `AUTH_DATA_DIR/app.db`). HMAC-signed `rs_session` cookie. On first boot, if the DB is empty and `.data/users.json` / `.data/training.json` exist, they are imported once; SQLite is then the source of truth.
 - Google: real OAuth redirect when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL` are set. If they are missing, Continue with Google shows “Couldn’t connect to Google. Try email or try again.” Email + password still works.
 - After signup (email or first Google), Continue goes to `/onboarding`. After login (email or returning Google), Continue goes to `/today` if a plan exists, otherwise `/onboarding`.
 - Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`. Adapt job: `ADAPT_CRON_SECRET` (required for `/api/adapt`). Optional LLM: `ADAPT_LLM_API_KEY`, `ADAPT_LLM_BASE_URL`, `ADAPT_LLM_MODEL`. No separate `SITE` / `APP_URL` — public origin is the request URL / `GOOGLE_CALLBACK_URL`.
@@ -85,16 +85,16 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - Signed-in only. Logged-out visits to `/onboarding` redirect to `/signup`.
 - Four steps with progress 1/4–4/4: **Goal** (5K, 10K, Half, Marathon, Just consistent; optional race date), **Level** (Beginner, Intermediate, Advanced), **Baseline** (Last race | Cooper test | Skip for now), **Days** (M–S toggles, minimum 3). CTA **Generate my plan** creates Plan v1 + Sessions and continues to `/today`.
 - Baseline is stored on `OnboardingRecord`, `OnboardingAnswers`, and `Plan` (`version: 1`) as the same optional discriminated union: `{ kind: "last-race"; distanceKm; timeSec; paceSecPerKm; date? }` | `{ kind: "cooper"; distanceKm; durationSec: 720 }` | `{ kind: "skip" }`. Last-race `paceSecPerKm` is computed server-side as `timeSec / distanceKm` (client pace is display-only; typical band ~150–720 s/km). Cooper distance is 0.5–5 km and `durationSec` is always 720. Skip, omit, or null keeps the current Plan v1 heuristic. Last-race / Cooper may change session volumes/intensities by at most ±20% vs that heuristic. Wizard steps are 1|2|3|4 (Baseline=3, Days=4).
-- Answers, plans, and sessions persist in `.data/training.json` (same `AUTH_DATA_DIR` JSON store pattern as users). No AdaptationEvent is written here.
+- Answers, plans, sessions, Baseline, Feedback, and RunLogs persist in `.data/app.db` (same `AUTH_DATA_DIR` as users). No AdaptationEvent is written here.
 
 ## App shell (MVP)
 
 - Signed-in with a plan only. Logged-out visits to `/today`, `/plan`, `/progress`, and `/settings` redirect to `/login`. Signed-in without a plan redirects to `/onboarding`.
-- Calendar day and “hoy” use `America/Guayaquil`. A new Guayaquil day starts at 05:00 UTC (UTC−5, no DST). Session dates in `training.json` are civil `YYYY-MM-DD` values compared to that calendar day — not `Date#toISOString()` UTC.
+- Calendar day and “hoy” use `America/Guayaquil`. A new Guayaquil day starts at 05:00 UTC (UTC−5, no DST). Session dates in SQLite are civil `YYYY-MM-DD` values compared to that calendar day — not `Date#toISOString()` UTC.
 - **Today (`/today`):** the Session whose `date` equals today’s Guayaquil date. Empty copy: **No session today**. Skip / Feeling off persist Feedback immediately (Skip also sets session `outcome`) and never show a map. **Done** opens a bottom sheet and does not persist until **Save** or **Skip map**. Save writes Feedback (`kind: "done"`) plus a `RunLog`. Skip map writes Feedback only (no `RunLog`). Planned `Session.distanceKm` is unchanged. AdaptationEvents are loaded for display only (chip `title` + `summary`; never written here). **Why?** is clickable only when `reason` is non-empty and opens the Why this changed sheet.
 - **Why this changed:** mobile-first **bottom sheet** (~390), not a centered modal. Header **Why this changed** + X / swipe down. Body: `reason` (1–2 lines) plus optional **Based on:** Done | Skip | Feeling off for the source day’s Feedback. Footer **Got it** closes. Empty `reason` → no clickable Why? control. A11y: `aria-modal`, focus trap (`showModal()`), Esc. Copy is provisional EN.
 - **Log this run (Done only):** mobile-first **bottom sheet** (~390), not a centered modal. Header **Log this run** + X / swipe down. Map shows a GPS polyline when `route.type === "polyline"`; otherwise a pin and **No route yet**. Editable Distance (km), Time (hh:mm:ss), Pace (auto, editable). Distance prefills from the Session target when present; time and pace start empty. Pace is recomputed server-side as `timeSec / distanceKm` (client pace is not trusted). Time `> 0` is required (`hh:mm:ss`; `mm:ss` accepted). Distance 0.1–100 km. Pace outside ~150–720 s/km (~2:30–12:00 /km) is a soft warning and does not block Save. Primary **Save** closes the sheet and shows a brief **Saved** toast. Secondary **Skip map** closes without writing a `RunLog`. A11y: `aria-modal`, focus trap, Esc. `route` is `{ type: "none" }` for MVP (no GPS hardware); polyline `coords` can be stored later. No Strava attach. After Save, Today shows the map and logged stats when a `RunLog` exists.
-- **RunLog (Zelda):** stored in `.data/training.json` as `runLogs[]`, separate from Feedback. Shape: `{ id, userId, sessionId, planId, distanceKm, timeSec, paceSecPerKm, route?: { type: "polyline"; coords } | { type: "none" }, createdAt }`. 1:1 with `Feedback.sessionId`. Skip map = no write.
+- **RunLog (Zelda):** stored in `.data/app.db` (`run_logs`), separate from Feedback. Shape: `{ id, userId, sessionId, planId, distanceKm, timeSec, paceSecPerKm, route?: { type: "polyline"; coords } | { type: "none" }, createdAt }`. 1:1 with `Feedback.sessionId`. Skip map = no write.
 - **Plan (`/plan`):** week strip M–S for the Guayaquil week (Monday–Sunday) and up to three remaining sessions this week.
 - **Progress (`/progress`):** labels **Consistency**, **Easy pace**, **Weekly distance**. Consistency and weekly distance come from this week’s planned sessions. Easy pace uses this week’s `RunLog` paces on easy sessions when present; otherwise it stays provisional.
 - **Settings (`/settings`):** avatar/settings entry — email and log out. Further account settings are later work.
@@ -107,7 +107,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - **If Feedback exists:** write one AdaptationEvent and adjust **tomorrow’s Session(s) only** — never an opaque full Plan rewrite. Idempotent per user + source day.
 - **Copy (provisional EN):** `title` is always `Plan adjusted`. `summary` is one line of what changes tomorrow (e.g. Easy run shortened to 5 km). `reason` is one line why (e.g. Higher effort yesterday / You skipped Tuesday). No CTL/ATL jargon, no freeform coach chat.
 - **Today UI:** chip shows `title` + `summary`. **Why?** opens the sheet with `reason` when non-empty; otherwise the control is omitted.
-- **Heuristic (when `ADAPT_LLM_API_KEY` is unset):** skip / feeling-off ease tomorrow (shorter; intervals/tempo/long become easy). Done shortens tomorrow after higher effort. JSON store: `.data/training.json` (`AUTH_DATA_DIR`).
+- **Heuristic (when `ADAPT_LLM_API_KEY` is unset):** skip / feeling-off ease tomorrow (shorter; intervals/tempo/long become easy). Done shortens tomorrow after higher effort. SQLite store: `.data/app.db` (`AUTH_DATA_DIR`).
 - **LLM (optional):** if `ADAPT_LLM_API_KEY` is set, the job asks an OpenAI-compatible `/chat/completions` endpoint for **typed JSON** (`title`, `summary`, `reason`, `distanceKm`, `kind`). On failure it logs and **does not mutate** the plan (retry next run). Unset key = heuristic, still only when Feedback exists.
 
 ## Deploy (Railway)
@@ -115,7 +115,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 See **DEPLOY.md** for variables and Bowser smoke tests.
 
 - **Web:** build `npm run build`, start `HOST=0.0.0.0 node ./dist/server/entry.mjs` (`npm start`).
-- **Volume:** mounted at `.data` (default `AUTH_DATA_DIR`).
+- **Volume:** mounted at `.data` (default `AUTH_DATA_DIR`; SQLite file `app.db`).
 - **Cron:** `0 2 * * *` UTC (= 21:00 America/Guayaquil) `curl` `POST` `/api/adapt` with `Authorization: Bearer $ADAPT_CRON_SECRET`.
 
 ## Security / deps (tech note)

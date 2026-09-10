@@ -11,10 +11,11 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 | Build | `npm run build` (`astro check && astro build`) |
 | Start | `HOST=0.0.0.0 node ./dist/server/entry.mjs` (`npm start`) |
 | Volume | Mount at `.data` (Nixpacks workdir is `/app`, so `/app/.data`) |
+| Runtime | Node 22.14+ (built-in `node:sqlite`; no extra native module) |
 
 Nixpacks already runs `npm run build` and `npm start`. Keep the start command as `npm start` (or the `HOST=0.0.0.0 node ./dist/server/entry.mjs` equivalent). Do not use `astro preview` in production.
 
-JSON files live under `.data` (`users.json`, `training.json`). Without a volume they disappear on every deploy.
+The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents). Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot.
 
 ## Environment
 
@@ -24,7 +25,7 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | --- | --- | --- |
 | `AUTH_SECRET` | Yes | Session HMAC. Random, 16+ characters (`openssl rand -base64 32`). |
 | `AUTH_COOKIE_SECURE` | No | Defaults to Secure in production. Set `true` on HTTPS, or omit. |
-| `AUTH_DATA_DIR` | No | Default `.data`. Omit if the volume is mounted there. |
+| `AUTH_DATA_DIR` | No | Default `.data`. SQLite file is `app.db` inside it. Omit if the volume is mounted at `.data`. |
 | `GOOGLE_CLIENT_ID` | For Google | OAuth 2.0 Web client. |
 | `GOOGLE_CLIENT_SECRET` | For Google | OAuth 2.0 Web client. |
 | `GOOGLE_CALLBACK_URL` | For Google | `https://<public-host>/auth/google/callback` — must match Google Cloud Console exactly. |
@@ -72,7 +73,7 @@ Use the Railway public HTTPS URL. Expect session cookies with `Secure`.
 5. **Today** — Skip / Feeling off persist immediately (no map). Done opens **Log this run** bottom sheet; Save writes a `RunLog` and toasts **Saved**; Skip map writes Feedback only. Empty copy is **No session today**. AdaptationEvent **Why?** opens **Why this changed** when `reason` is present; no Why? control when `reason` is empty.
 6. **Login** — log out, then email Continue → `/today` (existing plan).
 7. **Google** (if env is set) — Continue with Google on `/signup` and `/login`; first Google → onboarding, returning Google with a plan → `/today`. Missing/wrong Google env → **Couldn’t connect to Google. Try email or try again.**
-8. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there.
+8. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there (`app.db` on the volume).
 9. **Adapt HTTP** — `POST /api/adapt` without `Authorization` → `401`. With `Authorization: Bearer $ADAPT_CRON_SECRET` → `200` JSON (`processed` / `written` / `skipped` / `patched`). No Feedback that day → `written: 0` is success, not a failure.
 
 Out of scope for this deploy pass: screenshots, Strava, live plan editing.
