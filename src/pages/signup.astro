@@ -3,14 +3,14 @@ export const prerender = false;
 
 import AuthForm from "../components/AuthForm.astro";
 import PageLayout from "../layouts/PageLayout.astro";
-import { getCurrentUser, signupFromForm } from "../lib/auth";
+import { authPageError, getCurrentUser, signupFromForm } from "../lib/auth";
 
 const existing = await getCurrentUser(Astro.cookies);
 if (existing) {
   return Astro.redirect("/today");
 }
 
-let error = "";
+let formError = "";
 let email = "";
 
 if (Astro.request.method === "POST") {
@@ -18,25 +18,25 @@ if (Astro.request.method === "POST") {
   if (result.ok) {
     return Astro.redirect("/onboarding");
   }
-  error = result.error;
+  formError = result.error;
   email = result.email;
 }
+
+const error = authPageError(Astro.url, formError);
 ---
 
 <PageLayout
   title="Start your plan — Running Stats"
-  description="Start your plan with email and password. A training plan that adapts after every run—so you always know what to run next, and why."
+  description="Start your plan with email and password, or continue with Google. A training plan that adapts after every run—so you always know what to run next, and why."
   heading="Start your plan"
 >
-  <p>
-    Start your plan with email and password. This account is yours—no Google or Strava
-    sign-in.
-  </p>
+  <p>Start your plan with email and password, or continue with Google.</p>
   <AuthForm
     email={email}
     error={error}
     passwordAutocomplete="new-password"
     footerHref="/login"
     footerLabel="Already training? Log in"
+    googleFrom="signup"
   />
 </PageLayout>

@@ -8,10 +8,15 @@ const scrypt = promisify(scryptCallback);
 
 const SESSION_COOKIE = "rs_session";
 const SESSION_DAYS = 30;
+const GOOGLE_OAUTH_COOKIE = "rs_google_oauth";
+const GOOGLE_OAUTH_MINUTES = 10;
 const PASSWORD_KEYLEN = 64;
 const EMAIL_MAX = 254;
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 128;
+
+export const GOOGLE_AUTH_ERROR =
+  "Couldn’t connect to Google. Try email or try again.";
 
 export type AuthUser = {
   id: string;
@@ -20,7 +25,8 @@ export type AuthUser = {
 };
 
 type StoredUser = AuthUser & {
-  passwordHash: string;
+  passwordHash?: string;
+  googleId?: string;
 };
 
 type SessionPayload = {
@@ -35,6 +41,19 @@ type UsersFile = {
 export type AuthFormResult =
   | { ok: true; user: AuthUser }
   | { ok: false; error: string; email: string };
+
+export type GoogleOAuthFrom = "login" | "signup";
+
+export type GoogleOAuthState = {
+  nonce: string;
+  from: GoogleOAuthFrom;
+  verifier: string;
+};
+
+export type UpsertGoogleUserResult = {
+  user: AuthUser;
+  created: boolean;
+};
 
 let writeQueue: Promise<void> = Promise.resolve();
 
@@ -114,7 +133,8 @@ async function hashPassword(password: string): Promise<string> {
   return `scrypt:${salt.toString("base64url")}:${hash.toString("base64url")}`;
 }
 
-async function verifyPassword(password: string, stored: string): Promise<boolean> {
+async function verifyPassword(password: string, stored: string | undefined): Promise<boolean> {
+  if (!stored) return false;
   const [algo, saltB64, hashB64] = stored.split(":");
   if (algo !== "scrypt" || !saltB64 || !hashB64) return false;
 
@@ -277,4 +297,127 @@ export async function loginFromForm(
     console.error("[auth] login failed", error);
     return { ok: false, error: "Something went wrong. Try again.", email };
   }
+}
+
+export function parseGoogleOAuthFrom(value: string | null): GoogleOAuthFrom {
+  return value === "login" ? "login" : "signup";
+}
+
+export function googleAuthErrorPath(from: GoogleOAuthFrom): string {
+  return `/${from}?error=google`;
+}
+
+export function authPageError(url: URL, formError: string): string {
+  if (formError) return formError;
+  if (url.searchParams.get("error") === "google") return GOOGLE_AUTH_ERROR;
+  return "";
+}
+
+type GoogleOAuthCookiePayload = GoogleOAuthState & { exp: number };
+
+function signGoogleOAuthState(state: GoogleOAuthCookiePayload): string {
+  const payload = Buffer.from(JSON.stringify(state)).toString("base64url");
+  const sig = createHmac("sha256", getAuthSecret()).update(payload).digest("base64url");
+  return `${payload}.${sig}`;
+}
+
+function readGoogleOAuthCookie(token: string | undefined): GoogleOAuthCookiePayload | null {
+  if (!token) return null;
+  const [payload, sig] = token.split(".");
+  if (!payload || !sig) return null;
+
+  const expected = createHmac("sha256", getAuthSecret()).update(payload).digest("base64url");
+  const actualBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (actualBuf.length !== expectedBuf.length || !timingSafeEqual(actualBuf, expectedBuf)) {
+    return null;
+  }
+
+  try {
+    const data = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as GoogleOAuthCookiePayload;
+    if (
+      !data.nonce ||
+      !data.verifier ||
+      (data.from !== "login" && data.from !== "signup") ||
+      typeof data.exp !== "number" ||
+      data.exp < Date.now()
+    ) {
+      return null;
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export function setGoogleOAuthState(
+  cookies: AstroCookies,
+  from: GoogleOAuthFrom,
+  verifier: string,
+): string {
+  const nonce = randomBytes(16).toString("base64url");
+  cookies.set(
+    GOOGLE_OAUTH_COOKIE,
+    signGoogleOAuthState({
+      nonce,
+      from,
+      verifier,
+      exp: Date.now() + GOOGLE_OAUTH_MINUTES * 60 * 1000,
+    }),
+    {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: cookieSecure(),
+      maxAge: GOOGLE_OAUTH_MINUTES * 60,
+    },
+  );
+  return nonce;
+}
+
+export function takeGoogleOAuthState(
+  cookies: AstroCookies,
+  nonce: string | null,
+): GoogleOAuthState | null {
+  const data = readGoogleOAuthCookie(cookies.get(GOOGLE_OAUTH_COOKIE)?.value);
+  cookies.delete(GOOGLE_OAUTH_COOKIE, { path: "/" });
+  if (!data || !nonce || data.nonce !== nonce) return null;
+  return { nonce: data.nonce, from: data.from, verifier: data.verifier };
+}
+
+export async function upsertGoogleUser(
+  googleId: string,
+  email: string,
+): Promise<UpsertGoogleUserResult> {
+  const normalized = email.trim().toLowerCase();
+  if (!googleId || !isEmail(normalized)) {
+    throw new Error("Google account is missing a verified email.");
+  }
+
+  return enqueueWrite(async () => {
+    const users = await readUsers();
+    const byGoogle = users.find((user) => user.googleId === googleId);
+    if (byGoogle) {
+      return { user: publicUser(byGoogle), created: false };
+    }
+
+    const byEmail = users.find((user) => user.email === normalized);
+    if (byEmail) {
+      byEmail.googleId = googleId;
+      await writeUsers(users);
+      return { user: publicUser(byEmail), created: false };
+    }
+
+    const user: StoredUser = {
+      id: randomBytes(16).toString("base64url"),
+      email: normalized,
+      googleId,
+      createdAt: new Date().toISOString(),
+    };
+    users.push(user);
+    await writeUsers(users);
+    return { user: publicUser(user), created: true };
+  });
 }

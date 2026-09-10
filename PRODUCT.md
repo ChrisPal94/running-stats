@@ -30,7 +30,7 @@ A training plan that adapts after every run—so you always know what to run nex
 
 ## Operating Context
 
-Users evaluate the product on a marketing landing page, then start or return to a plan with first-party email and password. Onboarding and the Hoy / Plan / Progreso shell are still placeholders.
+Users evaluate the product on a marketing landing page, then start or return to a plan with email and password or Google. Onboarding and the Hoy / Plan / Progreso shell are still placeholders.
 
 ## Capabilities and Constraints
 
@@ -38,8 +38,8 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - English marketing copy is provisional and must remain easy to replace.
 - Activity and plan data on the landing are illustrative examples, not commercial claims. Mock values must be marked **Illustrative example**.
 - The AdaptationEvent includes a visual “Why?” control. In this scope it is not interactive: no modal, no JavaScript behavior, and not a working link. It must not use underline or other look-clickable styling.
-- Email + password auth is first-party only (no Google, no Strava, not magic link). The stored identity is the user’s.
-- After signup, Continue goes to `/onboarding`. After login, Continue goes to `/today`. Those routes are placeholders until onboarding and the app shell land.
+- Auth is email + password and Google (no Strava, not magic link). The stored identity is the user’s.
+- After signup (email or first Google), continue to `/onboarding`. After login (email or returning Google), continue to `/today`. Those routes are placeholders until onboarding and the app shell land.
 - There is no live plan editing yet, and the Hoy / Plan / Progreso shell is not built.
 - On ~390px widths, the hero fold must show the H1 and the primary CTA without a dedicated redesign—tighten spacing rather than inventing a new layout.
 - `/signup` is a real auth page and is indexable. Landing CTAs still go to `/signup`.
@@ -68,10 +68,12 @@ Users evaluate the product on a marketing landing page, then start or return to 
 
 ## Auth (MVP)
 
-- Routes: `/signup`, `/login`, `/logout` (POST), `/onboarding` (placeholder), `/today` (placeholder).
+- Routes: `/signup`, `/login`, `/logout` (POST), `/auth/google`, `/auth/google/callback`, `/onboarding` (placeholder), `/today` (placeholder).
 - Stack: Astro 6 + Vite 7, `@astrojs/node` 10.1.x (`standalone`; 11.x needs Astro 7). Landing stays prerendered; auth routes set `prerender = false`.
-- Identity: email + scrypt password hash in a local JSON store (`.data/users.json` by default). HMAC-signed `rs_session` cookie. No third-party login.
-- Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`.
+- Identity: email + scrypt password hash and/or Google account id in a local JSON store (`.data/users.json` by default). HMAC-signed `rs_session` cookie.
+- Google: real OAuth redirect when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL` are set. If they are missing, Continue with Google shows “Couldn’t connect to Google. Try email or try again.” Email + password still works.
+- After signup (email or first Google), Continue goes to `/onboarding`. After login (email or returning Google), Continue goes to `/today`. Those routes are placeholders until onboarding and the app shell land.
+- Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`, Google client id/secret/callback.
 - Build: `npm run build` still runs `astro check && astro build`. With the Node adapter, output is `dist/client` + `dist/server`. Preview with `AUTH_SECRET=... AUTH_COOKIE_SECURE=false npm run preview`, or `npm start` after build.
 
 ## Security / deps (tech note)
