@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { addDaysYmd, appTodayYmd, endOfWeekSunday, startOfWeekMonday } from "./calendar";
+import { addDaysYmd, appTodayYmd, calendarTodayYmd, endOfWeekSunday, startOfWeekMonday } from "./calendar";
 import { enqueueWrite, readJsonFile, writeJsonFile } from "./json-store";
 
 const TRAINING_FILE = "training.json";
@@ -203,7 +203,7 @@ export type AdaptationEvent = {
   title: string;
   /** One line: what changes tomorrow. Shown with the chip. */
   summary: string;
-  /** One line: why. Stored for Why?; the control stays disabled. */
+  /** One or two lines: why. Shown in the Why? sheet when non-empty. */
   reason: string;
   /** Guayaquil day of the Feedback that triggered this event. */
   sourceDate?: string;
@@ -899,6 +899,28 @@ export async function getAdaptationEventForToday(userId: string): Promise<Adapta
   );
   matches.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   return matches.at(-1) ?? null;
+}
+
+/** Latest Feedback for a Guayaquil civil date. Read-only; does not write Feedback. */
+export async function getFeedbackForDate(userId: string, ymd: string): Promise<Feedback | null> {
+  const data = await readTraining();
+  const session = data.sessions.find((entry) => entry.userId === userId && entry.date === ymd);
+  const bySession = session
+    ? data.feedbacks.filter((entry) => entry.userId === userId && entry.sessionId === session.id)
+    : [];
+  if (bySession.length > 0) {
+    bySession.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return bySession.at(-1) ?? null;
+  }
+
+  const byCreated = data.feedbacks.filter((entry) => {
+    if (entry.userId !== userId) return false;
+    const created = new Date(entry.createdAt);
+    if (Number.isNaN(created.getTime())) return false;
+    return calendarTodayYmd(created) === ymd;
+  });
+  byCreated.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return byCreated.at(-1) ?? null;
 }
 
 export function presentSession(

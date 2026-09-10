@@ -1,12 +1,14 @@
 ---
 import LogRunSheet from "./LogRunSheet.astro";
 import RunMap from "./RunMap.astro";
+import WhySheet from "./WhySheet.astro";
 import {
   EMPTY_RUN_ROUTE,
   formatHms,
   formatPace,
   type AdaptationEvent,
   type Feedback,
+  type FeedbackKind,
   type RunLog,
   type RunLogFormDraft,
   type Session,
@@ -17,6 +19,7 @@ interface Props {
   feedback: Feedback | null;
   runLog?: RunLog | null;
   adaptationEvent: AdaptationEvent | null;
+  sourceFeedbackKind?: FeedbackKind | null;
   logOpen?: boolean;
   logError?: string;
   logDraft?: RunLogFormDraft | null;
@@ -28,6 +31,7 @@ const {
   feedback = null,
   runLog = null,
   adaptationEvent = null,
+  sourceFeedbackKind = null,
   logOpen = false,
   logError = "",
   logDraft = null,
@@ -126,15 +130,7 @@ const canAct = Boolean(session && !feedback);
           >
             {adaptationEvent.title}
           </p>
-          <button
-            type="button"
-            disabled
-            aria-disabled="true"
-            class="pointer-events-none cursor-default border-0 bg-transparent p-0 text-[0.62rem] font-semibold tracking-wider text-mist uppercase"
-          >
-            Why?
-            <span class="sr-only">{adaptationReason || "Read only, not interactive"}</span>
-          </button>
+          <WhySheet reason={adaptationReason} basedOn={sourceFeedbackKind} />
         </div>
         {adaptationSummary ? <p class="mt-3 text-sm leading-6 text-cloud">{adaptationSummary}</p> : null}
       </div>
