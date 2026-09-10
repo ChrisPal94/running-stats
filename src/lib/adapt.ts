@@ -109,29 +109,27 @@ function reasonFor(
   }
 
   const changedDistance = patch.distanceKm !== tomorrow.distanceKm;
-  const changedKind = patch.kind !== tomorrow.kind;
   const sessionLabel = patch.title.split(" · ")[0] ?? "Tomorrow";
   const distanceBit = changedDistance
     ? `${sessionLabel} is ${patch.distanceKm} km instead of ${tomorrow.distanceKm} km`
     : patch.title;
-  const kindBit = changedKind ? ` (${tomorrow.kind} → ${patch.kind})` : "";
 
   if (signal === "feeling-off") {
     return {
       title: "Plan adjusted",
-      reason: `${distanceBit}${kindBit} after you flagged that you were feeling off.`,
+      reason: `${distanceBit} after you flagged that you were feeling off.`,
     };
   }
   if (signal === "skip") {
     return {
       title: "Plan adjusted",
-      reason: `${distanceBit}${kindBit} after you skipped today’s session.`,
+      reason: `${distanceBit} after you skipped today’s session.`,
     };
   }
   if (signal === "pending") {
     return {
       title: "Plan adjusted",
-      reason: `${distanceBit}${kindBit} after today’s session went unmarked.`,
+      reason: `${distanceBit} after today’s session went unmarked.`,
     };
   }
 
