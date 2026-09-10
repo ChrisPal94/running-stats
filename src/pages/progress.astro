@@ -1,0 +1,25 @@
+---
+export const prerender = false;
+
+import ProgressCard from "../components/ProgressCard.astro";
+import AppShell from "../layouts/AppShell.astro";
+import { requireAppSession } from "../lib/app-session";
+import { getProgressMetrics } from "../lib/training";
+
+const gate = await requireAppSession(Astro.cookies);
+if (!gate.ok) {
+  return Astro.redirect(gate.redirect);
+}
+
+const { user } = gate;
+const metrics = await getProgressMetrics(user.id);
+---
+
+<AppShell
+  title="Progress — Running Stats"
+  description="A short set of progress signals from your plan."
+  current="progress"
+  email={user.email}
+>
+  <ProgressCard metrics={metrics} />
+</AppShell>

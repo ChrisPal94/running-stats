@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { addDaysYmd, calendarTodayYmd, endOfWeekSunday, startOfWeekMonday } from "./calendar";
 import { enqueueWrite, readJsonFile, writeJsonFile } from "./json-store";
 
 const TRAINING_FILE = "training.json";
@@ -17,6 +18,9 @@ export const WEEKDAY_IDS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as 
 export type Weekday = (typeof WEEKDAY_IDS)[number];
 
 export type SessionKind = "easy" | "intervals" | "tempo" | "long";
+export type SessionOutcome = "done" | "skipped";
+export const FEEDBACK_KINDS = ["done", "skip", "feeling-off"] as const;
+export type FeedbackKind = (typeof FEEDBACK_KINDS)[number];
 
 export const GOALS = [
   { id: "5k", label: "5K" },
@@ -96,18 +100,45 @@ export type Session = {
   title: string;
   cue: string;
   distanceKm: number;
+  outcome?: SessionOutcome;
+  outcomeAt?: string;
+};
+
+export type Feedback = {
+  id: string;
+  userId: string;
+  planId: string;
+  sessionId: string;
+  kind: FeedbackKind;
+  createdAt: string;
+};
+
+/** Stored for display only in this PR. Shell code never creates or updates these. */
+export type AdaptationEvent = {
+  id: string;
+  userId: string;
+  planId: string;
+  sessionId?: string;
+  date: string;
+  title: string;
+  summary: string;
+  createdAt: string;
 };
 
 type TrainingFile = {
   onboarding: OnboardingRecord[];
   plans: Plan[];
   sessions: Session[];
+  feedbacks: Feedback[];
+  adaptationEvents: AdaptationEvent[];
 };
 
 const EMPTY_TRAINING: TrainingFile = {
   onboarding: [],
   plans: [],
   sessions: [],
+  feedbacks: [],
+  adaptationEvents: [],
 };
 
 const WEEKLY_KM: Record<Goal, Record<Level, number>> = {
@@ -139,6 +170,23 @@ export type OnboardingFormResult =
   | { ok: true; redirect: string }
   | { ok: false; error: string; step: 1 | 2 | 3 };
 
+export type TodayActionResult = { redirect: string };
+
+export type WeekDayView = {
+  id: Weekday;
+  abbr: string;
+  label: string;
+  ymd: string;
+  isToday: boolean;
+  hasSession: boolean;
+};
+
+export type ProgressMetric = {
+  label: string;
+  value: string;
+  provisional: boolean;
+};
+
 function newId(): string {
   return randomBytes(16).toString("base64url");
 }
@@ -155,8 +203,9 @@ function isWeekday(value: string): value is Weekday {
   return (WEEKDAY_IDS as readonly string[]).includes(value);
 }
 
+/** Calendar “today” in America/Guayaquil (not UTC). */
 export function utcTodayYmd(): string {
-  return new Date().toISOString().slice(0, 10);
+  return calendarTodayYmd();
 }
 
 export function isYmd(value: string): boolean {
@@ -179,11 +228,21 @@ async function readTraining(): Promise<TrainingFile> {
     onboarding: Array.isArray(parsed.onboarding) ? parsed.onboarding : [],
     plans: Array.isArray(parsed.plans) ? parsed.plans : [],
     sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+    feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
+    adaptationEvents: Array.isArray(parsed.adaptationEvents) ? parsed.adaptationEvents : [],
   };
 }
 
+/** Persist training data without creating or mutating AdaptationEvents. */
 async function writeTraining(data: TrainingFile): Promise<void> {
-  await writeJsonFile(TRAINING_FILE, data);
+  const onDisk = await readJsonFile<TrainingFile>(TRAINING_FILE, EMPTY_TRAINING);
+  await writeJsonFile(TRAINING_FILE, {
+    onboarding: data.onboarding,
+    plans: data.plans,
+    sessions: data.sessions,
+    feedbacks: data.feedbacks,
+    adaptationEvents: Array.isArray(onDisk.adaptationEvents) ? onDisk.adaptationEvents : [],
+  });
 }
 
 export async function getOnboarding(userId: string): Promise<OnboardingRecord | null> {
@@ -206,9 +265,131 @@ export async function getSessionsForPlan(planId: string): Promise<Session[]> {
 export async function getNextSession(userId: string): Promise<Session | null> {
   const plan = await getPlanForUser(userId);
   if (!plan) return null;
-  const today = utcTodayYmd();
+  const today = calendarTodayYmd();
   const sessions = await getSessionsForPlan(plan.id);
   return sessions.find((session) => session.date >= today) ?? sessions.at(-1) ?? null;
+}
+
+export async function getSessionForToday(userId: string): Promise<Session | null> {
+  const plan = await getPlanForUser(userId);
+  if (!plan) return null;
+  const today = calendarTodayYmd();
+  const sessions = await getSessionsForPlan(plan.id);
+  return sessions.find((session) => session.date === today) ?? null;
+}
+
+export async function getAppWeek(userId: string): Promise<{
+  today: string;
+  days: WeekDayView[];
+  weekSessions: Session[];
+  focusSessions: Session[];
+}> {
+  const today = calendarTodayYmd();
+  const start = startOfWeekMonday(today);
+  const end = endOfWeekSunday(today);
+  const plan = await getPlanForUser(userId);
+  const all = plan ? await getSessionsForPlan(plan.id) : [];
+  const weekSessions = all.filter((session) => session.date >= start && session.date <= end);
+  const focusSessions = weekSessions.filter((session) => session.date >= today).slice(0, 3);
+
+  const days: WeekDayView[] = WEEKDAYS.map((day, index) => {
+    const ymd = addDaysYmd(start, index);
+    return {
+      id: day.id,
+      abbr: day.abbr,
+      label: day.label,
+      ymd,
+      isToday: ymd === today,
+      hasSession: weekSessions.some((session) => session.date === ymd),
+    };
+  });
+
+  return { today, days, weekSessions, focusSessions };
+}
+
+export async function getProgressMetrics(userId: string): Promise<ProgressMetric[]> {
+  const { weekSessions } = await getAppWeek(userId);
+  const planned = weekSessions.length;
+  const done = weekSessions.filter((session) => session.outcome === "done").length;
+  const weeklyKm = weekSessions.reduce((sum, session) => sum + session.distanceKm, 0);
+
+  return [
+    {
+      label: "Consistency",
+      value: `${done}/${planned}`,
+      provisional: false,
+    },
+    {
+      label: "Easy pace",
+      value: "—",
+      provisional: true,
+    },
+    {
+      label: "Weekly distance",
+      value: `${weeklyKm} km`,
+      provisional: false,
+    },
+  ];
+}
+
+export async function getFeedbackForSession(userId: string, sessionId: string): Promise<Feedback | null> {
+  const data = await readTraining();
+  return data.feedbacks.find((entry) => entry.userId === userId && entry.sessionId === sessionId) ?? null;
+}
+
+export async function getAdaptationEventForToday(userId: string): Promise<AdaptationEvent | null> {
+  const today = calendarTodayYmd();
+  const data = await readTraining();
+  return (
+    data.adaptationEvents.find((event) => event.userId === userId && event.date === today) ?? null
+  );
+}
+
+function isFeedbackKind(value: string): value is FeedbackKind {
+  return (FEEDBACK_KINDS as readonly string[]).includes(value);
+}
+
+export async function submitSessionFeedback(
+  userId: string,
+  sessionId: string,
+  kind: FeedbackKind,
+): Promise<Feedback | null> {
+  return enqueueWrite(async () => {
+    const data = await readTraining();
+    const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
+    if (!session) return null;
+
+    const existing = data.feedbacks.find((entry) => entry.userId === userId && entry.sessionId === sessionId);
+    if (existing) return existing;
+
+    const createdAt = new Date().toISOString();
+    const feedback: Feedback = {
+      id: newId(),
+      userId,
+      planId: session.planId,
+      sessionId,
+      kind,
+      createdAt,
+    };
+    data.feedbacks.push(feedback);
+
+    if (kind === "done" || kind === "skip") {
+      session.outcome = kind === "done" ? "done" : "skipped";
+      session.outcomeAt = createdAt;
+    }
+
+    await writeTraining(data);
+    return feedback;
+  });
+}
+
+export async function handleTodayPost(userId: string, formData: FormData): Promise<TodayActionResult> {
+  const intent = String(formData.get("intent") ?? "");
+  const sessionId = String(formData.get("sessionId") ?? "");
+  if (isFeedbackKind(intent) && sessionId) {
+    await submitSessionFeedback(userId, sessionId, intent);
+  }
+  return { redirect: "/today" };
 }
 
 function upsertOnboarding(data: TrainingFile, record: OnboardingRecord): void {
@@ -300,16 +481,9 @@ function allocateDistances(
 }
 
 function dateOnOrAfter(startYmd: string, weekday: Weekday): string {
-  const start = new Date(`${startYmd}T00:00:00.000Z`);
+  const start = new Date(`${startYmd}T12:00:00.000Z`);
   const delta = (WEEKDAY_INDEX[weekday] - start.getUTCDay() + 7) % 7;
-  const next = new Date(start.getTime() + delta * 24 * 60 * 60 * 1000);
-  return next.toISOString().slice(0, 10);
-}
-
-function addDays(ymd: string, days: number): string {
-  const date = new Date(`${ymd}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+  return addDaysYmd(startYmd, delta);
 }
 
 export function generatePlanV1(
@@ -341,7 +515,7 @@ export function generatePlanV1(
   for (let weekIndex = 0; weekIndex < PLAN_WEEKS; weekIndex += 1) {
     for (const weekday of answers.days) {
       const first = dateOnOrAfter(fromYmd, weekday);
-      const date = addDays(first, weekIndex * 7);
+      const date = addDaysYmd(first, weekIndex * 7);
       if (cutoff && date > cutoff) continue;
 
       const kind = kinds[weekday];

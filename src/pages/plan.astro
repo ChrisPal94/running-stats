@@ -1,0 +1,25 @@
+---
+export const prerender = false;
+
+import PlanCard from "../components/PlanCard.astro";
+import AppShell from "../layouts/AppShell.astro";
+import { requireAppSession } from "../lib/app-session";
+import { getAppWeek } from "../lib/training";
+
+const gate = await requireAppSession(Astro.cookies);
+if (!gate.ok) {
+  return Astro.redirect(gate.redirect);
+}
+
+const { user } = gate;
+const week = await getAppWeek(user.id);
+---
+
+<AppShell
+  title="Plan — Running Stats"
+  description="This week’s sessions, at a glance."
+  current="plan"
+  email={user.email}
+>
+  <PlanCard days={week.days} sessions={week.focusSessions} today={week.today} />
+</AppShell>

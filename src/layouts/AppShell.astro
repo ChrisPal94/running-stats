@@ -1,0 +1,46 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+import BottomNav from "../components/BottomNav.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  current: "today" | "plan" | "progress" | "settings";
+  email: string;
+}
+
+const { title, description, current, email } = Astro.props;
+---
+
+<BaseLayout title={title} description={description} noindex>
+  <div class="relative isolate min-h-svh bg-ink">
+    <header class="px-5 pt-4 sm:px-8">
+      <div class="mx-auto flex max-w-md items-center justify-between">
+        <a class="group flex items-center gap-2.5" href="/today" aria-label="Today">
+          <svg
+            class="h-8 w-8 text-lime transition-transform duration-300 ease-out group-hover:-rotate-6"
+            viewBox="0 0 48 48"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M29.8 5.5c3.2 0 5.7 2.6 5.7 5.8 0 3.1-2.5 5.7-5.7 5.7a5.8 5.8 0 0 1 0-11.5Z"
+              fill="currentColor"
+            />
+            <path
+              d="m19.4 18.7 7.5-2.8c2-.8 4.3 0 5.4 1.8l3 4.8 5.4 1.4-1.8 5.3-6.5-2a4.4 4.4 0 0 1-2.3-1.7l-1.3-2-3.5 5 5.3 4.8-4 9.2-5.5-2.4 2.8-6.2-5.7-4.7-4.3 5.2-7-1.7 1.4-5.5 3.2.8 5.2-6.7c1-1.2 2.2-2 3.7-2.6Z"
+              fill="currentColor"
+            />
+          </svg>
+          <span class="text-sm font-bold tracking-[0.16em] text-cloud uppercase">Running Stats</span>
+        </a>
+      </div>
+    </header>
+    <main
+      class="mx-auto w-full max-w-md px-5 pb-[calc(6.25rem+env(safe-area-inset-bottom))] pt-5 sm:px-8"
+    >
+      <slot />
+    </main>
+    <BottomNav current={current} email={email} />
+  </div>
+</BaseLayout>

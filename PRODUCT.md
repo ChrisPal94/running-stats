@@ -30,18 +30,21 @@ A training plan that adapts after every run—so you always know what to run nex
 
 ## Operating Context
 
-Users evaluate the product on a marketing landing page, then start or return to a plan with email and password or Google. Signed-in users complete a three-step onboarding that creates Plan v1. The Hoy / Plan / Progreso app shell is still a placeholder.
+Users evaluate the product on a marketing landing page, then start or return to a plan with email and password or Google. Signed-in users complete a three-step onboarding that creates Plan v1, then land in the Hoy / Plan / Progreso app shell.
 
 ## Capabilities and Constraints
 
 - The landing includes the hero (value, CTAs, nav) and the product preview of Hoy / Plan / Progreso with an AdaptationEvent inside Today.
-- English marketing and onboarding copy is provisional and must remain easy to replace.
+- English marketing, onboarding, and shell copy is provisional and must remain easy to replace.
 - Activity and plan data on the landing are illustrative examples, not commercial claims. Mock values must be marked **Illustrative example**.
 - The AdaptationEvent includes a visual “Why?” control. In this scope it is not interactive: no modal, no JavaScript behavior, and not a working link. It must not use underline or other look-clickable styling.
 - Auth is email + password and Google (no Strava, not magic link). The stored identity is the user’s.
-- After signup (email or first Google), continue to `/onboarding`. After login (email or returning Google), continue to `/today`. `/today` sends signed-in users without a plan back to onboarding.
-- Onboarding is three steps (goal, level, days). Generate my plan writes onboarding answers plus Plan v1 and Sessions. No AdaptationEvent is created until the first Feedback.
-- There is no live plan editing yet, and the Hoy / Plan / Progreso shell is not built.
+- After signup (email or first Google), continue to `/onboarding`. After login (email or returning Google), continue to `/today` when a plan exists, otherwise `/onboarding`. Shell routes send signed-in users without a plan back to onboarding.
+- Onboarding is three steps (goal, level, days). Generate my plan writes onboarding answers plus Plan v1 and Sessions. No AdaptationEvent is written here.
+- The app shell is mobile-first (~390) with a bottom nav: Today | Plan | Progress, plus an avatar/settings entry. Calendar “today” uses **America/Guayaquil**, not UTC.
+- Today shows the session dated for that Guayaquil calendar day. Empty copy is **No session today**. Done / Skip / Feeling off each write Feedback. AdaptationEvents are read-only (displayed when present; never created here).
+- Plan shows a Monday–Sunday week strip and at most three remaining sessions this week. Progress labels are **Consistency**, **Easy pace**, and **Weekly distance** (Easy pace provisional until activity data exists).
+- There is no live plan editing yet, and no nightly AI job.
 - On ~390px widths, the hero fold must show the H1 and the primary CTA without a dedicated redesign—tighten spacing rather than inventing a new layout. Onboarding is mobile-first at the same width.
 - `/signup` is a real auth page and is indexable. Landing CTAs still go to `/signup`.
 - Marketing pages share basic Open Graph tags (title, description, url). Do not invent share imagery.
@@ -69,11 +72,11 @@ Users evaluate the product on a marketing landing page, then start or return to 
 
 ## Auth (MVP)
 
-- Routes: `/signup`, `/login`, `/logout` (POST), `/auth/google`, `/auth/google/callback`, `/onboarding`, `/today` (shell placeholder).
-- Stack: Astro 6 + Vite 7, `@astrojs/node` 10.1.x (`standalone`; 11.x needs Astro 7). Landing stays prerendered; auth and onboarding routes set `prerender = false`.
+- Routes: `/signup`, `/login`, `/logout` (POST), `/auth/google`, `/auth/google/callback`, `/onboarding`, `/today`, `/plan`, `/progress`, `/settings`.
+- Stack: Astro 6 + Vite 7, `@astrojs/node` 10.1.x (`standalone`; 11.x needs Astro 7). Landing stays prerendered; auth, onboarding, and shell routes set `prerender = false`.
 - Identity: email + scrypt password hash and/or Google account id in a local JSON store (`.data/users.json` by default). HMAC-signed `rs_session` cookie.
 - Google: real OAuth redirect when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL` are set. If they are missing, Continue with Google shows “Couldn’t connect to Google. Try email or try again.” Email + password still works.
-- After signup (email or first Google), Continue goes to `/onboarding`. After login (email or returning Google), Continue goes to `/today`.
+- After signup (email or first Google), Continue goes to `/onboarding`. After login (email or returning Google), Continue goes to `/today` if a plan exists, otherwise `/onboarding`.
 - Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`.
 - Build: `npm run build` still runs `astro check && astro build`. With the Node adapter, output is `dist/client` + `dist/server`. Preview with `AUTH_SECRET=... AUTH_COOKIE_SECURE=false npm run preview`, or `npm start` after build.
 
@@ -82,6 +85,15 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - Signed-in only. Logged-out visits to `/onboarding` redirect to `/signup`.
 - Three steps with progress 1/3–3/3: **Goal** (5K, 10K, Half, Marathon, Just consistent; optional race date), **Level** (Beginner, Intermediate, Advanced), **Days** (M–S toggles, minimum 3). CTA **Generate my plan** creates Plan v1 + Sessions and continues to `/today`.
 - Answers, plans, and sessions persist in `.data/training.json` (same `AUTH_DATA_DIR` JSON store pattern as users). No AdaptationEvent is written here.
+
+## App shell (MVP)
+
+- Signed-in with a plan only. Logged-out visits to `/today`, `/plan`, `/progress`, and `/settings` redirect to `/login`. Signed-in without a plan redirects to `/onboarding`.
+- Calendar day and “hoy” use `America/Guayaquil`. A new Guayaquil day starts at 05:00 UTC (UTC−5, no DST). Session dates in `training.json` are civil `YYYY-MM-DD` values compared to that calendar day — not `Date#toISOString()` UTC.
+- **Today (`/today`):** the Session whose `date` equals today’s Guayaquil date. Empty copy: **No session today**. CTAs Done / Skip / Feeling off each persist a Feedback record. Done / Skip also set session `outcome`. AdaptationEvents are loaded for display only (read-only Why?; never written).
+- **Plan (`/plan`):** week strip M–S for the Guayaquil week (Monday–Sunday) and up to three remaining sessions this week.
+- **Progress (`/progress`):** labels **Consistency**, **Easy pace**, **Weekly distance**. Consistency and weekly distance come from this week’s sessions; Easy pace is labeled provisional.
+- **Settings (`/settings`):** avatar/settings entry — email and log out. Further account settings are later work.
 
 ## Security / deps (tech note)
 
