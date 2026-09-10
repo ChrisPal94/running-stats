@@ -74,6 +74,10 @@ export const PACE_SOFT_MIN_SEC_PER_KM = 150;
 export const PACE_SOFT_MAX_SEC_PER_KM = 720;
 export const BASELINE_ADJUSTMENT_MIN = 0.8;
 export const BASELINE_ADJUSTMENT_MAX = 1.2;
+export const LOGGED_RUN_MIN_KM = 0.1;
+export const LOGGED_RUN_MAX_KM = 100;
+export const EMPTY_RUN_ROUTE: RunRoute = { type: "none" };
+const MAX_POLYLINE_POINTS = 2000;
 
 export const RACE_DISTANCE_KM: Record<Exclude<RaceDistanceId, "custom">, number> = {
   "5k": 5,
@@ -125,6 +129,42 @@ export type Plan = {
   level: Level;
   days: Weekday[];
   baseline?: Baseline;
+};
+
+export type GeoPoint = {
+  lat: number;
+  lng: number;
+};
+
+export type RunRoute =
+  | { type: "polyline"; coords: GeoPoint[] }
+  | { type: "none" };
+
+/** Actuals from post-Done “Log this run”. 1:1 with Feedback.sessionId. */
+export type RunLog = {
+  id: string;
+  userId: string;
+  sessionId: string;
+  planId: string;
+  distanceKm: number;
+  timeSec: number;
+  paceSecPerKm: number;
+  route?: RunRoute;
+  createdAt: string;
+};
+
+export type RunLogStats = {
+  distanceKm: number;
+  timeSec: number;
+  paceSecPerKm: number;
+  route: RunRoute;
+};
+
+export type RunLogFormDraft = {
+  distanceKm: string;
+  time: string;
+  pace: string;
+  routeJson: string;
 };
 
 export type Session = {
@@ -194,6 +234,7 @@ type TrainingFile = {
   plans: Plan[];
   sessions: Session[];
   feedbacks: Feedback[];
+  runLogs: RunLog[];
   adaptationEvents: AdaptationEvent[];
 };
 
@@ -202,6 +243,7 @@ const EMPTY_TRAINING: TrainingFile = {
   plans: [],
   sessions: [],
   feedbacks: [],
+  runLogs: [],
   adaptationEvents: [],
 };
 
@@ -236,7 +278,9 @@ export type OnboardingFormResult =
   | { ok: true; redirect: string }
   | { ok: false; error: string; step: OnboardingStep };
 
-export type TodayActionResult = { redirect: string };
+export type TodayActionResult =
+  | { ok: true; redirect: string }
+  | { ok: false; error: string; logOpen: true; draft: RunLogFormDraft };
 
 export type WeekDayView = {
   id: Weekday;
@@ -294,10 +338,16 @@ export function formatHms(totalSeconds: number): string {
 
 export function formatPace(secPerKm: number): string {
   if (!Number.isFinite(secPerKm) || secPerKm <= 0) return "";
+  const input = formatPaceInput(secPerKm);
+  return input ? `${input} /km` : "";
+}
+
+export function formatPaceInput(secPerKm: number): string {
+  if (!Number.isFinite(secPerKm) || secPerKm <= 0) return "";
   const rounded = Math.round(secPerKm);
   const minutes = Math.floor(rounded / 60);
   const seconds = rounded % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")} /km`;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 export function computePaceSecPerKm(distanceKm: number, timeSec: number): number {
@@ -314,12 +364,203 @@ export function raceDistanceIdFromKm(distanceKm: number): RaceDistanceId {
   return match?.id ?? "custom";
 }
 
-function parsePositiveNumber(raw: string): number | null {
+export function parsePositiveNumber(raw: string): number | null {
   const value = raw.trim().replace(",", ".");
   if (!value) return null;
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0) return null;
   return amount;
+}
+
+export function parseDurationToSeconds(raw: string): number | null {
+  const hms = parseHmsToSeconds(raw);
+  if (hms !== null) return hms;
+  const value = raw.trim();
+  const match = /^(\d{1,2}):([0-5]\d)$/.exec(value);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+export function parsePaceToSecPerKm(raw: string): number | null {
+  const value = raw.trim().replace(/\s*\/\s*km$/i, "").trim();
+  if (!value) return null;
+  const match = /^(\d{1,2}):([0-5]\d)$/.exec(value);
+  if (!match) return null;
+  const seconds = Number(match[1]) * 60 + Number(match[2]);
+  return seconds > 0 ? seconds : null;
+}
+
+function isGeoPoint(value: unknown): value is GeoPoint {
+  if (!value || typeof value !== "object") return false;
+  const point = value as { lat?: unknown; lng?: unknown };
+  return (
+    typeof point.lat === "number" &&
+    typeof point.lng === "number" &&
+    Number.isFinite(point.lat) &&
+    Number.isFinite(point.lng) &&
+    point.lat >= -90 &&
+    point.lat <= 90 &&
+    point.lng >= -180 &&
+    point.lng <= 180
+  );
+}
+
+export function normalizeRunRoute(value: unknown): RunRoute {
+  if (!value || typeof value !== "object") return { ...EMPTY_RUN_ROUTE };
+  const record = value as { type?: unknown; kind?: unknown; coords?: unknown; points?: unknown };
+  const rawCoords = Array.isArray(record.coords)
+    ? record.coords
+    : Array.isArray(record.points)
+      ? record.points
+      : null;
+  const isPolyline = record.type === "polyline" || record.kind === "polyline";
+  if (isPolyline && rawCoords) {
+    const coords = rawCoords
+      .map(parseCoord)
+      .filter((point): point is GeoPoint => Boolean(point))
+      .slice(0, MAX_POLYLINE_POINTS);
+    if (coords.length >= 2) return { type: "polyline", coords };
+  }
+  return { ...EMPTY_RUN_ROUTE };
+}
+
+function parseCoord(value: unknown): GeoPoint | null {
+  if (Array.isArray(value) && value.length >= 2) {
+    const lat = Number(value[0]);
+    const lng = Number(value[1]);
+    if (isFiniteCoord(lat, lng)) return { lat, lng };
+    return null;
+  }
+  return isGeoPoint(value) ? value : null;
+}
+
+function isFiniteCoord(lat: number, lng: number): boolean {
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180
+  );
+}
+
+export function isRunRoute(value: unknown): value is RunRoute {
+  if (!value || typeof value !== "object") return false;
+  const record = value as { type?: unknown; coords?: unknown };
+  if (record.type === "none") return true;
+  if (record.type === "polyline" && Array.isArray(record.coords)) {
+    const coords = record.coords.map(parseCoord).filter((point): point is GeoPoint => Boolean(point));
+    return coords.length >= 2 && coords.length <= MAX_POLYLINE_POINTS;
+  }
+  return false;
+}
+
+export function normalizeRunLog(value: unknown): RunLog | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Partial<RunLog>;
+  if (
+    typeof record.id !== "string" ||
+    !record.id ||
+    typeof record.userId !== "string" ||
+    !record.userId ||
+    typeof record.sessionId !== "string" ||
+    !record.sessionId ||
+    typeof record.planId !== "string" ||
+    !record.planId ||
+    typeof record.distanceKm !== "number" ||
+    record.distanceKm < LOGGED_RUN_MIN_KM ||
+    record.distanceKm > LOGGED_RUN_MAX_KM ||
+    typeof record.timeSec !== "number" ||
+    record.timeSec <= 0 ||
+    typeof record.paceSecPerKm !== "number" ||
+    record.paceSecPerKm <= 0 ||
+    typeof record.createdAt !== "string" ||
+    !record.createdAt
+  ) {
+    return undefined;
+  }
+  return {
+    id: record.id,
+    userId: record.userId,
+    sessionId: record.sessionId,
+    planId: record.planId,
+    distanceKm: record.distanceKm,
+    timeSec: record.timeSec,
+    paceSecPerKm: record.paceSecPerKm,
+    route: normalizeRunRoute(record.route),
+    createdAt: record.createdAt,
+  };
+}
+
+export function emptyRunLogDraft(distanceKm?: number): RunLogFormDraft {
+  return {
+    distanceKm: typeof distanceKm === "number" && distanceKm > 0 ? String(distanceKm) : "",
+    time: "",
+    pace: "",
+    routeJson: JSON.stringify(EMPTY_RUN_ROUTE),
+  };
+}
+
+export function parseRunRoute(raw: string): RunRoute {
+  const value = raw.trim();
+  if (!value) return { ...EMPTY_RUN_ROUTE };
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) {
+      return normalizeRunRoute({ type: "polyline", coords: parsed });
+    }
+    return normalizeRunRoute(parsed);
+  } catch {
+    return { ...EMPTY_RUN_ROUTE };
+  }
+}
+
+export function readRunLogDraft(formData: FormData): RunLogFormDraft {
+  const routeJson = String(formData.get("loggedRoute") ?? "").trim();
+  return {
+    distanceKm: String(formData.get("loggedDistanceKm") ?? ""),
+    time: String(formData.get("loggedTime") ?? ""),
+    pace: String(formData.get("loggedPace") ?? ""),
+    routeJson: routeJson || JSON.stringify(EMPTY_RUN_ROUTE),
+  };
+}
+
+function roundLoggedKm(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+export function parseRunLogForm(
+  formData: FormData,
+): { ok: true; stats: RunLogStats } | { ok: false; error: string; draft: RunLogFormDraft } {
+  const draft = readRunLogDraft(formData);
+  const distanceRaw = parsePositiveNumber(draft.distanceKm);
+  const timeSec = parseDurationToSeconds(draft.time);
+  const route = parseRunRoute(draft.routeJson);
+
+  if (distanceRaw === null) {
+    return { ok: false, error: "Enter the distance you ran.", draft };
+  }
+  const distanceKm = roundLoggedKm(distanceRaw);
+  if (distanceKm < LOGGED_RUN_MIN_KM || distanceKm > LOGGED_RUN_MAX_KM) {
+    return { ok: false, error: "Distance must be between 0.1 and 100 km.", draft };
+  }
+  if (timeSec === null) {
+    return { ok: false, error: "Enter your time as hh:mm:ss.", draft };
+  }
+  if (timeSec <= 0) {
+    return { ok: false, error: "Time must be greater than zero.", draft };
+  }
+
+  const paceSecPerKm = computePaceSecPerKm(distanceKm, timeSec);
+  if (!(paceSecPerKm > 0)) {
+    return { ok: false, error: "Enter a distance and time so pace can be calculated.", draft };
+  }
+
+  return {
+    ok: true,
+    stats: { distanceKm, timeSec, paceSecPerKm, route },
+  };
 }
 
 /** Skip, omit, and null all mean “no baseline” — current Plan v1 heuristic. */
@@ -496,13 +737,34 @@ function normalizeAdaptationEvent(event: AdaptationEvent): AdaptationEvent {
   };
 }
 
+function stripLegacyLoggedRun<T extends object>(value: T): T {
+  const record = value as T & { loggedRun?: unknown };
+  delete record.loggedRun;
+  return record;
+}
+
+function normalizeSessionRecord(session: Session): Session {
+  return stripLegacyLoggedRun(session);
+}
+
+function normalizeFeedbackRecord(feedback: Feedback): Feedback {
+  return stripLegacyLoggedRun(feedback);
+}
+
+function normalizeRunLogRecord(value: unknown): RunLog | undefined {
+  return normalizeRunLog(value);
+}
+
 async function readTraining(): Promise<TrainingFile> {
   const parsed = await readJsonFile<TrainingFile>(TRAINING_FILE, EMPTY_TRAINING);
   return {
     onboarding: Array.isArray(parsed.onboarding) ? parsed.onboarding : [],
     plans: Array.isArray(parsed.plans) ? parsed.plans : [],
-    sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-    feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
+    sessions: Array.isArray(parsed.sessions) ? parsed.sessions.map(normalizeSessionRecord) : [],
+    feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks.map(normalizeFeedbackRecord) : [],
+    runLogs: Array.isArray(parsed.runLogs)
+      ? parsed.runLogs.map(normalizeRunLogRecord).filter((entry): entry is RunLog => Boolean(entry))
+      : [],
     adaptationEvents: Array.isArray(parsed.adaptationEvents)
       ? parsed.adaptationEvents.map(normalizeAdaptationEvent)
       : [],
@@ -517,6 +779,7 @@ async function writeTraining(data: TrainingFile): Promise<void> {
     plans: data.plans,
     sessions: data.sessions,
     feedbacks: data.feedbacks,
+    runLogs: data.runLogs,
     adaptationEvents: Array.isArray(onDisk.adaptationEvents) ? onDisk.adaptationEvents : [],
   });
 }
@@ -585,9 +848,19 @@ export async function getAppWeek(userId: string): Promise<{
 
 export async function getProgressMetrics(userId: string): Promise<ProgressMetric[]> {
   const { weekSessions } = await getAppWeek(userId);
+  const data = await readTraining();
   const planned = weekSessions.length;
   const done = weekSessions.filter((session) => session.outcome === "done").length;
   const weeklyKm = weekSessions.reduce((sum, session) => sum + session.distanceKm, 0);
+  const logsBySession = new Map(
+    data.runLogs.filter((entry) => entry.userId === userId).map((entry) => [entry.sessionId, entry]),
+  );
+  const easyPaces = weekSessions
+    .filter((session) => session.kind === "easy" && session.outcome === "done")
+    .map((session) => logsBySession.get(session.id)?.paceSecPerKm)
+    .filter((pace): pace is number => typeof pace === "number" && pace > 0);
+  const easyPace =
+    easyPaces.length > 0 ? easyPaces.reduce((sum, pace) => sum + pace, 0) / easyPaces.length : 0;
 
   return [
     {
@@ -597,8 +870,8 @@ export async function getProgressMetrics(userId: string): Promise<ProgressMetric
     },
     {
       label: "Easy pace",
-      value: "—",
-      provisional: true,
+      value: easyPace > 0 ? formatPace(easyPace) : "—",
+      provisional: easyPace <= 0,
     },
     {
       label: "Weekly distance",
@@ -611,6 +884,11 @@ export async function getProgressMetrics(userId: string): Promise<ProgressMetric
 export async function getFeedbackForSession(userId: string, sessionId: string): Promise<Feedback | null> {
   const data = await readTraining();
   return data.feedbacks.find((entry) => entry.userId === userId && entry.sessionId === sessionId) ?? null;
+}
+
+export async function getRunLogForSession(userId: string, sessionId: string): Promise<RunLog | null> {
+  const data = await readTraining();
+  return data.runLogs.find((entry) => entry.userId === userId && entry.sessionId === sessionId) ?? null;
 }
 
 export async function getAdaptationEventForToday(userId: string): Promise<AdaptationEvent | null> {
@@ -700,6 +978,7 @@ export async function commitAdaptationRun(input: {
       plans: data.plans,
       sessions: data.sessions,
       feedbacks: data.feedbacks,
+      runLogs: data.runLogs,
       adaptationEvents: data.adaptationEvents,
     });
     return written;
@@ -714,6 +993,7 @@ export async function submitSessionFeedback(
   userId: string,
   sessionId: string,
   kind: FeedbackKind,
+  runLogStats?: RunLogStats,
 ): Promise<Feedback | null> {
   return enqueueWrite(async () => {
     const data = await readTraining();
@@ -739,6 +1019,23 @@ export async function submitSessionFeedback(
       session.outcomeAt = createdAt;
     }
 
+    if (kind === "done" && runLogStats) {
+      const already = data.runLogs.some((entry) => entry.userId === userId && entry.sessionId === sessionId);
+      if (!already) {
+        data.runLogs.push({
+          id: newId(),
+          userId,
+          sessionId,
+          planId: session.planId,
+          distanceKm: runLogStats.distanceKm,
+          timeSec: runLogStats.timeSec,
+          paceSecPerKm: runLogStats.paceSecPerKm,
+          route: runLogStats.route,
+          createdAt,
+        });
+      }
+    }
+
     await writeTraining(data);
     return feedback;
   });
@@ -747,10 +1044,43 @@ export async function submitSessionFeedback(
 export async function handleTodayPost(userId: string, formData: FormData): Promise<TodayActionResult> {
   const intent = String(formData.get("intent") ?? "");
   const sessionId = String(formData.get("sessionId") ?? "");
-  if (isFeedbackKind(intent) && sessionId) {
+
+  if (intent === "open-log" && sessionId) {
+    const data = await readTraining();
+    const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
+    const fallback = emptyRunLogDraft(session?.distanceKm);
+    const fromForm = readRunLogDraft(formData);
+    return {
+      ok: false,
+      error: "",
+      logOpen: true,
+      draft: {
+        distanceKm: fromForm.distanceKm.trim() ? fromForm.distanceKm : fallback.distanceKm,
+        time: fromForm.time,
+        pace: fromForm.pace,
+        routeJson: fromForm.routeJson.trim() ? fromForm.routeJson : fallback.routeJson,
+      },
+    };
+  }
+
+  if (intent === "skip-map" && sessionId) {
+    await submitSessionFeedback(userId, sessionId, "done");
+    return { ok: true, redirect: "/today" };
+  }
+
+  if (intent === "done" && sessionId) {
+    const parsed = parseRunLogForm(formData);
+    if (!parsed.ok) {
+      return { ok: false, error: parsed.error, logOpen: true, draft: parsed.draft };
+    }
+    await submitSessionFeedback(userId, sessionId, "done", parsed.stats);
+    return { ok: true, redirect: "/today?saved=1" };
+  }
+
+  if (isFeedbackKind(intent) && intent !== "done" && sessionId) {
     await submitSessionFeedback(userId, sessionId, intent);
   }
-  return { redirect: "/today" };
+  return { ok: true, redirect: "/today" };
 }
 
 function upsertOnboarding(data: TrainingFile, record: OnboardingRecord): void {

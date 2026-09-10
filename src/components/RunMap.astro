@@ -1,0 +1,88 @@
+---
+import type { RunRoute } from "../lib/training";
+
+interface Props {
+  route: RunRoute;
+}
+
+const { route } = Astro.props;
+const width = 300;
+const height = 140;
+const padding = 18;
+const coords = route.type === "polyline" ? route.coords : [];
+const hasPolyline = coords.length >= 2;
+
+const svgPoints = hasPolyline
+  ? (() => {
+      const lats = coords.map((point) => point.lat);
+      const lngs = coords.map((point) => point.lng);
+      const minLat = Math.min(...lats);
+      const maxLat = Math.max(...lats);
+      const minLng = Math.min(...lngs);
+      const maxLng = Math.max(...lngs);
+      const latSpan = Math.max(maxLat - minLat, 0.00001);
+      const lngSpan = Math.max(maxLng - minLng, 0.00001);
+      const innerW = width - padding * 2;
+      const innerH = height - padding * 2;
+      return coords.map((point) => ({
+        x: padding + ((point.lng - minLng) / lngSpan) * innerW,
+        y: padding + ((maxLat - point.lat) / latSpan) * innerH,
+      }));
+    })()
+  : [];
+
+const pathD = svgPoints
+  .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
+  .join(" ");
+const start = svgPoints.at(0);
+const end = svgPoints.at(-1);
+---
+
+<div
+  class="relative isolate overflow-hidden rounded-2xl border border-white/12 bg-[#0a1213]"
+  style="height: 10.5rem"
+>
+  <svg
+    class="absolute inset-0 h-full w-full text-white/10"
+    viewBox={`0 0 ${width} ${height}`}
+    preserveAspectRatio="none"
+    aria-hidden="true"
+  >
+    <path d="M20 20h260M20 50h260M20 80h260M20 110h260" stroke="currentColor" stroke-width="1" />
+    <path d="M20 10v120M80 10v120M140 10v120M200 10v120M260 10v120" stroke="currentColor" stroke-width="1" />
+  </svg>
+
+  {
+    hasPolyline && pathD && start && end ? (
+      <svg
+        class="absolute inset-0 h-full w-full text-lime"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label="Run route"
+      >
+        <path
+          d={pathD}
+          fill="none"
+          stroke="currentColor"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+        <circle cx={start.x} cy={start.y} r="5" fill="#05090b" stroke="currentColor" stroke-width="3" />
+        <circle cx={end.x} cy={end.y} r="5" fill="currentColor" />
+      </svg>
+    ) : (
+      <div class="relative z-10 flex h-full flex-col items-center justify-center gap-2 px-4">
+        <svg class="h-10 w-7 text-lime" viewBox="0 0 24 36" fill="none" aria-hidden="true">
+          <path
+            d="M12 0C5.4 0 0 5.2 0 11.6 0 20.4 12 36 12 36s12-15.6 12-24.4C24 5.2 18.6 0 12 0Z"
+            fill="currentColor"
+          />
+          <circle cx="12" cy="11.5" r="4.4" fill="#05090b" />
+        </svg>
+        <p class="text-xs font-semibold tracking-wider text-mist uppercase">No route yet</p>
+      </div>
+    )
+  }
+</div>

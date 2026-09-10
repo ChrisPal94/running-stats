@@ -8,8 +8,10 @@ import { requireAppSession } from "../lib/app-session";
 import {
   getAdaptationEventForToday,
   getFeedbackForSession,
+  getRunLogForSession,
   getSessionForToday,
   handleTodayPost,
+  type RunLogFormDraft,
 } from "../lib/training";
 
 const gate = await requireAppSession(Astro.cookies);
@@ -19,17 +21,29 @@ if (!gate.ok) {
 
 const { user } = gate;
 
+let logError = "";
+let logOpen = false;
+let logDraft: RunLogFormDraft | null = null;
+
 if (Astro.request.method === "POST") {
   if (isSameOrigin(Astro.request)) {
     const result = await handleTodayPost(user.id, await Astro.request.formData());
-    return Astro.redirect(result.redirect);
+    if (result.ok) {
+      return Astro.redirect(result.redirect);
+    }
+    logError = result.error;
+    logOpen = result.logOpen;
+    logDraft = result.draft;
+  } else {
+    return Astro.redirect("/today");
   }
-  return Astro.redirect("/today");
 }
 
 const session = await getSessionForToday(user.id);
 const feedback = session ? await getFeedbackForSession(user.id, session.id) : null;
+const runLog = session ? await getRunLogForSession(user.id, session.id) : null;
 const adaptationEvent = await getAdaptationEventForToday(user.id);
+const savedToast = Astro.url.searchParams.get("saved") === "1";
 ---
 
 <AppShell
@@ -38,5 +52,14 @@ const adaptationEvent = await getAdaptationEventForToday(user.id);
   current="today"
   email={user.email}
 >
-  <TodayCard session={session} feedback={feedback} adaptationEvent={adaptationEvent} />
+  <TodayCard
+    session={session}
+    feedback={feedback}
+    runLog={runLog}
+    adaptationEvent={adaptationEvent}
+    logOpen={logOpen}
+    logError={logError}
+    logDraft={logDraft}
+    savedToast={savedToast}
+  />
 </AppShell>

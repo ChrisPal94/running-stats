@@ -1,15 +1,41 @@
 ---
-import type { AdaptationEvent, Feedback, Session } from "../lib/training";
+import LogRunSheet from "./LogRunSheet.astro";
+import RunMap from "./RunMap.astro";
+import {
+  EMPTY_RUN_ROUTE,
+  formatHms,
+  formatPace,
+  type AdaptationEvent,
+  type Feedback,
+  type RunLog,
+  type RunLogFormDraft,
+  type Session,
+} from "../lib/training";
 
 interface Props {
   session: Session | null;
   feedback: Feedback | null;
+  runLog?: RunLog | null;
   adaptationEvent: AdaptationEvent | null;
+  logOpen?: boolean;
+  logError?: string;
+  logDraft?: RunLogFormDraft | null;
+  savedToast?: boolean;
 }
 
-const { session, feedback = null, adaptationEvent = null } = Astro.props;
+const {
+  session,
+  feedback = null,
+  runLog = null,
+  adaptationEvent = null,
+  logOpen = false,
+  logError = "",
+  logDraft = null,
+  savedToast = false,
+} = Astro.props;
 const adaptationSummary = adaptationEvent?.summary || "";
 const adaptationReason = adaptationEvent?.reason || "";
+const route = runLog?.route ?? EMPTY_RUN_ROUTE;
 
 const status =
   session?.outcome === "done"
@@ -66,6 +92,28 @@ const canAct = Boolean(session && !feedback);
   }
 
   {
+    runLog && (
+      <div class="mt-6 flex flex-col gap-4">
+        <RunMap route={route} />
+        <dl class="grid grid-cols-3 divide-x divide-white/10">
+          <div class="pr-3">
+            <dt class="text-[0.58rem] tracking-wider text-mist uppercase">Distance</dt>
+            <dd class="mt-1 text-xs font-semibold text-cloud tabular-nums">{runLog.distanceKm} km</dd>
+          </div>
+          <div class="px-3">
+            <dt class="text-[0.58rem] tracking-wider text-mist uppercase">Time</dt>
+            <dd class="mt-1 text-xs font-semibold text-cloud tabular-nums">{formatHms(runLog.timeSec)}</dd>
+          </div>
+          <div class="pl-3">
+            <dt class="text-[0.58rem] tracking-wider text-mist uppercase">Pace</dt>
+            <dd class="mt-1 text-xs font-semibold text-cloud tabular-nums">{formatPace(runLog.paceSecPerKm)}</dd>
+          </div>
+        </dl>
+      </div>
+    )
+  }
+
+  {
     adaptationEvent && (
       <div
         class="mt-8 rounded-2xl border border-lime/30 bg-lime/8 p-4 sm:p-5"
@@ -106,33 +154,34 @@ const canAct = Boolean(session && !feedback);
 
   {
     canAct && session && (
-      <form method="post" class="mt-8 flex flex-col gap-2">
-        <input type="hidden" name="sessionId" value={session.id} />
-        <button
-          type="submit"
-          name="intent"
-          value="done"
-          class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
-        >
-          Done
-        </button>
-        <button
-          type="submit"
-          name="intent"
-          value="skip"
-          class="inline-flex w-full items-center justify-center rounded-full border border-white/12 bg-transparent px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]"
-        >
-          Skip
-        </button>
-        <button
-          type="submit"
-          name="intent"
-          value="feeling-off"
-          class="inline-flex w-full items-center justify-center px-5 py-3 text-xs font-bold tracking-[0.13em] text-mist uppercase transition-colors hover:text-cloud"
-        >
-          Feeling off
-        </button>
-      </form>
+      <div class="mt-8 flex flex-col gap-2">
+        <LogRunSheet
+          sessionId={session.id}
+          plannedDistanceKm={session.distanceKm}
+          open={logOpen}
+          error={logError}
+          draft={logDraft}
+        />
+        <form method="post" class="flex flex-col gap-2">
+          <input type="hidden" name="sessionId" value={session.id} />
+          <button
+            type="submit"
+            name="intent"
+            value="skip"
+            class="inline-flex w-full items-center justify-center rounded-full border border-white/12 bg-transparent px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]"
+          >
+            Skip
+          </button>
+          <button
+            type="submit"
+            name="intent"
+            value="feeling-off"
+            class="inline-flex w-full items-center justify-center px-5 py-3 text-xs font-bold tracking-[0.13em] text-mist uppercase transition-colors hover:text-cloud"
+          >
+            Feeling off
+          </button>
+        </form>
+      </div>
     )
   }
 
@@ -149,3 +198,29 @@ const canAct = Boolean(session && !feedback);
     )
   }
 </article>
+
+{
+  savedToast ? (
+    <p
+      class="saved-toast pointer-events-none fixed inset-x-0 bottom-24 z-50 mx-auto w-max rounded-full bg-lime px-4 py-2 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
+      data-saved-toast
+      role="status"
+    >
+      Saved
+    </p>
+  ) : null
+}
+
+{
+  savedToast ? (
+    <script>
+      const toast = document.querySelector("[data-saved-toast]");
+      window.setTimeout(() => {
+        if (toast instanceof HTMLElement) toast.hidden = true;
+        if (window.location.search.includes("saved=1")) {
+          history.replaceState({}, "", "/today");
+        }
+      }, 1800);
+    </script>
+  ) : null
+}

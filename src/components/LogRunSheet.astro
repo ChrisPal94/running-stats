@@ -1,0 +1,343 @@
+---
+import RunMap from "./RunMap.astro";
+import {
+  emptyRunLogDraft,
+  formatPaceInput,
+  isPaceSoftOutOfRange,
+  parseDurationToSeconds,
+  parsePaceToSecPerKm,
+  parsePositiveNumber,
+  parseRunRoute,
+  type RunLogFormDraft,
+} from "../lib/training";
+
+interface Props {
+  sessionId: string;
+  plannedDistanceKm: number;
+  open?: boolean;
+  error?: string;
+  draft?: RunLogFormDraft | null;
+}
+
+const { sessionId, plannedDistanceKm, open = false, error = "", draft = null } = Astro.props;
+const values = draft ?? emptyRunLogDraft(plannedDistanceKm);
+const route = parseRunRoute(values.routeJson);
+const distanceValue = values.distanceKm;
+const timeValue = values.time;
+const paceFromDraft = values.pace.trim();
+const distanceKm = parsePositiveNumber(distanceValue);
+const timeSec = parseDurationToSeconds(timeValue);
+const computedPace =
+  distanceKm && timeSec && timeSec > 0 ? formatPaceInput(timeSec / distanceKm) : "";
+const paceValue = paceFromDraft || computedPace;
+const paceSec = parsePaceToSecPerKm(paceValue) ?? (distanceKm && timeSec ? timeSec / distanceKm : 0);
+const showPaceWarning = paceSec > 0 && isPaceSoftOutOfRange(paceSec);
+const inputClass =
+  "w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime";
+---
+
+<form method="post" data-open-log-form>
+  <input type="hidden" name="sessionId" value={sessionId} />
+  <button
+    type="submit"
+    name="intent"
+    value="open-log"
+    data-open-log
+    class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
+  >
+    Done
+  </button>
+</form>
+
+<dialog
+  class="log-run-sheet mx-auto w-full max-w-md border-0 bg-transparent p-0 text-cloud"
+  data-log-sheet
+  data-open={open ? "true" : "false"}
+  open={open}
+  aria-modal="true"
+  aria-labelledby="log-run-title"
+>
+  <div
+    class="flex max-h-[min(92dvh,44rem)] flex-col overflow-hidden rounded-t-[1.75rem] border border-white/12 border-b-0 bg-[#111718] shadow-[0_-18px_50px_rgba(0,0,0,0.45)]"
+    data-log-panel
+  >
+    <div
+      class="flex cursor-grab touch-none justify-center pt-3 pb-1"
+      data-log-handle
+      aria-hidden="true"
+    >
+      <span class="h-1 w-10 rounded-full bg-white/20"></span>
+    </div>
+    <div class="flex items-center justify-between gap-3 px-5 pt-2">
+      <h2
+        id="log-run-title"
+        class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
+      >
+        Log this run
+      </h2>
+      <a
+        href="/today"
+        data-close-log
+        aria-label="Close"
+        class="grid h-8 w-8 place-items-center rounded-full text-mist transition-colors hover:bg-white/8 hover:text-cloud"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+      </a>
+    </div>
+
+    <form method="post" class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pt-4 pb-5" data-log-form>
+      <input type="hidden" name="intent" value="done" />
+      <input type="hidden" name="sessionId" value={sessionId} />
+      <input type="hidden" name="loggedRoute" value={values.routeJson} data-logged-route />
+
+      <RunMap route={route} />
+
+      {
+        error ? (
+          <p
+            class="rounded-xl border border-lime/25 bg-lime/8 px-4 py-3 text-xs leading-5 text-[#d6ded6]"
+            role="alert"
+          >
+            {error}
+          </p>
+        ) : null
+      }
+
+      <label class="flex flex-col gap-2">
+        <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Distance (km)</span>
+        <input
+          type="text"
+          name="loggedDistanceKm"
+          value={distanceValue}
+          inputmode="decimal"
+          placeholder="e.g. 6"
+          autocomplete="off"
+          data-log-distance
+          class={inputClass}
+        />
+      </label>
+
+      <label class="flex flex-col gap-2">
+        <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Time (hh:mm:ss)</span>
+        <input
+          type="text"
+          name="loggedTime"
+          value={timeValue}
+          inputmode="numeric"
+          placeholder="hh:mm:ss"
+          autocomplete="off"
+          data-log-time
+          class={inputClass}
+        />
+      </label>
+
+      <label class="flex flex-col gap-2">
+        <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Pace</span>
+        <input
+          type="text"
+          name="loggedPace"
+          value={paceValue}
+          inputmode="numeric"
+          placeholder="m:ss /km"
+          autocomplete="off"
+          data-log-pace
+          class={inputClass}
+        />
+      </label>
+
+      <p
+        class="rounded-xl border border-lime/25 bg-lime/8 px-4 py-3 text-xs leading-5 text-[#d6ded6]"
+        data-pace-warning
+        hidden={!showPaceWarning}
+      >
+        That pace looks unusual. Typical is about 2:30–12:00 /km. You can still save.
+      </p>
+
+      <button
+        type="submit"
+        class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
+      >
+        Save
+      </button>
+    </form>
+
+    <form method="post" class="px-5 pb-5" data-skip-map-form>
+      <input type="hidden" name="sessionId" value={sessionId} />
+      <input type="hidden" name="intent" value="skip-map" />
+      <button
+        type="submit"
+        class="inline-flex w-full items-center justify-center px-5 py-3 text-xs font-bold tracking-[0.13em] text-mist uppercase transition-colors hover:text-cloud"
+      >
+        Skip map
+      </button>
+    </form>
+  </div>
+</dialog>
+
+<script>
+  const sheet = document.querySelector("[data-log-sheet]");
+  const panel = document.querySelector("[data-log-panel]");
+  const handle = document.querySelector("[data-log-handle]");
+  const openButtons = [...document.querySelectorAll("[data-open-log]")];
+  const closeButtons = [...document.querySelectorAll("[data-close-log]")];
+  const form = document.querySelector("[data-log-form]");
+
+  const parseHms = (raw: string) => {
+    const value = raw.trim();
+    const hms = /^(\d{1,2}):([0-5]\d):([0-5]\d)$/.exec(value);
+    if (hms) return Number(hms[1]) * 3600 + Number(hms[2]) * 60 + Number(hms[3]);
+    const ms = /^(\d{1,2}):([0-5]\d)$/.exec(value);
+    if (ms) return Number(ms[1]) * 60 + Number(ms[2]);
+    return null;
+  };
+
+  const parsePace = (raw: string) => {
+    const value = raw.trim().replace(/\s*\/\s*km$/i, "").trim();
+    const match = /^(\d{1,2}):([0-5]\d)$/.exec(value);
+    if (!match) return null;
+    const seconds = Number(match[1]) * 60 + Number(match[2]);
+    return seconds > 0 ? seconds : null;
+  };
+
+  const parseKm = (raw: string) => {
+    const amount = Number(raw.trim().replace(",", "."));
+    return Number.isFinite(amount) && amount > 0 ? amount : null;
+  };
+
+  const formatHms = (totalSeconds: number) => {
+    const safe = Math.max(0, Math.round(totalSeconds));
+    const hours = Math.floor(safe / 3600);
+    const minutes = Math.floor((safe % 3600) / 60);
+    const seconds = safe % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  };
+
+  const formatPaceInput = (secPerKm: number) => {
+    if (!(secPerKm > 0)) return "";
+    const rounded = Math.round(secPerKm);
+    const minutes = Math.floor(rounded / 60);
+    const seconds = rounded % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+
+  const openSheet = () => {
+    if (!(sheet instanceof HTMLDialogElement)) return;
+    if (sheet.open) sheet.close();
+    sheet.showModal();
+    const distance = sheet.querySelector<HTMLInputElement>("[data-log-distance]");
+    distance?.focus();
+  };
+
+  const closeSheet = () => {
+    if (sheet instanceof HTMLDialogElement && sheet.open) sheet.close();
+    if (panel instanceof HTMLElement) panel.style.transform = "";
+  };
+
+  if (sheet instanceof HTMLDialogElement && sheet.dataset.open === "true") {
+    openSheet();
+  }
+
+  openButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      openSheet();
+    });
+  });
+
+  closeButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      closeSheet();
+    });
+  });
+
+  sheet?.addEventListener("click", (event) => {
+    if (event.target === sheet) closeSheet();
+  });
+
+  sheet?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeSheet();
+  });
+
+  if (handle instanceof HTMLElement && panel instanceof HTMLElement) {
+    let startY = 0;
+    let dragging = false;
+
+    const onStart = (clientY: number) => {
+      dragging = true;
+      startY = clientY;
+      panel.style.transition = "none";
+    };
+
+    const onMove = (clientY: number) => {
+      if (!dragging) return;
+      const dy = Math.max(0, clientY - startY);
+      panel.style.transform = `translateY(${dy}px)`;
+    };
+
+    const onEnd = (clientY: number) => {
+      if (!dragging) return;
+      dragging = false;
+      panel.style.transition = "";
+      const dy = clientY - startY;
+      if (dy > 72) closeSheet();
+      else panel.style.transform = "";
+    };
+
+    handle.addEventListener(
+      "touchstart",
+      (event) => {
+        const touch = event.changedTouches[0];
+        if (touch) onStart(touch.clientY);
+      },
+      { passive: true },
+    );
+    handle.addEventListener(
+      "touchmove",
+      (event) => {
+        const touch = event.changedTouches[0];
+        if (touch) onMove(touch.clientY);
+      },
+      { passive: true },
+    );
+    handle.addEventListener(
+      "touchend",
+      (event) => {
+        const touch = event.changedTouches[0];
+        if (touch) onEnd(touch.clientY);
+      },
+      { passive: true },
+    );
+  }
+
+  if (form instanceof HTMLFormElement) {
+    const distanceInput = form.querySelector<HTMLInputElement>("[data-log-distance]");
+    const timeInput = form.querySelector<HTMLInputElement>("[data-log-time]");
+    const paceInput = form.querySelector<HTMLInputElement>("[data-log-pace]");
+    const paceWarning = form.querySelector<HTMLElement>("[data-pace-warning]");
+
+    const sync = (source: "distance" | "time" | "pace") => {
+      const km = parseKm(distanceInput?.value ?? "");
+      const timeSeconds = parseHms(timeInput?.value ?? "");
+      const paceSeconds = parsePace(paceInput?.value ?? "");
+
+      if (source === "pace" && km && paceSeconds && timeInput) {
+        timeInput.value = formatHms(paceSeconds * km);
+      } else if (km && timeSeconds && timeSeconds > 0 && paceInput) {
+        paceInput.value = formatPaceInput(timeSeconds / km);
+      }
+
+      const nextTime = parseHms(timeInput?.value ?? "");
+      const pace = km && nextTime && nextTime > 0 ? nextTime / km : 0;
+      if (paceWarning) paceWarning.hidden = !(pace > 0 && (pace < 150 || pace > 720));
+    };
+
+    distanceInput?.addEventListener("input", () => sync("distance"));
+    timeInput?.addEventListener("input", () => sync("time"));
+    paceInput?.addEventListener("input", () => sync("pace"));
+    sync("time");
+  }
+</script>
