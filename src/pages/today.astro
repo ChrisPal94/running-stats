@@ -3,11 +3,19 @@ export const prerender = false;
 
 import PageLayout from "../layouts/PageLayout.astro";
 import { getCurrentUser } from "../lib/auth";
+import { getNextSession, getPlanForUser } from "../lib/training";
 
 const user = await getCurrentUser(Astro.cookies);
 if (!user) {
   return Astro.redirect("/login");
 }
+
+const plan = await getPlanForUser(user.id);
+if (!plan) {
+  return Astro.redirect("/onboarding");
+}
+
+const next = await getNextSession(user.id);
 ---
 
 <PageLayout
@@ -17,9 +25,17 @@ if (!user) {
   eyebrow="Hoy"
 >
   <p>
-    Welcome back. Today's session, the week, and progress will live in the app
+    Your plan is ready. Today's session, the week, and progress will live in the app
     shell—that work lands in a later PR.
   </p>
+  {
+    next && (
+      <p>
+        Next up: <span class="font-semibold text-cloud">{next.title}</span>
+        <span class="block text-mist">{next.cue}</span>
+      </p>
+    )
+  }
   <p class="text-mist">Signed in as {user.email}</p>
   <form method="post" action="/logout">
     <button

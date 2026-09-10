@@ -1,32 +1,67 @@
 ---
 export const prerender = false;
 
-import PageLayout from "../layouts/PageLayout.astro";
-import { getCurrentUser } from "../lib/auth";
+import OnboardingWizard from "../components/OnboardingWizard.astro";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Header from "../components/Header.astro";
+import { getCurrentUser, isSameOrigin } from "../lib/auth";
+import {
+  getOnboarding,
+  getPlanForUser,
+  handleOnboardingPost,
+  onboardingStep,
+} from "../lib/training";
 
 const user = await getCurrentUser(Astro.cookies);
 if (!user) {
   return Astro.redirect("/signup");
 }
+
+const existingPlan = await getPlanForUser(user.id);
+if (existingPlan && Astro.request.method !== "POST") {
+  return Astro.redirect("/today");
+}
+
+let error = "";
+let step: 1 | 2 | 3 = 1;
+
+if (Astro.request.method === "POST") {
+  if (!isSameOrigin(Astro.request)) {
+    error = "This request could not be verified. Try again.";
+    const draft = await getOnboarding(user.id);
+    const requested = Number(Astro.url.searchParams.get("step"));
+    step = onboardingStep(draft, Number.isFinite(requested) ? requested : null);
+  } else {
+    const result = await handleOnboardingPost(user.id, await Astro.request.formData());
+    if (result.ok) {
+      return Astro.redirect(result.redirect);
+    }
+    error = result.error;
+    step = result.step;
+  }
+} else {
+  const draft = await getOnboarding(user.id);
+  const requested = Number(Astro.url.searchParams.get("step"));
+  step = onboardingStep(draft, Number.isFinite(requested) ? requested : null);
+}
+
+const draft = await getOnboarding(user.id);
+
+const titles = {
+  1: "Your goal",
+  2: "Your level",
+  3: "Your days",
+} as const;
 ---
 
-<PageLayout
-  title="Onboarding — Running Stats"
-  description="Set up your adaptive training plan."
-  heading="You're in"
-  eyebrow="Onboarding"
+<BaseLayout
+  title={`${titles[step]} — Running Stats`}
+  description="Set up your adaptive training plan in three steps."
 >
-  <p>
-    Your account is ready. The next step is a short onboarding flow to start your
-    plan—that work lands in a later PR.
-  </p>
-  <p class="text-mist">Signed in as {user.email}</p>
-  <form method="post" action="/logout">
-    <button
-      type="submit"
-      class="inline-flex items-center gap-2 border-b border-lime pb-1 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
-    >
-      Log out
-    </button>
-  </form>
-</PageLayout>
+  <div class="relative isolate min-h-svh bg-ink">
+    <Header />
+    <main class="mx-auto w-full max-w-3xl px-5 pb-16 pt-4 sm:px-8 sm:pt-6 lg:px-12">
+      <OnboardingWizard step={step} error={error} draft={draft} />
+    </main>
+  </div>
+</BaseLayout>
