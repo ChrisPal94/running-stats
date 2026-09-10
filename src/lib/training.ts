@@ -1,0 +1,510 @@
+import { randomBytes } from "node:crypto";
+import { enqueueWrite, readJsonFile, writeJsonFile } from "./json-store";
+
+const TRAINING_FILE = "training.json";
+const PLAN_WEEKS = 4;
+const MIN_SESSION_KM = 2;
+
+export const MIN_TRAINING_DAYS = 3;
+
+export const GOAL_IDS = ["5k", "10k", "half", "marathon", "consistent"] as const;
+export type Goal = (typeof GOAL_IDS)[number];
+
+export const LEVEL_IDS = ["beginner", "intermediate", "advanced"] as const;
+export type Level = (typeof LEVEL_IDS)[number];
+
+export const WEEKDAY_IDS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+export type Weekday = (typeof WEEKDAY_IDS)[number];
+
+export type SessionKind = "easy" | "intervals" | "tempo" | "long";
+
+export const GOALS = [
+  { id: "5k", label: "5K" },
+  { id: "10k", label: "10K" },
+  { id: "half", label: "Half" },
+  { id: "marathon", label: "Marathon" },
+  { id: "consistent", label: "Just consistent" },
+] as const satisfies ReadonlyArray<{ id: Goal; label: string }>;
+
+export const LEVELS = [
+  {
+    id: "beginner",
+    label: "Beginner",
+    help: "New to structured training, or coming back after a break.",
+  },
+  {
+    id: "intermediate",
+    label: "Intermediate",
+    help: "You run most weeks and can hold a conversation on easy days.",
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    help: "You train consistently and are comfortable with harder sessions.",
+  },
+] as const satisfies ReadonlyArray<{ id: Level; label: string; help: string }>;
+
+export const WEEKDAYS = [
+  { id: "mon", abbr: "M", label: "Monday" },
+  { id: "tue", abbr: "T", label: "Tuesday" },
+  { id: "wed", abbr: "W", label: "Wednesday" },
+  { id: "thu", abbr: "T", label: "Thursday" },
+  { id: "fri", abbr: "F", label: "Friday" },
+  { id: "sat", abbr: "S", label: "Saturday" },
+  { id: "sun", abbr: "S", label: "Sunday" },
+] as const satisfies ReadonlyArray<{ id: Weekday; abbr: string; label: string }>;
+
+export const DEFAULT_DAYS: Weekday[] = ["tue", "thu", "sat"];
+
+export type OnboardingAnswers = {
+  goal: Goal;
+  raceDate: string | null;
+  level: Level;
+  days: Weekday[];
+};
+
+export type OnboardingRecord = {
+  userId: string;
+  goal?: Goal;
+  raceDate?: string | null;
+  level?: Level;
+  days?: Weekday[];
+  updatedAt: string;
+  completedAt?: string;
+  planId?: string;
+};
+
+export type Plan = {
+  id: string;
+  userId: string;
+  version: 1;
+  createdAt: string;
+  goal: Goal;
+  raceDate: string | null;
+  level: Level;
+  days: Weekday[];
+};
+
+export type Session = {
+  id: string;
+  planId: string;
+  userId: string;
+  date: string;
+  weekday: Weekday;
+  weekIndex: number;
+  kind: SessionKind;
+  title: string;
+  cue: string;
+  distanceKm: number;
+};
+
+type TrainingFile = {
+  onboarding: OnboardingRecord[];
+  plans: Plan[];
+  sessions: Session[];
+};
+
+const EMPTY_TRAINING: TrainingFile = {
+  onboarding: [],
+  plans: [],
+  sessions: [],
+};
+
+const WEEKLY_KM: Record<Goal, Record<Level, number>> = {
+  "5k": { beginner: 16, intermediate: 25, advanced: 40 },
+  "10k": { beginner: 20, intermediate: 32, advanced: 48 },
+  half: { beginner: 24, intermediate: 40, advanced: 56 },
+  marathon: { beginner: 32, intermediate: 50, advanced: 70 },
+  consistent: { beginner: 12, intermediate: 20, advanced: 32 },
+};
+
+const SESSION_COPY: Record<SessionKind, { title: string; cue: string }> = {
+  easy: { title: "Easy run", cue: "Keep it conversational" },
+  intervals: { title: "Intervals", cue: "Hard efforts, easy recoveries" },
+  tempo: { title: "Tempo", cue: "Comfortably hard, controlled" },
+  long: { title: "Long run", cue: "Easy pace, finish with something left" },
+};
+
+const WEEKDAY_INDEX: Record<Weekday, number> = {
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6,
+};
+
+export type OnboardingFormResult =
+  | { ok: true; redirect: string }
+  | { ok: false; error: string; step: 1 | 2 | 3 };
+
+function newId(): string {
+  return randomBytes(16).toString("base64url");
+}
+
+function isGoal(value: string): value is Goal {
+  return (GOAL_IDS as readonly string[]).includes(value);
+}
+
+function isLevel(value: string): value is Level {
+  return (LEVEL_IDS as readonly string[]).includes(value);
+}
+
+function isWeekday(value: string): value is Weekday {
+  return (WEEKDAY_IDS as readonly string[]).includes(value);
+}
+
+export function utcTodayYmd(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function isYmd(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function uniqueWeekdays(values: string[]): Weekday[] {
+  const seen = new Set<Weekday>();
+  for (const value of values) {
+    if (isWeekday(value) && !seen.has(value)) seen.add(value);
+  }
+  return WEEKDAY_IDS.filter((day) => seen.has(day));
+}
+
+async function readTraining(): Promise<TrainingFile> {
+  const parsed = await readJsonFile<TrainingFile>(TRAINING_FILE, EMPTY_TRAINING);
+  return {
+    onboarding: Array.isArray(parsed.onboarding) ? parsed.onboarding : [],
+    plans: Array.isArray(parsed.plans) ? parsed.plans : [],
+    sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+  };
+}
+
+async function writeTraining(data: TrainingFile): Promise<void> {
+  await writeJsonFile(TRAINING_FILE, data);
+}
+
+export async function getOnboarding(userId: string): Promise<OnboardingRecord | null> {
+  const data = await readTraining();
+  return data.onboarding.find((entry) => entry.userId === userId) ?? null;
+}
+
+export async function getPlanForUser(userId: string): Promise<Plan | null> {
+  const data = await readTraining();
+  return data.plans.find((plan) => plan.userId === userId) ?? null;
+}
+
+export async function getSessionsForPlan(planId: string): Promise<Session[]> {
+  const data = await readTraining();
+  return data.sessions
+    .filter((session) => session.planId === planId)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.weekday.localeCompare(b.weekday));
+}
+
+export async function getNextSession(userId: string): Promise<Session | null> {
+  const plan = await getPlanForUser(userId);
+  if (!plan) return null;
+  const today = utcTodayYmd();
+  const sessions = await getSessionsForPlan(plan.id);
+  return sessions.find((session) => session.date >= today) ?? sessions.at(-1) ?? null;
+}
+
+function upsertOnboarding(data: TrainingFile, record: OnboardingRecord): void {
+  const index = data.onboarding.findIndex((entry) => entry.userId === record.userId);
+  if (index >= 0) data.onboarding[index] = record;
+  else data.onboarding.push(record);
+}
+
+export async function saveOnboardingDraft(
+  userId: string,
+  patch: Partial<Pick<OnboardingRecord, "goal" | "raceDate" | "level" | "days">>,
+): Promise<OnboardingRecord> {
+  return enqueueWrite(async () => {
+    const data = await readTraining();
+    const existing = data.onboarding.find((entry) => entry.userId === userId);
+    const record: OnboardingRecord = {
+      ...existing,
+      ...patch,
+      userId,
+      updatedAt: new Date().toISOString(),
+    };
+    upsertOnboarding(data, record);
+    await writeTraining(data);
+    return record;
+  });
+}
+
+function parseRaceDate(raw: FormDataEntryValue | null, goal: Goal): string | null | { error: string } {
+  const value = String(raw ?? "").trim();
+  if (!value || goal === "consistent") return null;
+  if (!isYmd(value)) return { error: "Enter a valid race date, or leave it blank." };
+  if (value < utcTodayYmd()) return { error: "Pick a race date from today on." };
+  return value;
+}
+
+function roundKm(value: number): number {
+  return Math.max(MIN_SESSION_KM, Math.round(value));
+}
+
+function assignKinds(days: Weekday[]): Record<Weekday, SessionKind> {
+  const ordered = WEEKDAY_IDS.filter((day) => days.includes(day));
+  const kinds = Object.fromEntries(ordered.map((day) => [day, "easy"])) as Record<
+    Weekday,
+    SessionKind
+  >;
+
+  const weekend = ordered.filter((day) => day === "sat" || day === "sun");
+  const longDay = weekend.at(-1) ?? ordered.at(-1);
+  if (longDay) kinds[longDay] = "long";
+
+  const midCandidates = ordered.filter((day) => kinds[day] !== "long");
+  if (midCandidates.length > 0) {
+    const intervalsDay = midCandidates[Math.floor((midCandidates.length - 1) / 2)];
+    kinds[intervalsDay] = "intervals";
+  }
+
+  if (ordered.length >= 5) {
+    const tempoDay = midCandidates.find((day) => kinds[day] === "easy");
+    if (tempoDay) kinds[tempoDay] = "tempo";
+  }
+
+  return kinds;
+}
+
+function allocateDistances(
+  days: Weekday[],
+  kinds: Record<Weekday, SessionKind>,
+  weeklyKm: number,
+): Record<Weekday, number> {
+  const weights: Record<SessionKind, number> = {
+    long: 0.36,
+    intervals: 0.2,
+    tempo: 0.18,
+    easy: 0.14,
+  };
+  const raw = Object.fromEntries(
+    days.map((day) => [day, weights[kinds[day]]]),
+  ) as Record<Weekday, number>;
+  const totalWeight = days.reduce((sum, day) => sum + raw[day], 0);
+  const distances = Object.fromEntries(
+    days.map((day) => [day, roundKm((raw[day] / totalWeight) * weeklyKm)]),
+  ) as Record<Weekday, number>;
+
+  const drift = weeklyKm - days.reduce((sum, day) => sum + distances[day], 0);
+  const longDay = days.find((day) => kinds[day] === "long") ?? days.at(-1);
+  if (longDay) distances[longDay] = Math.max(MIN_SESSION_KM, distances[longDay] + drift);
+
+  return distances;
+}
+
+function dateOnOrAfter(startYmd: string, weekday: Weekday): string {
+  const start = new Date(`${startYmd}T00:00:00.000Z`);
+  const delta = (WEEKDAY_INDEX[weekday] - start.getUTCDay() + 7) % 7;
+  const next = new Date(start.getTime() + delta * 24 * 60 * 60 * 1000);
+  return next.toISOString().slice(0, 10);
+}
+
+function addDays(ymd: string, days: number): string {
+  const date = new Date(`${ymd}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+export function generatePlanV1(
+  userId: string,
+  answers: OnboardingAnswers,
+  fromYmd = utcTodayYmd(),
+): { plan: Plan; sessions: Session[] } {
+  const createdAt = new Date().toISOString();
+  const plan: Plan = {
+    id: newId(),
+    userId,
+    version: 1,
+    createdAt,
+    goal: answers.goal,
+    raceDate: answers.raceDate,
+    level: answers.level,
+    days: answers.days,
+  };
+
+  const kinds = assignKinds(answers.days);
+  const distances = allocateDistances(
+    answers.days,
+    kinds,
+    WEEKLY_KM[answers.goal][answers.level],
+  );
+  const cutoff = answers.raceDate;
+
+  const sessions: Session[] = [];
+  for (let weekIndex = 0; weekIndex < PLAN_WEEKS; weekIndex += 1) {
+    for (const weekday of answers.days) {
+      const first = dateOnOrAfter(fromYmd, weekday);
+      const date = addDays(first, weekIndex * 7);
+      if (cutoff && date > cutoff) continue;
+
+      const kind = kinds[weekday];
+      const distanceKm = distances[weekday];
+      const copy = SESSION_COPY[kind];
+      sessions.push({
+        id: newId(),
+        planId: plan.id,
+        userId,
+        date,
+        weekday,
+        weekIndex,
+        kind,
+        title: `${copy.title} · ${distanceKm} km`,
+        cue: copy.cue,
+        distanceKm,
+      });
+    }
+  }
+
+  if (sessions.length === 0) {
+    for (const weekday of answers.days) {
+      const date = dateOnOrAfter(fromYmd, weekday);
+      const kind = kinds[weekday];
+      const distanceKm = distances[weekday];
+      const copy = SESSION_COPY[kind];
+      sessions.push({
+        id: newId(),
+        planId: plan.id,
+        userId,
+        date,
+        weekday,
+        weekIndex: 0,
+        kind,
+        title: `${copy.title} · ${distanceKm} km`,
+        cue: copy.cue,
+        distanceKm,
+      });
+    }
+  }
+
+  sessions.sort((a, b) => a.date.localeCompare(b.date));
+  return { plan, sessions };
+}
+
+export async function completeOnboarding(
+  userId: string,
+  answers: OnboardingAnswers,
+): Promise<{ plan: Plan; sessions: Session[] }> {
+  return enqueueWrite(async () => {
+    const data = await readTraining();
+    const existingPlan = data.plans.find((plan) => plan.userId === userId);
+    if (existingPlan) {
+      return {
+        plan: existingPlan,
+        sessions: data.sessions.filter((session) => session.planId === existingPlan.id),
+      };
+    }
+
+    const { plan, sessions } = generatePlanV1(userId, answers);
+    const now = plan.createdAt;
+    upsertOnboarding(data, {
+      userId,
+      goal: answers.goal,
+      raceDate: answers.raceDate,
+      level: answers.level,
+      days: answers.days,
+      updatedAt: now,
+      completedAt: now,
+      planId: plan.id,
+    });
+    data.plans.push(plan);
+    data.sessions.push(...sessions);
+    await writeTraining(data);
+    return { plan, sessions };
+  });
+}
+
+function draftAnswers(draft: OnboardingRecord | null): Partial<OnboardingAnswers> {
+  return {
+    goal: draft?.goal,
+    raceDate: draft?.raceDate ?? null,
+    level: draft?.level,
+    days: draft?.days,
+  };
+}
+
+export function onboardingStep(draft: OnboardingRecord | null, requested: number | null): 1 | 2 | 3 {
+  const max: 1 | 2 | 3 = draft?.goal && draft?.level ? 3 : draft?.goal ? 2 : 1;
+  if (requested === 1) return 1;
+  if (requested === 2) return max >= 2 ? 2 : max;
+  if (requested === 3) return max >= 3 ? 3 : max;
+  return max;
+}
+
+export async function handleOnboardingPost(
+  userId: string,
+  formData: FormData,
+): Promise<OnboardingFormResult> {
+  if (await getPlanForUser(userId)) {
+    return { ok: true, redirect: "/today" };
+  }
+
+  const draft = await getOnboarding(userId);
+  const intent = String(formData.get("intent") ?? "");
+
+  if (formData.has("goal")) {
+    const goalRaw = String(formData.get("goal") ?? "");
+    if (!isGoal(goalRaw)) {
+      return { ok: false, error: "Pick a goal to continue.", step: 1 };
+    }
+    const raceDate = parseRaceDate(formData.get("raceDate"), goalRaw);
+    if (raceDate && typeof raceDate === "object") {
+      return { ok: false, error: raceDate.error, step: 1 };
+    }
+    await saveOnboardingDraft(userId, { goal: goalRaw, raceDate });
+    return { ok: true, redirect: "/onboarding?step=2" };
+  }
+
+  if (formData.has("level")) {
+    if (!draft?.goal) {
+      return { ok: false, error: "Pick a goal first.", step: 1 };
+    }
+    const levelRaw = String(formData.get("level") ?? "");
+    if (!isLevel(levelRaw)) {
+      return { ok: false, error: "Pick a level to continue.", step: 2 };
+    }
+    await saveOnboardingDraft(userId, { level: levelRaw });
+    return { ok: true, redirect: "/onboarding?step=3" };
+  }
+
+  if (intent === "generate") {
+    const answers = draftAnswers(draft);
+    if (!answers.goal) {
+      return { ok: false, error: "Pick a goal first.", step: 1 };
+    }
+    if (!answers.level) {
+      return { ok: false, error: "Pick a level first.", step: 2 };
+    }
+
+    const days = uniqueWeekdays(formData.getAll("days").map((value) => String(value)));
+    if (days.length < MIN_TRAINING_DAYS) {
+      await saveOnboardingDraft(userId, { days });
+      return {
+        ok: false,
+        error: `Pick at least ${MIN_TRAINING_DAYS} days you can run.`,
+        step: 3,
+      };
+    }
+
+    try {
+      await completeOnboarding(userId, {
+        goal: answers.goal,
+        raceDate: answers.goal === "consistent" ? null : (answers.raceDate ?? null),
+        level: answers.level,
+        days,
+      });
+      return { ok: true, redirect: "/today" };
+    } catch (error) {
+      console.error("[training] generate plan failed", error);
+      return { ok: false, error: "Something went wrong. Try again.", step: 3 };
+    }
+  }
+
+  return { ok: false, error: "Something went wrong. Try again.", step: onboardingStep(draft, null) };
+}
