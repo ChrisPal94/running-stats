@@ -11,7 +11,7 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 | Build | `npm run build` (`astro check && astro build`) |
 | Start | `HOST=0.0.0.0 node ./dist/server/entry.mjs` (`npm start`) |
 | Volume | Mount at `.data` (Nixpacks workdir is `/app`, so `/app/.data`) |
-| Runtime | Node 22+ (built-in `node:sqlite`; no extra native module) |
+| Runtime | Node 22.14+ (built-in `node:sqlite`; no extra native module) |
 
 Nixpacks already runs `npm run build` and `npm start`. Keep the start command as `npm start` (or the `HOST=0.0.0.0 node ./dist/server/entry.mjs` equivalent). Do not use `astro preview` in production.
 
