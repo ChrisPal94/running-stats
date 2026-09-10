@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { AstroCookies } from "astro";
+import { postAuthPath } from "./app-session";
 import {
   googleAuthErrorPath,
   parseGoogleOAuthFrom,
@@ -144,7 +145,7 @@ export async function finishGoogleOAuth(
 
     const result = await upsertGoogleUser(profile.sub, profile.email);
     setSessionCookie(cookies, result.user.id);
-    return { location: result.created ? "/onboarding" : "/today" };
+    return { location: result.created ? "/onboarding" : await postAuthPath(result.user.id) };
   } catch (error) {
     console.error("[auth] Google OAuth callback failed", error);
     return { location: errorLocation };

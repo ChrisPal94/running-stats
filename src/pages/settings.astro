@@ -1,0 +1,44 @@
+---
+export const prerender = false;
+
+import AppShell from "../layouts/AppShell.astro";
+import { requireAppSession, userInitial } from "../lib/app-session";
+
+const gate = await requireAppSession(Astro.cookies);
+if (!gate.ok) {
+  return Astro.redirect(gate.redirect);
+}
+
+const { user } = gate;
+const initial = userInitial(user.email);
+---
+
+<AppShell
+  title="Account — Running Stats"
+  description="Account and settings."
+  current="settings"
+  email={user.email}
+>
+  <article
+    class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
+  >
+    <h1 class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Account</h1>
+    <div class="mt-6 flex items-center gap-4">
+      <span class="grid h-12 w-12 place-items-center rounded-full bg-lime text-lg font-bold text-ink">
+        {initial}
+      </span>
+      <p class="min-w-0 truncate text-sm text-cloud">{user.email}</p>
+    </div>
+    <p class="mt-6 text-sm leading-6 text-[#d6ded6]">
+      More account settings land later. This page is the shell entry for now.
+    </p>
+    <form method="post" action="/logout" class="mt-8">
+      <button
+        type="submit"
+        class="inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]"
+      >
+        Log out
+      </button>
+    </form>
+  </article>
+</AppShell>

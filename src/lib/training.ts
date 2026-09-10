@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { addDaysYmd, calendarTodayYmd, endOfWeekSunday, startOfWeekMonday } from "./calendar";
 import { enqueueWrite, readJsonFile, writeJsonFile } from "./json-store";
 
 const TRAINING_FILE = "training.json";
@@ -17,6 +18,7 @@ export const WEEKDAY_IDS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as 
 export type Weekday = (typeof WEEKDAY_IDS)[number];
 
 export type SessionKind = "easy" | "intervals" | "tempo" | "long";
+export type SessionOutcome = "done" | "skipped";
 
 export const GOALS = [
   { id: "5k", label: "5K" },
@@ -96,6 +98,8 @@ export type Session = {
   title: string;
   cue: string;
   distanceKm: number;
+  outcome?: SessionOutcome;
+  outcomeAt?: string;
 };
 
 type TrainingFile = {
@@ -139,6 +143,23 @@ export type OnboardingFormResult =
   | { ok: true; redirect: string }
   | { ok: false; error: string; step: 1 | 2 | 3 };
 
+export type TodayActionResult = { redirect: string };
+
+export type WeekDayView = {
+  id: Weekday;
+  abbr: string;
+  label: string;
+  ymd: string;
+  isToday: boolean;
+  hasSession: boolean;
+};
+
+export type ProgressMetric = {
+  label: string;
+  value: string;
+  provisional: boolean;
+};
+
 function newId(): string {
   return randomBytes(16).toString("base64url");
 }
@@ -155,8 +176,9 @@ function isWeekday(value: string): value is Weekday {
   return (WEEKDAY_IDS as readonly string[]).includes(value);
 }
 
+/** Calendar “today” in America/Guayaquil (not UTC). */
 export function utcTodayYmd(): string {
-  return new Date().toISOString().slice(0, 10);
+  return calendarTodayYmd();
 }
 
 export function isYmd(value: string): boolean {
@@ -206,9 +228,104 @@ export async function getSessionsForPlan(planId: string): Promise<Session[]> {
 export async function getNextSession(userId: string): Promise<Session | null> {
   const plan = await getPlanForUser(userId);
   if (!plan) return null;
-  const today = utcTodayYmd();
+  const today = calendarTodayYmd();
   const sessions = await getSessionsForPlan(plan.id);
   return sessions.find((session) => session.date >= today) ?? sessions.at(-1) ?? null;
+}
+
+export async function getSessionForToday(userId: string): Promise<Session | null> {
+  const plan = await getPlanForUser(userId);
+  if (!plan) return null;
+  const today = calendarTodayYmd();
+  const sessions = await getSessionsForPlan(plan.id);
+  return sessions.find((session) => session.date === today) ?? null;
+}
+
+export async function getAppWeek(userId: string): Promise<{
+  today: string;
+  days: WeekDayView[];
+  weekSessions: Session[];
+  focusSessions: Session[];
+}> {
+  const today = calendarTodayYmd();
+  const start = startOfWeekMonday(today);
+  const end = endOfWeekSunday(today);
+  const plan = await getPlanForUser(userId);
+  const all = plan ? await getSessionsForPlan(plan.id) : [];
+  const weekSessions = all.filter((session) => session.date >= start && session.date <= end);
+  const focusSessions = weekSessions.filter((session) => session.date >= today).slice(0, 3);
+
+  const days: WeekDayView[] = WEEKDAYS.map((day, index) => {
+    const ymd = addDaysYmd(start, index);
+    return {
+      id: day.id,
+      abbr: day.abbr,
+      label: day.label,
+      ymd,
+      isToday: ymd === today,
+      hasSession: weekSessions.some((session) => session.date === ymd),
+    };
+  });
+
+  return { today, days, weekSessions, focusSessions };
+}
+
+export async function getProgressMetrics(userId: string): Promise<ProgressMetric[]> {
+  const { weekSessions } = await getAppWeek(userId);
+  const planned = weekSessions.length;
+  const done = weekSessions.filter((session) => session.outcome === "done").length;
+  const weeklyKm = weekSessions.reduce((sum, session) => sum + session.distanceKm, 0);
+
+  return [
+    {
+      label: "Consistency",
+      value: `${done}/${planned}`,
+      provisional: false,
+    },
+    {
+      label: "Easy pace",
+      value: "—",
+      provisional: true,
+    },
+    {
+      label: "Weekly distance",
+      value: `${weeklyKm} km`,
+      provisional: false,
+    },
+  ];
+}
+
+export async function setSessionOutcome(
+  userId: string,
+  sessionId: string,
+  outcome: SessionOutcome,
+): Promise<Session | null> {
+  return enqueueWrite(async () => {
+    const data = await readTraining();
+    const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
+    if (!session) return null;
+    if (session.outcome) return session;
+    session.outcome = outcome;
+    session.outcomeAt = new Date().toISOString();
+    await writeTraining(data);
+    return session;
+  });
+}
+
+export async function handleTodayPost(userId: string, formData: FormData): Promise<TodayActionResult> {
+  const intent = String(formData.get("intent") ?? "");
+  const sessionId = String(formData.get("sessionId") ?? "");
+
+  if (intent === "feeling-off") {
+    return { redirect: "/today?noted=feeling-off" };
+  }
+
+  if ((intent === "done" || intent === "skip") && sessionId) {
+    await setSessionOutcome(userId, sessionId, intent === "done" ? "done" : "skipped");
+    return { redirect: "/today" };
+  }
+
+  return { redirect: "/today" };
 }
 
 function upsertOnboarding(data: TrainingFile, record: OnboardingRecord): void {
@@ -300,16 +417,9 @@ function allocateDistances(
 }
 
 function dateOnOrAfter(startYmd: string, weekday: Weekday): string {
-  const start = new Date(`${startYmd}T00:00:00.000Z`);
+  const start = new Date(`${startYmd}T12:00:00.000Z`);
   const delta = (WEEKDAY_INDEX[weekday] - start.getUTCDay() + 7) % 7;
-  const next = new Date(start.getTime() + delta * 24 * 60 * 60 * 1000);
-  return next.toISOString().slice(0, 10);
-}
-
-function addDays(ymd: string, days: number): string {
-  const date = new Date(`${ymd}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+  return addDaysYmd(startYmd, delta);
 }
 
 export function generatePlanV1(
@@ -341,7 +451,7 @@ export function generatePlanV1(
   for (let weekIndex = 0; weekIndex < PLAN_WEEKS; weekIndex += 1) {
     for (const weekday of answers.days) {
       const first = dateOnOrAfter(fromYmd, weekday);
-      const date = addDays(first, weekIndex * 7);
+      const date = addDaysYmd(first, weekIndex * 7);
       if (cutoff && date > cutoff) continue;
 
       const kind = kinds[weekday];

@@ -1,0 +1,84 @@
+---
+import type { Session, WeekDayView } from "../lib/training";
+import { WEEKDAYS } from "../lib/training";
+
+interface Props {
+  days: WeekDayView[];
+  sessions: Session[];
+  today: string;
+}
+
+const { days, sessions, today } = Astro.props;
+
+function dayLabel(weekday: Session["weekday"]): string {
+  return WEEKDAYS.find((day) => day.id === weekday)?.label.slice(0, 3) ?? weekday;
+}
+---
+
+<article
+  class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
+  aria-labelledby="plan-view-title"
+>
+  <h1
+    id="plan-view-title"
+    class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
+  >
+    Plan
+  </h1>
+
+  <ol class="mt-5 flex items-center justify-between gap-1" aria-label="Week strip">
+    {
+      days.map((day) => (
+        <li class="flex flex-1 justify-center">
+          <span
+            class:list={[
+              "relative grid h-9 w-9 place-items-center rounded-full text-xs font-semibold",
+              day.isToday ? "bg-lime text-ink" : "border border-white/12 text-mist",
+            ]}
+            aria-current={day.isToday ? "date" : undefined}
+            aria-label={day.isToday ? `${day.label}, today` : day.label}
+          >
+            {day.abbr}
+            {day.hasSession && !day.isToday && (
+              <span class="absolute -bottom-1.5 h-1 w-1 rounded-full bg-lime/80" aria-hidden="true" />
+            )}
+          </span>
+        </li>
+      ))
+    }
+  </ol>
+
+  {
+    sessions.length > 0 ? (
+      <ul class="mt-5 divide-y divide-white/10 border-y border-white/10">
+        {sessions.map((session) => (
+          <li class="flex items-center justify-between gap-3 py-3">
+            <div class="min-w-0">
+              <p class="text-[0.62rem] font-semibold tracking-wider text-mist uppercase">
+                {dayLabel(session.weekday)}
+              </p>
+              <p class="mt-1 truncate text-sm font-medium text-cloud">{session.title}</p>
+            </div>
+            {session.outcome === "done" ? (
+              <span class="shrink-0 text-[0.62rem] font-semibold tracking-wider text-mist uppercase">
+                Done
+              </span>
+            ) : session.outcome === "skipped" ? (
+              <span class="shrink-0 text-[0.62rem] font-semibold tracking-wider text-mist uppercase">
+                Skipped
+              </span>
+            ) : session.date === today ? (
+              <span class="shrink-0 text-[0.62rem] font-semibold tracking-wider text-lime uppercase">
+                Today
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <p class="mt-5 border-y border-white/10 py-4 text-sm leading-6 text-[#d6ded6]">
+        No more sessions this week.
+      </p>
+    )
+  }
+</article>

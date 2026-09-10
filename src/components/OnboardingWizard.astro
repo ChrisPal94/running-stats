@@ -5,9 +5,9 @@ import {
   LEVELS,
   MIN_TRAINING_DAYS,
   WEEKDAYS,
-  utcTodayYmd,
   type OnboardingRecord,
 } from "../lib/training";
+import { calendarTodayYmd } from "../lib/calendar";
 
 interface Props {
   step: 1 | 2 | 3;
@@ -16,7 +16,7 @@ interface Props {
 }
 
 const { step, error = "", draft } = Astro.props;
-const today = utcTodayYmd();
+const today = calendarTodayYmd();
 const selectedDays = draft?.days?.length ? draft.days : DEFAULT_DAYS;
 const raceDate = draft?.raceDate ?? "";
 

@@ -1,0 +1,116 @@
+---
+import { userInitial } from "../lib/app-session";
+
+interface Props {
+  current: "today" | "plan" | "progress" | "settings";
+  email: string;
+}
+
+const { current, email } = Astro.props;
+const initial = userInitial(email);
+
+const items = [
+  {
+    id: "today" as const,
+    href: "/today",
+    label: "Today",
+    icon: "today",
+  },
+  {
+    id: "plan" as const,
+    href: "/plan",
+    label: "Plan",
+    icon: "plan",
+  },
+  {
+    id: "progress" as const,
+    href: "/progress",
+    label: "Progress",
+    icon: "progress",
+  },
+];
+---
+
+<nav
+  class="fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-ink/92 pb-[env(safe-area-inset-bottom)] backdrop-blur-md"
+  aria-label="App"
+>
+  <ul class="mx-auto grid max-w-md grid-cols-4 px-2 pt-1.5 pb-1.5">
+    {
+      items.map((item) => {
+        const active = current === item.id;
+        return (
+          <li>
+            <a
+              href={item.href}
+              aria-current={active ? "page" : undefined}
+              class:list={[
+                "flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[0.62rem] font-semibold tracking-wider uppercase transition-colors",
+                active ? "text-lime" : "text-mist hover:text-cloud",
+              ]}
+            >
+              {item.icon === "today" && (
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="7.25" stroke="currentColor" stroke-width="1.6" />
+                  <path
+                    d="M12 8.5v3.7l2.4 1.4"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              )}
+              {item.icon === "plan" && (
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect
+                    x="4.5"
+                    y="5.5"
+                    width="15"
+                    height="14"
+                    rx="2.5"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                  />
+                  <path d="M8 4.5v3M16 4.5v3M4.5 10h15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                </svg>
+              )}
+              {item.icon === "progress" && (
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M6 16.5v-3M12 16.5v-6M18 16.5V7.5"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              )}
+              {item.label}
+            </a>
+          </li>
+        );
+      })
+    }
+    <li>
+      <a
+        href="/settings"
+        aria-label="Account and settings"
+        aria-current={current === "settings" ? "page" : undefined}
+        class:list={[
+          "flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[0.62rem] font-semibold tracking-wider uppercase transition-colors",
+          current === "settings" ? "text-lime" : "text-mist hover:text-cloud",
+        ]}
+      >
+        <span
+          class:list={[
+            "grid h-5 w-5 place-items-center rounded-full text-[0.62rem] font-bold",
+            current === "settings" ? "bg-lime text-ink" : "border border-current",
+          ]}
+        >
+          {initial}
+        </span>
+        You
+      </a>
+    </li>
+  </ul>
+</nav>

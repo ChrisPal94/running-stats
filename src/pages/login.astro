@@ -3,11 +3,12 @@ export const prerender = false;
 
 import AuthForm from "../components/AuthForm.astro";
 import PageLayout from "../layouts/PageLayout.astro";
+import { postAuthPath } from "../lib/app-session";
 import { authPageError, getCurrentUser, loginFromForm } from "../lib/auth";
 
 const existing = await getCurrentUser(Astro.cookies);
 if (existing) {
-  return Astro.redirect("/today");
+  return Astro.redirect(await postAuthPath(existing.id));
 }
 
 let formError = "";
@@ -16,7 +17,7 @@ let email = "";
 if (Astro.request.method === "POST") {
   const result = await loginFromForm(Astro.request, Astro.cookies);
   if (result.ok) {
-    return Astro.redirect("/today");
+    return Astro.redirect(await postAuthPath(result.user.id));
   }
   formError = result.error;
   email = result.email;

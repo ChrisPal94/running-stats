@@ -1,0 +1,39 @@
+---
+import type { ProgressMetric } from "../lib/training";
+
+interface Props {
+  metrics: ProgressMetric[];
+}
+
+const { metrics } = Astro.props;
+---
+
+<article
+  class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
+  aria-labelledby="progress-view-title"
+>
+  <h1
+    id="progress-view-title"
+    class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
+  >
+    Progress
+  </h1>
+
+  <dl class="mt-5 divide-y divide-white/10 border-y border-white/10">
+    {
+      metrics.map((stat) => (
+        <div class="flex items-baseline justify-between gap-4 py-3">
+          <dt class="text-sm text-mist">
+            {stat.label}
+            {stat.provisional && (
+              <span class="mt-1 block text-[0.62rem] tracking-wider text-mist/80 uppercase">
+                Provisional
+              </span>
+            )}
+          </dt>
+          <dd class="text-sm font-semibold text-cloud tabular-nums">{stat.value}</dd>
+        </div>
+      ))
+    }
+  </dl>
+</article>
