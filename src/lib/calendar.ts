@@ -1,6 +1,11 @@
 /** Civil calendar for “today” / the training week. Not UTC midnight. */
 export const APP_TIME_ZONE = "America/Guayaquil";
 
+/** Calendar “today” in America/Guayaquil (not UTC). */
+export function appTodayYmd(now = new Date()): string {
+  return calendarTodayYmd(now);
+}
+
 export function calendarTodayYmd(now = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: APP_TIME_ZONE,

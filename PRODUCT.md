@@ -42,9 +42,9 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - After signup (email or first Google), continue to `/onboarding`. After login (email or returning Google), continue to `/today` when a plan exists, otherwise `/onboarding`. Shell routes send signed-in users without a plan back to onboarding.
 - Onboarding is three steps (goal, level, days). Generate my plan writes onboarding answers plus Plan v1 and Sessions. No AdaptationEvent is written here.
 - The app shell is mobile-first (~390) with a bottom nav: Today | Plan | Progress, plus an avatar/settings entry. Calendar “today” uses **America/Guayaquil**, not UTC.
-- Today shows the session dated for that Guayaquil calendar day. Empty copy is **No session today**. Done / Skip / Feeling off each write Feedback. AdaptationEvents are read-only (displayed when present; never created here).
+- Today shows the session dated for that Guayaquil calendar day. Empty copy is **No session today**. Done / Skip / Feeling off each write Feedback. AdaptationEvents are read-only in the shell (chip + Why? show the job’s `reason`; never created from those CTAs).
 - Plan shows a Monday–Sunday week strip and at most three remaining sessions this week. Progress labels are **Consistency**, **Easy pace**, and **Weekly distance** (Easy pace provisional until activity data exists).
-- There is no live plan editing yet, and no nightly AI job.
+- There is no live plan editing yet. A nocturnal Node job (`npm run adapt`) writes AdaptationEvents and may ease tomorrow’s session.
 - On ~390px widths, the hero fold must show the H1 and the primary CTA without a dedicated redesign—tighten spacing rather than inventing a new layout. Onboarding is mobile-first at the same width.
 - `/signup` is a real auth page and is indexable. Landing CTAs still go to `/signup`.
 - Marketing pages share basic Open Graph tags (title, description, url). Do not invent share imagery.
@@ -77,7 +77,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 - Identity: email + scrypt password hash and/or Google account id in a local JSON store (`.data/users.json` by default). HMAC-signed `rs_session` cookie.
 - Google: real OAuth redirect when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL` are set. If they are missing, Continue with Google shows “Couldn’t connect to Google. Try email or try again.” Email + password still works.
 - After signup (email or first Google), Continue goes to `/onboarding`. After login (email or returning Google), Continue goes to `/today` if a plan exists, otherwise `/onboarding`.
-- Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`.
+- Env: `AUTH_SECRET` (required in production; see `.env.example`). Optional `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `AUTH_DATA_DIR`, `AUTH_COOKIE_SECURE`. Optional adapt-job LLM: `ADAPT_LLM_API_KEY`, `ADAPT_LLM_BASE_URL`, `ADAPT_LLM_MODEL`.
 - Build: `npm run build` still runs `astro check && astro build`. With the Node adapter, output is `dist/client` + `dist/server`. Preview with `AUTH_SECRET=... AUTH_COOKIE_SECURE=false npm run preview`, or `npm start` after build.
 
 ## Onboarding (MVP)
@@ -90,10 +90,19 @@ Users evaluate the product on a marketing landing page, then start or return to 
 
 - Signed-in with a plan only. Logged-out visits to `/today`, `/plan`, `/progress`, and `/settings` redirect to `/login`. Signed-in without a plan redirects to `/onboarding`.
 - Calendar day and “hoy” use `America/Guayaquil`. A new Guayaquil day starts at 05:00 UTC (UTC−5, no DST). Session dates in `training.json` are civil `YYYY-MM-DD` values compared to that calendar day — not `Date#toISOString()` UTC.
-- **Today (`/today`):** the Session whose `date` equals today’s Guayaquil date. Empty copy: **No session today**. CTAs Done / Skip / Feeling off each persist a Feedback record. Done / Skip also set session `outcome`. AdaptationEvents are loaded for display only (read-only Why?; never written).
+- **Today (`/today`):** the Session whose `date` equals today’s Guayaquil date. Empty copy: **No session today**. CTAs Done / Skip / Feeling off each persist a Feedback record. Done / Skip also set session `outcome`. AdaptationEvents are loaded for display only (chip title + Why? `reason`; never written here).
 - **Plan (`/plan`):** week strip M–S for the Guayaquil week (Monday–Sunday) and up to three remaining sessions this week.
 - **Progress (`/progress`):** labels **Consistency**, **Easy pace**, **Weekly distance**. Consistency and weekly distance come from this week’s sessions; Easy pace is labeled provisional.
 - **Settings (`/settings`):** avatar/settings entry — email and log out. Further account settings are later work.
+
+## Nocturnal adaptation (MVP)
+
+- **Who writes AdaptationEvents:** only this job. Onboarding and Today CTAs (Done / Skip / Feeling off) never create them.
+- **When:** intended for ~21:00 `America/Guayaquil`. Locally, run `npm run adapt` anytime (uses the current Guayaquil calendar day). Cron examples: `CRON_TZ=America/Guayaquil` + `0 21 * * * cd /path/to/running-stats && npm run adapt`, or UTC `0 2 * * *` (21:00 ECT, UTC−5, no DST).
+- **Who is processed:** users with a plan who have Feedback for that Guayaquil day, or pending (today’s session unmarked, or older skip / feeling-off / unmarked days without an AdaptationEvent `sourceDate` yet). Idempotent per user + source day.
+- **What it writes:** an AdaptationEvent dated for the adapted session’s Guayaquil day (tomorrow, or the next open session). Today’s chip is the event `title`; the Why? copy is the event `reason`.
+- **Heuristic (default):** skip / feeling-off / pending ease tomorrow (~15–25% less distance; intervals/tempo become easy after skip or feeling-off). Completed sessions leave tomorrow unchanged and still write an “On track” event. JSON store: `.data/training.json` (`AUTH_DATA_DIR`).
+- **LLM (optional):** if `ADAPT_LLM_API_KEY` is set, the job asks an OpenAI-compatible `/chat/completions` endpoint (`ADAPT_LLM_BASE_URL`, `ADAPT_LLM_MODEL`) to refine title/reason and optional distance/kind. Failures fall back to the heuristic. Unset key = heuristic only.
 
 ## Security / deps (tech note)
 
