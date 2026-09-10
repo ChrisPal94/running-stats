@@ -14,15 +14,15 @@
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
-    "@astrojs/node": "^10.1.4",
+    "@astrojs/node": "^11.1.5",
     "@tailwindcss/vite": "^4.1.13",
-    "astro": "^6.3.1",
+    "astro": "^7.3.2",
     "sharp": "0.35.4",
     "tailwindcss": "^4.1.13",
     "typescript": "^5.9.2"
   },
   "overrides": {
-    "vite": "^7",
+    "vite": "^8",
     "sharp": "0.35.4"
   },
   "devDependencies": {
