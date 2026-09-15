@@ -346,10 +346,8 @@ describe("Settings Sync path", () => {
     ]);
 
     const result = await postSync(userId);
-    assert.equal(result.ok, true);
     if (!result.ok || !("picker" in result)) {
-      assert.fail("expected Which run? picker");
-      return;
+      throw new Error("expected Which run? picker");
     }
     assert.equal(result.picker.choice.sessionId, session.id);
     assert.equal(result.picker.choice.runs.length, 2);
