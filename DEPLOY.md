@@ -10,6 +10,7 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 | --- | --- |
 | Build | `npm run build` (`astro check && astro build`) |
 | Start | `HOST=0.0.0.0 node ./dist/server/entry.mjs` (`npm start`) |
+| Healthcheck | Path `/api/health` — unauthenticated `GET` returns `200` JSON `{ ok: true }`. Does not touch SQLite or secrets. |
 | Volume | Mount at `.data` (Nixpacks workdir is `/app`, so `/app/.data`) |
 | Runtime | Node 22.14+ (built-in `node:sqlite`; no extra native module) |
 
@@ -60,13 +61,15 @@ Expect **200** (invalid credentials still render the form), not **403**.
 
 21:00 `America/Guayaquil` is `02:00` UTC (ECT is UTC−5, no DST).
 
-Railway Cron Job (UTC):
+This is a **separate Railway Cron service** (or Cron Job). It only HTTP-POSTs the public web URL. It is **not** a second Node app: do not run `npm start` / `npm run adapt` on it, and do **not** mount `.data` there. SQLite stays on the web service volume.
+
+Railway Cron Job schedule (UTC):
 
 ```
 0 2 * * *
 ```
 
-Command (same secret as the web service; substitute the public host):
+Command — `POST` the web service public URL `/api/adapt` with the **same** `ADAPT_CRON_SECRET` as the web service (Railway shared variable or duplicate; substitute the public host):
 
 ```bash
 curl -fsS -X POST -H "Authorization: Bearer $ADAPT_CRON_SECRET" https://<public-host>/api/adapt
@@ -74,7 +77,7 @@ curl -fsS -X POST -H "Authorization: Bearer $ADAPT_CRON_SECRET" https://<public-
 
 `GET` with the same `Authorization` header also works. Alternate header: `X-Adapt-Cron-Secret`.
 
-Share `ADAPT_CRON_SECRET` with the cron service (Railway shared variable or duplicate). Missing secret → `503`. Wrong secret → `401`.
+Missing secret on the web service → `503`. Wrong secret → `401`.
 
 If there is **no Feedback that Guayaquil day**, the job returns 200 and does not write an AdaptationEvent or change tomorrow’s sessions.
 
@@ -84,14 +87,15 @@ Local equivalent (not used on Railway): `npm run adapt` once, or `npm run adapt:
 
 Use the Railway public HTTPS URL. Expect session cookies with `Secure`. Signup/login POSTs must not return 403 (see Reverse proxy / CSRF above).
 
-1. **Landing** — `/` loads; **Start your plan** goes to `/signup`.
-2. **Signup** — email + password Continue → `/onboarding`.
-3. **Onboarding** — Goal → Level → Baseline → Days (min 3) → Cadence (Daily / Weekly / Monthly) → **Generate my plan** → `/today`.
-4. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`. Settings **You** can change Adaptation frequency (Daily / Weekly / Monthly) and Save. Settings **Connected apps** shows Intervals.icu (`Not connected` / `Connected · {id}`); Connect uses the server env key (no paste). Sync now / Disconnect do not delete `RunLog`s.
-5. **Today** — Skip / Feeling off persist immediately (no map). Done opens **Log this run** bottom sheet; Save writes a `RunLog` and toasts **Saved**; Skip map writes Feedback only. Empty copy is **No session today**; CTA **See the week** → `/plan`; optional **Next run: {weekday}** when a later Session exists. AdaptationEvent **Why?** opens **Why this changed** when `reason` is present; no Why? control when `reason` is empty.
-6. **Login** — log out, then email Continue → `/today` (existing plan).
-7. **Google** (if env is set) — Continue with Google on `/signup` and `/login`; first Google → onboarding, returning Google with a plan → `/today`. Missing/wrong Google env → **Couldn’t connect to Google. Try email or try again.**
-8. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there (`app.db` on the volume).
-9. **Adapt HTTP** — `POST /api/adapt` without `Authorization` → `401`. With `Authorization: Bearer $ADAPT_CRON_SECRET` → `200` JSON (`processed` / `written` / `skipped` / `patched`). No Feedback that day → `written: 0` is success, not a failure.
+1. **Health** — `GET /api/health` (no auth) → `200` `{ "ok": true }`.
+2. **Landing** — `/` loads; **Start your plan** goes to `/signup`.
+3. **Signup** — email + password Continue → `/onboarding`.
+4. **Onboarding** — Goal → Level → Baseline → Days (min 3) → Cadence (Daily / Weekly / Monthly) → **Generate my plan** → `/today`.
+5. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`. Settings **You** can change Adaptation frequency (Daily / Weekly / Monthly) and Save. Settings **Connected apps** shows Intervals.icu (`Not connected` / `Connected · {id}`); Connect uses the server env key (no paste). Sync now / Disconnect do not delete `RunLog`s.
+6. **Today** — Skip / Feeling off persist immediately (no map). Done opens **Log this run** bottom sheet; Save writes a `RunLog` and toasts **Saved**; Skip map writes Feedback only. Empty copy is **No session today**; CTA **See the week** → `/plan`; optional **Next run: {weekday}** when a later Session exists. AdaptationEvent **Why?** opens **Why this changed** when `reason` is present; no Why? control when `reason` is empty.
+7. **Login** — log out, then email Continue → `/today` (existing plan).
+8. **Google** (if env is set) — Continue with Google on `/signup` and `/login`; first Google → onboarding, returning Google with a plan → `/today`. Missing/wrong Google env → **Couldn’t connect to Google. Try email or try again.**
+9. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there (`app.db` on the volume).
+10. **Adapt HTTP** — `POST /api/adapt` without `Authorization` → `401`. With `Authorization: Bearer $ADAPT_CRON_SECRET` → `200` JSON (`processed` / `written` / `skipped` / `patched`). No Feedback that day → `written: 0` is success, not a failure.
 
 Out of scope for this deploy pass: screenshots, Strava, live plan editing.

@@ -6,6 +6,8 @@ export default defineConfig({
   adapter: node({
     mode: "standalone",
   }),
+  // HMAC `rs_session` cookies in src/lib/auth.ts — not Astro Sessions.
+  session: false,
   security: {
     checkOrigin: true,
     // Trust X-Forwarded-Proto / X-Forwarded-Host from Railway (and similar

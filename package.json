@@ -12,6 +12,7 @@
     "preview": "astro preview",
     "start": "HOST=0.0.0.0 node ./dist/server/entry.mjs",
     "check": "astro check",
+    "test": "tsx --test src/lib/*.test.ts",
     "adapt": "tsx src/jobs/adapt.ts",
     "adapt:cron": "tsx src/jobs/adapt.ts --cron"
   },
