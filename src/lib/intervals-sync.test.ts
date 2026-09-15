@@ -3,18 +3,23 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
-import { loadTrainingSnapshot, saveTrainingSnapshot } from "./db.ts";
+import { loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
 import {
   connectIntervals,
   INTERVALS_CONNECT_ERROR,
+  INTERVALS_NO_NEW_RUNS_TOAST,
+  INTERVALS_NO_SESSION_TOAST,
   INTERVALS_SYNC_ERROR,
   intervalsActivityDay,
   intervalsActivityStats,
+  intervalsSyncToast,
+  intervalsSyncToastCopy,
+  intervalsSyncToastRedirect,
   loadIntervalsRunsForSync,
   parseIntervalsActivity,
   type IntervalsRunStats,
 } from "./intervals.ts";
-import { applyIntervalsRuns, type Plan, type RunLog, type Session } from "./training.ts";
+import { applyIntervalsRuns, handleSettingsPost, type Plan, type RunLog, type Session } from "./training.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-intervals-"));
 process.env.AUTH_DATA_DIR = dataDir;
@@ -85,6 +90,44 @@ function runStats(
 
 function logsFor(userId: string): RunLog[] {
   return loadTrainingSnapshot().runLogs.filter((entry) => entry.userId === userId);
+}
+
+function connectUser(userId: string): void {
+  upsertIntervalsConnection({
+    userId,
+    athleteId: "i704884",
+    connectedAt: "2026-09-14T12:00:00.000Z",
+  });
+}
+
+function activityPayload(
+  date: string,
+  id: string,
+  distanceM = 8050,
+  movingTime = 2415,
+): Record<string, unknown> {
+  return {
+    id,
+    start_date_local: `${date}T07:15:00`,
+    distance: distanceM,
+    moving_time: movingTime,
+    type: "Run",
+  };
+}
+
+function mockActivities(payload: unknown): void {
+  mock.method(globalThis, "fetch", async () => {
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+}
+
+async function postSync(userId: string) {
+  const formData = new FormData();
+  formData.set("intent", "intervals-sync");
+  return handleSettingsPost(userId, formData);
 }
 
 describe("Intervals activity day", () => {
@@ -173,6 +216,58 @@ describe("applyIntervalsRuns", () => {
     assert.equal(stored[0]?.distanceKm, 7.2);
     assert.equal(stored[0]?.timeSec, 2100);
   });
+
+  it("leaves RunLogs untouched and reports no import when Intervals returns no Runs", async () => {
+    const userId = "empty-fetch";
+    seed(userId);
+
+    const result = await applyIntervalsRuns(userId, []);
+
+    assert.equal(result.imported, 0);
+    assert.equal(result.skippedNoSession, 0);
+    assert.equal(result.skippedManual, 0);
+    assert.equal(result.pendingChoices.length, 0);
+    assert.equal(logsFor(userId).length, 0);
+  });
+
+  it("does not write an orphan RunLog and queues Which run? when one Session has several Runs", async () => {
+    const userId = "picker";
+    const { session } = seed(userId);
+
+    const result = await applyIntervalsRuns(userId, [
+      runStats(SESSION_DAY, "act-a", 7.9, 2400),
+      runStats(SESSION_DAY, "act-b", 8.1, 2430),
+    ]);
+
+    assert.equal(result.imported, 0);
+    assert.equal(result.skippedNoSession, 0);
+    assert.equal(result.pendingChoices.length, 1);
+    assert.equal(result.pendingChoices[0]?.sessionId, session.id);
+    assert.equal(result.pendingChoices[0]?.runs.length, 2);
+    assert.equal(logsFor(userId).length, 0);
+  });
+});
+
+describe("Intervals Sync toasts", () => {
+  it("uses No new runs to import when there is nothing to import", () => {
+    assert.equal(INTERVALS_NO_NEW_RUNS_TOAST, "No new runs to import");
+    assert.equal(INTERVALS_NO_SESSION_TOAST, "No planned session that day");
+    assert.equal(intervalsSyncToast({ imported: 0, skippedNoSession: 0 }), "no-new-runs");
+    assert.equal(intervalsSyncToastCopy("no-new-runs"), INTERVALS_NO_NEW_RUNS_TOAST);
+    assert.equal(intervalsSyncToastRedirect("no-new-runs"), "/settings?toast=no-new-runs");
+  });
+
+  it("keeps No planned session that day when Runs exist without a Session", () => {
+    assert.equal(intervalsSyncToast({ imported: 0, skippedNoSession: 1 }), "no-session");
+    assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 1 }), "no-session");
+    assert.equal(intervalsSyncToastCopy("no-session"), INTERVALS_NO_SESSION_TOAST);
+    assert.equal(intervalsSyncToastRedirect("no-session"), "/settings?toast=no-session");
+  });
+
+  it("does not toast after a successful import", () => {
+    assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 0 }), null);
+    assert.equal(intervalsSyncToastRedirect(null), "/settings");
+  });
 });
 
 describe("connect/sync error text", () => {
@@ -207,5 +302,101 @@ describe("connect/sync error text", () => {
     if (result.ok) return;
     assert.equal(result.error, INTERVALS_SYNC_ERROR);
     assert.equal(result.error.includes(API_KEY), false);
+  });
+});
+
+describe("Settings Sync path", () => {
+  afterEach(() => {
+    mock.restoreAll();
+    delete process.env.INTERVALS_ICU_API_KEY;
+  });
+
+  it("toasts No new runs to import when Intervals returns no Runs", async () => {
+    const userId = "settings-empty";
+    seed(userId);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([]);
+
+    const result = await postSync(userId);
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=no-new-runs" });
+    assert.equal(logsFor(userId).length, 0);
+  });
+
+  it("toasts No planned session that day when there are Runs but no Session that Guayaquil day", async () => {
+    const userId = "settings-no-session";
+    seed(userId);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([activityPayload(OTHER_DAY, "act-orphan")]);
+
+    const result = await postSync(userId);
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=no-session" });
+    assert.equal(logsFor(userId).length, 0);
+  });
+
+  it("opens Which run? when one Session has more than one Run", async () => {
+    const userId = "settings-picker";
+    const { session } = seed(userId);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([
+      activityPayload(SESSION_DAY, "act-a", 7900, 2400),
+      activityPayload(SESSION_DAY, "act-b", 8100, 2430),
+    ]);
+
+    const result = await postSync(userId);
+    assert.equal(result.ok, true);
+    if (!result.ok || !("picker" in result)) {
+      assert.fail("expected Which run? picker");
+      return;
+    }
+    assert.equal(result.picker.choice.sessionId, session.id);
+    assert.equal(result.picker.choice.runs.length, 2);
+    assert.equal(result.picker.skippedNoSession, false);
+    assert.equal(logsFor(userId).length, 0);
+  });
+
+  it("does not overwrite a manual RunLog and toasts No new runs to import", async () => {
+    const userId = "settings-manual";
+    const { plan, session } = planAndSession(userId);
+    const manual: RunLog = {
+      id: "manual-settings",
+      userId,
+      sessionId: session.id,
+      planId: plan.id,
+      distanceKm: 7.2,
+      timeSec: 2100,
+      paceSecPerKm: 2100 / 7.2,
+      createdAt: "2026-09-14T18:00:00.000Z",
+      source: "manual",
+    };
+    seed(userId, [manual]);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([activityPayload(SESSION_DAY, "act-ignored", 9500, 2800)]);
+
+    const result = await postSync(userId);
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=no-new-runs" });
+    const stored = logsFor(userId);
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0]?.id, "manual-settings");
+    assert.equal(stored[0]?.source, "manual");
+    assert.equal(stored[0]?.distanceKm, 7.2);
+  });
+
+  it("imports a matching Run without a toast", async () => {
+    const userId = "settings-import";
+    const { session } = seed(userId);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([activityPayload(SESSION_DAY, "act-match")]);
+
+    const result = await postSync(userId);
+    assert.deepEqual(result, { ok: true, redirect: "/settings" });
+    const stored = logsFor(userId);
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0]?.sessionId, session.id);
+    assert.equal(stored[0]?.source, "intervals");
   });
 });

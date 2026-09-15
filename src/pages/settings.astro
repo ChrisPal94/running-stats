@@ -6,7 +6,11 @@ import WhichRunSheet from "../components/WhichRunSheet.astro";
 import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession, userInitial } from "../lib/app-session";
 import { isSameOrigin } from "../lib/public-origin";
-import { getIntervalsConnectionView, INTERVALS_NO_SESSION_TOAST } from "../lib/intervals";
+import {
+  getIntervalsConnectionView,
+  intervalsSyncToastCopy,
+  type IntervalsSyncToast,
+} from "../lib/intervals";
 import {
   FEEDBACK_CADENCES,
   handleSettingsPost,
@@ -55,7 +59,10 @@ if (Astro.request.method === "POST") {
 }
 
 const saved = Astro.url.searchParams.get("saved") === "1";
-const noSessionToast = Astro.url.searchParams.get("toast") === "no-session";
+const toastParam = Astro.url.searchParams.get("toast");
+const syncToast: Exclude<IntervalsSyncToast, null> | null =
+  toastParam === "no-session" || toastParam === "no-new-runs" ? toastParam : null;
+const syncToastCopy = syncToast ? intervalsSyncToastCopy(syncToast) : "";
 const connection = getIntervalsConnectionView(user.id);
 ---
 
@@ -149,24 +156,25 @@ const connection = getIntervalsConnectionView(user.id);
 {runPicker ? <WhichRunSheet picker={runPicker} /> : null}
 
 {
-  noSessionToast ? (
+  syncToast && syncToastCopy ? (
     <p
       class="saved-toast pointer-events-none fixed inset-x-0 bottom-24 z-50 mx-auto w-max max-w-[min(100%-2rem,28rem)] rounded-full bg-lime px-4 py-2 text-center text-xs font-bold text-ink shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
-      data-no-session-toast
+      data-sync-toast={syncToast}
+      data-no-session-toast={syncToast === "no-session" ? "" : undefined}
       role="status"
     >
-      {INTERVALS_NO_SESSION_TOAST}
+      {syncToastCopy}
     </p>
   ) : null
 }
 
 {
-  noSessionToast ? (
+  syncToast ? (
     <script>
-      const toast = document.querySelector("[data-no-session-toast]");
+      const toast = document.querySelector("[data-sync-toast]");
       window.setTimeout(() => {
         if (toast instanceof HTMLElement) toast.hidden = true;
-        if (window.location.search.includes("toast=no-session")) {
+        if (window.location.search.includes("toast=")) {
           history.replaceState({}, "", "/settings");
         }
       }, 1800);

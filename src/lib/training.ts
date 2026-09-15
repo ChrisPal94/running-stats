@@ -13,6 +13,8 @@ import {
   disconnectIntervals,
   getIntervalsConnection,
   INTERVALS_SYNC_ERROR,
+  intervalsSyncToast,
+  intervalsSyncToastRedirect,
   loadIntervalsRunsForSync,
   markIntervalsSyncError,
   markIntervalsSyncSuccess,
@@ -1805,9 +1807,25 @@ function pickerResult(
 }
 
 function syncFinishedRedirect(skippedNoSession: boolean): Extract<SettingsFormResult, { redirect: string }> {
-  return skippedNoSession
-    ? { ok: true, redirect: "/settings?toast=no-session" }
-    : { ok: true, redirect: "/settings" };
+  return {
+    ok: true,
+    redirect: intervalsSyncToastRedirect(skippedNoSession ? "no-session" : null),
+  };
+}
+
+function syncInitialFinishedRedirect(result: {
+  imported: number;
+  skippedNoSession: number;
+}): Extract<SettingsFormResult, { redirect: string }> {
+  return {
+    ok: true,
+    redirect: intervalsSyncToastRedirect(
+      intervalsSyncToast({
+        imported: result.imported,
+        skippedNoSession: result.skippedNoSession,
+      }),
+    ),
+  };
 }
 
 export async function applyChosenIntervalsRun(
@@ -1831,7 +1849,13 @@ export async function applyChosenIntervalsRun(
 }
 
 export async function syncIntervalsForUser(userId: string): Promise<
-  | { ok: true; skippedNoSession: number; pendingChoices: IntervalsRunChoice[] }
+  | {
+      ok: true;
+      imported: number;
+      skippedNoSession: number;
+      skippedManual: number;
+      pendingChoices: IntervalsRunChoice[];
+    }
   | { ok: false; error: string }
 > {
   if (!getIntervalsConnection(userId)) {
@@ -1852,7 +1876,9 @@ export async function syncIntervalsForUser(userId: string): Promise<
   await markIntervalsSyncSuccess(userId);
   return {
     ok: true,
+    imported: result.imported,
     skippedNoSession: result.skippedNoSession,
+    skippedManual: result.skippedManual,
     pendingChoices: result.pendingChoices,
   };
 }
@@ -1879,7 +1905,7 @@ export async function handleSettingsPost(
     }
     const picker = pickerResult(result.pendingChoices, result.skippedNoSession > 0);
     if (picker) return picker;
-    return syncFinishedRedirect(result.skippedNoSession > 0);
+    return syncInitialFinishedRedirect(result);
   }
 
   if (intent === "intervals-pick-run" || intent === "intervals-skip-pick") {

@@ -21,6 +21,29 @@ export const INTERVALS_SYNC_ERROR = "Couldn’t sync. Try again.";
 export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
 export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
 export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
+export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
+
+export type IntervalsSyncToast = "no-session" | "no-new-runs" | null;
+
+/** Toast after Sync now when the Which run? picker is not shown. */
+export function intervalsSyncToast(input: {
+  imported: number;
+  skippedNoSession: number;
+}): IntervalsSyncToast {
+  if (input.skippedNoSession > 0) return "no-session";
+  if (input.imported === 0) return "no-new-runs";
+  return null;
+}
+
+export function intervalsSyncToastRedirect(toast: IntervalsSyncToast): string {
+  if (toast === "no-session") return "/settings?toast=no-session";
+  if (toast === "no-new-runs") return "/settings?toast=no-new-runs";
+  return "/settings";
+}
+
+export function intervalsSyncToastCopy(toast: Exclude<IntervalsSyncToast, null>): string {
+  return toast === "no-session" ? INTERVALS_NO_SESSION_TOAST : INTERVALS_NO_NEW_RUNS_TOAST;
+}
 
 const FETCH_TIMEOUT_MS = 15_000;
 const RUN_MIN_KM = 0.1;
