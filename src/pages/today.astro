@@ -9,8 +9,10 @@ import {
   getAdaptationEventForToday,
   getFeedbackForDate,
   getFeedbackForSession,
+  getNextSessionAfterToday,
   getRunLogForSession,
   getSessionForToday,
+  formatNextRunHint,
   handleTodayPost,
   type RunLogFormDraft,
 } from "../lib/training";
@@ -41,6 +43,8 @@ if (Astro.request.method === "POST") {
 }
 
 const session = await getSessionForToday(user.id);
+const upcoming = session ? null : await getNextSessionAfterToday(user.id);
+const nextRunHint = upcoming ? formatNextRunHint(upcoming.date) : null;
 const feedback = session ? await getFeedbackForSession(user.id, session.id) : null;
 const runLog = session ? await getRunLogForSession(user.id, session.id) : null;
 const adaptationEvent = await getAdaptationEventForToday(user.id);
@@ -58,6 +62,7 @@ const savedToast = Astro.url.searchParams.get("saved") === "1";
 >
   <TodayCard
     session={session}
+    nextRunHint={nextRunHint}
     feedback={feedback}
     runLog={runLog}
     adaptationEvent={adaptationEvent}

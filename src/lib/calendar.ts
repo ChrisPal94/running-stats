@@ -29,6 +29,14 @@ export function addDaysYmd(ymd: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+const SHORT_WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/** Short EN weekday for a Guayaquil civil `YYYY-MM-DD` (e.g. `Tue`). */
+export function shortWeekdayEn(ymd: string): string {
+  const utcDay = new Date(`${ymd}T12:00:00.000Z`).getUTCDay();
+  return SHORT_WEEKDAYS_EN[utcDay] ?? "Sun";
+}
+
 /** Monday-start week that contains `ymd` (civil date). */
 export function startOfWeekMonday(ymd: string): string {
   const day = new Date(`${ymd}T12:00:00.000Z`).getUTCDay();

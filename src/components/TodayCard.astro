@@ -4,6 +4,8 @@ import RunMap from "./RunMap.astro";
 import WhySheet from "./WhySheet.astro";
 import {
   EMPTY_RUN_ROUTE,
+  EMPTY_TODAY_COPY,
+  SEE_THE_WEEK_CTA,
   formatHms,
   formatPace,
   type AdaptationEvent,
@@ -16,6 +18,7 @@ import {
 
 interface Props {
   session: Session | null;
+  nextRunHint?: string | null;
   feedback: Feedback | null;
   runLog?: RunLog | null;
   adaptationEvent: AdaptationEvent | null;
@@ -28,6 +31,7 @@ interface Props {
 
 const {
   session,
+  nextRunHint = null,
   feedback = null,
   runLog = null,
   adaptationEvent = null,
@@ -55,15 +59,21 @@ const canAct = Boolean(session && !feedback);
 
 <article
   class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
-  aria-labelledby="today-view-title"
+  aria-labelledby={session ? "today-view-title" : "today-empty-title"}
 >
   <div class="flex items-start justify-between gap-4">
-    <h1
-      id="today-view-title"
-      class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
-    >
-      Today
-    </h1>
+    {
+      session ? (
+        <h1
+          id="today-view-title"
+          class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
+        >
+          Today
+        </h1>
+      ) : (
+        <p class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Today</p>
+      )
+    }
     {
       session ? (
         <span
@@ -89,9 +99,12 @@ const canAct = Boolean(session && !feedback);
         <p class="mt-3 text-sm text-[#d6ded6]">{session.cue}</p>
       </>
     ) : (
-      <p class="mt-8 text-[clamp(1.75rem,8vw,2.5rem)] leading-none font-semibold tracking-[-0.04em] text-cloud">
-        No session today
-      </p>
+      <h1
+        id="today-empty-title"
+        class="mt-8 text-[clamp(1.75rem,8vw,2.5rem)] leading-none font-semibold tracking-[-0.04em] text-cloud"
+      >
+        {EMPTY_TODAY_COPY}
+      </h1>
     )
   }
 
@@ -183,14 +196,21 @@ const canAct = Boolean(session && !feedback);
 
   {
     !session && (
-      <p class="mt-8">
-        <a
-          href="/plan"
-          class="inline-flex items-center gap-2 border-b border-lime pb-1 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
-        >
-          See the week
-        </a>
-      </p>
+      <>
+        {
+          nextRunHint ? (
+            <p class="mt-3 text-sm leading-6 text-[#d6ded6]">{nextRunHint}</p>
+          ) : null
+        }
+        <p class="mt-8">
+          <a
+            href="/plan"
+            class="inline-flex items-center gap-2 border-b border-lime pb-1 text-xs font-bold tracking-[0.13em] text-cloud uppercase transition-colors hover:text-lime"
+          >
+            {SEE_THE_WEEK_CTA}
+          </a>
+        </p>
+      </>
     )
   }
 </article>
