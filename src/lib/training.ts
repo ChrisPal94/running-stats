@@ -1,5 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { addDaysYmd, appTodayYmd, calendarTodayYmd, endOfWeekSunday, startOfWeekMonday } from "./calendar";
+import {
+  addDaysYmd,
+  appTodayYmd,
+  calendarTodayYmd,
+  endOfWeekSunday,
+  shortWeekdayEn,
+  startOfWeekMonday,
+} from "./calendar";
 import { enqueueWrite, loadTrainingSnapshot, saveTrainingSnapshot } from "./db";
 import {
   connectIntervals,
@@ -901,6 +908,31 @@ export async function getSessionForToday(userId: string): Promise<Session | null
   const today = appTodayYmd();
   const sessions = await getSessionsForPlan(plan.id);
   return sessions.find((session) => session.date === today) ?? null;
+}
+
+/** First Session strictly after `todayYmd` (Guayaquil civil dates). */
+export function nextSessionAfterToday<T extends Pick<Session, "date">>(
+  sessions: readonly T[],
+  todayYmd: string,
+): T | null {
+  return (
+    [...sessions]
+      .filter((session) => session.date > todayYmd)
+      .sort((a, b) => a.date.localeCompare(b.date))[0] ?? null
+  );
+}
+
+export const EMPTY_TODAY_COPY = "No session today";
+export const SEE_THE_WEEK_CTA = "See the week";
+
+export function formatNextRunHint(ymd: string): string {
+  return `Next run: ${shortWeekdayEn(ymd)}`;
+}
+
+export async function getNextSessionAfterToday(userId: string): Promise<Session | null> {
+  const plan = await getPlanForUser(userId);
+  if (!plan) return null;
+  return nextSessionAfterToday(await getSessionsForPlan(plan.id), appTodayYmd());
 }
 
 export async function getAppWeek(userId: string): Promise<{

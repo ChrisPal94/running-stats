@@ -19,6 +19,7 @@ export const DEFAULT_INTERVALS_ATHLETE_ID = "i704884";
 export const INTERVALS_CONNECT_COPY = "API key stays on the server";
 export const INTERVALS_SYNC_ERROR = "Couldn’t sync. Try again.";
 export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
+export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
 export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
 
 const FETCH_TIMEOUT_MS = 15_000;
@@ -367,7 +368,7 @@ export async function fetchIntervalsActivities(
 
 export async function connectIntervals(userId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const apiKey = intervalsApiKey();
-  if (!apiKey) return { ok: false, error: INTERVALS_CONNECT_ERROR };
+  if (!apiKey) return { ok: false, error: INTERVALS_API_KEY_NOT_CONFIGURED };
 
   const pathId = intervalsAthletePathId();
   try {
