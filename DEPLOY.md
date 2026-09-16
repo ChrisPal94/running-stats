@@ -16,7 +16,7 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 
 Nixpacks already runs `npm run build` and `npm start`. Keep the start command as `npm start` (or the `HOST=0.0.0.0 node ./dist/server/entry.mjs` equivalent). Do not use `astro preview` in production.
 
-The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connection status). Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot. The Intervals API key is env-only and is not stored in `app.db`.
+The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connection status, magic link tokens). Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot. The Intervals API key is env-only and is not stored in `app.db`. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
 
 ## Environment
 
@@ -30,6 +30,8 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `GOOGLE_CLIENT_ID` | For Google | OAuth 2.0 Web client. |
 | `GOOGLE_CLIENT_SECRET` | For Google | OAuth 2.0 Web client. |
 | `GOOGLE_CALLBACK_URL` | For Google | `https://<public-host>/auth/google/callback` — must match Google Cloud Console exactly. |
+| `RESEND_API_KEY` | For magic link mail | Resend HTTP API. Unset = log the full `/auth/magic?token=…` URL and still show **Check your email**. |
+| `MAGIC_LINK_FROM` | For magic link mail | From address (verified in Resend). Required together with `RESEND_API_KEY` to send. |
 | `ADAPT_CRON_SECRET` | For `/api/adapt` | Bearer secret for the nightly job. 16+ characters. |
 | `ADAPT_LLM_API_KEY` | No | Unset = heuristic. If set and the LLM fails, the job logs and does not mutate the plan. |
 | `ADAPT_LLM_BASE_URL` | No | Default `https://api.openai.com/v1`. |
@@ -43,7 +45,7 @@ Do not commit a production `.env`. Railway variables are enough at runtime (`pro
 
 ## Reverse proxy / CSRF
 
-Railway (and similar TLS-terminating proxies) must forward `X-Forwarded-Proto` and `X-Forwarded-Host` (Railway does this by default). Form POSTs — signup, login, onboarding, Today, Settings — compare the browser `Origin` (or `Referer`) to that **public** origin, not the internal `http://…` `request.url`.
+Railway (and similar TLS-terminating proxies) must forward `X-Forwarded-Proto` and `X-Forwarded-Host` (Railway does this by default). Form POSTs — signup, login, magic-link send, onboarding, Today, Settings — compare the browser `Origin` (or `Referer`) to that **public** origin, not the internal `http://…` `request.url`. Magic-link emails also use that public origin so Sign in points at `https://<public-host>/auth/magic?token=…`.
 
 If those headers are stripped, Astro’s origin check returns **403** `Cross-site POST form submissions are forbidden` because the socket origin is `http://…` while the public site is `https://<host>`. Use the public HTTPS URL for POSTs (browser or curl). CSRF is not disabled: a cross-site `Origin` still fails.
 
@@ -93,9 +95,10 @@ Use the Railway public HTTPS URL. Expect session cookies with `Secure`. Signup/l
 4. **Onboarding** — Goal → Level → Baseline → Days (min 3) → Cadence (Daily / Weekly / Monthly) → **Generate my plan** → `/today`.
 5. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`. Settings **You** can change Adaptation frequency (Daily / Weekly / Monthly) and Save. Settings **Connected apps** shows Intervals.icu (`Not connected` / `Connected · {id}`); Connect uses the server env key (no paste). Sync now / Disconnect do not delete `RunLog`s.
 6. **Today** — Skip / Feeling off persist immediately (no map). Done opens **Log this run** bottom sheet; Save writes a `RunLog` and toasts **Saved**; Skip map writes Feedback only. Empty copy is **No session today**; CTA **See the week** → `/plan`; optional **Next run: {weekday}** when a later Session exists. AdaptationEvent **Why?** opens **Why this changed** when `reason` is present; no Why? control when `reason` is empty.
-7. **Login** — log out, then email Continue → `/today` (existing plan).
-8. **Google** (if env is set) — Continue with Google on `/signup` and `/login`; first Google → onboarding, returning Google with a plan → `/today`. Missing/wrong Google env → **Couldn’t connect to Google. Try email or try again.**
-9. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there (`app.db` on the volume).
-10. **Adapt HTTP** — `POST /api/adapt` without `Authorization` → `401`. With `Authorization: Bearer $ADAPT_CRON_SECRET` → `200` JSON (`processed` / `written` / `skipped` / `patched`). No Feedback that day → `written: 0` is success, not a failure.
+7. **Login** — log out, then email Continue → `/today` (existing plan). Password tab remains the default.
+8. **Magic link** — Email link tab → **Email me a link** → **Check your email** / **Link expires in 15 minutes** / **Resend link**. If `RESEND_API_KEY` + `MAGIC_LINK_FROM` are unset, copy the `/auth/magic?token=…` URL from web logs. First-time click → `/onboarding`. Returning with a plan → `/today`. Used or expired token → `/login` + toast **That link expired. Request a new one.**
+9. **Google** (if env is set) — Continue with Google on `/signup` and `/login`; first Google → onboarding, returning Google with a plan → `/today`. Missing/wrong Google env → **Couldn’t connect to Google. Try email or try again.**
+10. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there (`app.db` on the volume).
+11. **Adapt HTTP** — `POST /api/adapt` without `Authorization` → `401`. With `Authorization: Bearer $ADAPT_CRON_SECRET` → `200` JSON (`processed` / `written` / `skipped` / `patched`). No Feedback that day → `written: 0` is success, not a failure.
 
 Out of scope for this deploy pass: screenshots, Strava, live plan editing.

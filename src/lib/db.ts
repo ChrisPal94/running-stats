@@ -54,6 +54,14 @@ export type IntervalsConnection = {
   lastSyncError?: string;
 };
 
+export type MagicTokenRecord = {
+  tokenHash: string;
+  email: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt?: string;
+};
+
 type UserRow = {
   id: string;
   email: string;
@@ -144,6 +152,14 @@ type IntervalsConnectionRow = {
   connectedAt: string;
   lastSyncAt: string | null;
   lastSyncError: string | null;
+};
+
+type MagicTokenRow = {
+  tokenHash: string;
+  email: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt: string | null;
 };
 
 let db: DatabaseSync | null = null;
@@ -309,12 +325,21 @@ function applySchema(database: DatabaseSync): void {
       lastSyncError TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS magic_tokens (
+      tokenHash TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      expiresAt TEXT NOT NULL,
+      usedAt TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS plans_userId ON plans(userId);
     CREATE INDEX IF NOT EXISTS sessions_planId ON sessions(planId);
     CREATE INDEX IF NOT EXISTS sessions_userId_date ON sessions(userId, date);
     CREATE INDEX IF NOT EXISTS feedbacks_userId_sessionId ON feedbacks(userId, sessionId);
     CREATE INDEX IF NOT EXISTS run_logs_userId_sessionId ON run_logs(userId, sessionId);
     CREATE INDEX IF NOT EXISTS adaptation_events_userId_date ON adaptation_events(userId, date);
+    CREATE INDEX IF NOT EXISTS magic_tokens_email_createdAt ON magic_tokens(email, createdAt);
   `);
   ensureColumn(database, "onboarding", "feedbackCadence", "TEXT");
   ensureColumn(database, "plans", "feedbackCadence", "TEXT NOT NULL DEFAULT 'daily'");
@@ -544,6 +569,17 @@ function runLogFromRow(row: RunLogRow): RunLog {
   const route = parseJsonValue<RunLog["route"]>(row.routeJson, undefined);
   if (route) log.route = route;
   return log;
+}
+
+function magicTokenFromRow(row: MagicTokenRow): MagicTokenRecord {
+  const token: MagicTokenRecord = {
+    tokenHash: row.tokenHash,
+    email: row.email,
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+  };
+  if (row.usedAt) token.usedAt = row.usedAt;
+  return token;
 }
 
 function intervalsConnectionFromRow(row: IntervalsConnectionRow): IntervalsConnection {
@@ -838,5 +874,79 @@ export function upsertIntervalsConnection(connection: IntervalsConnection): void
 export function deleteIntervalsConnection(userId: string): void {
   withTransaction(() => {
     run("DELETE FROM intervals_connections WHERE userId = ?", userId);
+  });
+}
+
+export function insertMagicToken(token: MagicTokenRecord): void {
+  withTransaction(() => {
+    run(
+      `INSERT INTO magic_tokens (tokenHash, email, createdAt, expiresAt, usedAt) VALUES (?, ?, ?, ?, ?)`,
+      token.tokenHash,
+      token.email,
+      token.createdAt,
+      token.expiresAt,
+      text(token.usedAt),
+    );
+  });
+}
+
+export function getMagicTokenByHash(tokenHash: string): MagicTokenRecord | null {
+  const row = getDb()
+    .prepare(
+      "SELECT tokenHash, email, createdAt, expiresAt, usedAt FROM magic_tokens WHERE tokenHash = ?",
+    )
+    .get(tokenHash) as MagicTokenRow | undefined;
+  return row ? magicTokenFromRow(row) : null;
+}
+
+export function listMagicTokensByEmail(email: string): MagicTokenRecord[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT tokenHash, email, createdAt, expiresAt, usedAt FROM magic_tokens WHERE email = ? ORDER BY createdAt DESC",
+    )
+    .all(email) as MagicTokenRow[];
+  return rows.map(magicTokenFromRow);
+}
+
+export function latestMagicTokenForEmail(email: string): MagicTokenRecord | null {
+  const row = getDb()
+    .prepare(
+      "SELECT tokenHash, email, createdAt, expiresAt, usedAt FROM magic_tokens WHERE email = ? ORDER BY createdAt DESC LIMIT 1",
+    )
+    .get(email) as MagicTokenRow | undefined;
+  return row ? magicTokenFromRow(row) : null;
+}
+
+export function markMagicTokenUsed(tokenHash: string, usedAt: string): void {
+  withTransaction(() => {
+    run("UPDATE magic_tokens SET usedAt = ? WHERE tokenHash = ?", usedAt, tokenHash);
+  });
+}
+
+export function invalidateUnusedMagicTokens(email: string, exceptHash: string, usedAt: string): void {
+  withTransaction(() => {
+    run(
+      "UPDATE magic_tokens SET usedAt = ? WHERE email = ? AND tokenHash != ? AND usedAt IS NULL",
+      usedAt,
+      email,
+      exceptHash,
+    );
+  });
+}
+
+export function deleteMagicToken(tokenHash: string): void {
+  withTransaction(() => {
+    run("DELETE FROM magic_tokens WHERE tokenHash = ?", tokenHash);
+  });
+}
+
+export function pruneMagicTokens(nowIso: string): void {
+  const usedCutoff = new Date(Date.parse(nowIso) - 24 * 60 * 60 * 1000).toISOString();
+  withTransaction(() => {
+    run(
+      "DELETE FROM magic_tokens WHERE expiresAt < ? OR (usedAt IS NOT NULL AND usedAt < ?)",
+      nowIso,
+      usedCutoff,
+    );
   });
 }
