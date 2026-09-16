@@ -38,6 +38,11 @@ afterEach(() => {
   delete process.env.MAGIC_LINK_FROM;
 });
 
+function silenceAuthLogs(): void {
+  mock.method(console, "info", () => {});
+  mock.method(console, "error", () => {});
+}
+
 function formData(fields: Record<string, string>): FormData {
   const data = new FormData();
   for (const [key, value] of Object.entries(fields)) data.set(key, value);
@@ -136,6 +141,7 @@ describe("magic link request", () => {
   });
 
   it("enforces a 30s resend cooldown without issuing a second token", async () => {
+    silenceAuthLogs();
     const email = uniqueEmail("cool");
     const now = Date.parse("2026-09-16T15:00:00.000Z");
     const request = postRequest("http://localhost:4321/login");
@@ -155,6 +161,7 @@ describe("magic link request", () => {
   });
 
   it("issues a new token after the cooldown and retires the previous unused one", async () => {
+    silenceAuthLogs();
     const email = uniqueEmail("after-cool");
     const now = Date.parse("2026-09-16T16:00:00.000Z");
     const request = postRequest("http://localhost:4321/login");
@@ -175,6 +182,7 @@ describe("magic link request", () => {
   });
 
   it("returns Couldn’t send the link. Try again. when Resend fails", async () => {
+    silenceAuthLogs();
     const email = uniqueEmail("fail");
     process.env.RESEND_API_KEY = "re_test_key";
     process.env.MAGIC_LINK_FROM = "coach@example.com";
@@ -190,6 +198,7 @@ describe("magic link request", () => {
   });
 
   it("sends a Sign in mail through Resend when configured", async () => {
+    silenceAuthLogs();
     const email = uniqueEmail("mail");
     process.env.RESEND_API_KEY = "re_test_key";
     process.env.MAGIC_LINK_FROM = "coach@example.com";
