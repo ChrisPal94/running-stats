@@ -57,16 +57,24 @@ function resendApiKey(): string {
   return process.env.RESEND_API_KEY?.trim() || "";
 }
 
-function magicLinkFrom(): string {
-  return process.env.MAGIC_LINK_FROM?.trim() || "";
+/** Prefer `MAIL_FROM`; `MAGIC_LINK_FROM` is a one-release fallback. */
+export function mailFromAddress(): string {
+  return process.env.MAIL_FROM?.trim() || process.env.MAGIC_LINK_FROM?.trim() || "";
+}
+
+export function isProductionRuntime(): boolean {
+  const nodeEnv = process.env.NODE_ENV;
+  if (nodeEnv === "production") return true;
+  if (nodeEnv === "development" || nodeEnv === "test") return false;
+  return import.meta.env.PROD === true;
 }
 
 export function isMagicMailConfigured(): boolean {
-  return Boolean(resendApiKey() && magicLinkFrom());
+  return Boolean(resendApiKey() && mailFromAddress());
 }
 
 function fromHeader(): string {
-  const from = magicLinkFrom();
+  const from = mailFromAddress();
   if (from.includes("<")) return from;
   return `Running Stats <${from}>`;
 }
@@ -189,6 +197,11 @@ export async function requestMagicLink(
     return { ok: false, error: MAGIC_INVALID_EMAIL, email };
   }
 
+  if (!isMagicMailConfigured() && isProductionRuntime()) {
+    console.error("[auth] Magic link mail is not configured");
+    return { ok: false, error: MAGIC_SEND_ERROR, email };
+  }
+
   try {
     return await enqueueWrite(async () => {
       const latest = latestMagicTokenForEmail(email);
@@ -205,7 +218,7 @@ export async function requestMagicLink(
           await sendMagicLinkEmail(email, signInUrl);
         } else {
           console.info(
-            `[auth] Magic sign-in URL for ${email} (RESEND_API_KEY / MAGIC_LINK_FROM unset): ${signInUrl}`,
+            `[auth] Magic sign-in URL for ${email} (RESEND_API_KEY / MAIL_FROM unset): ${signInUrl}`,
           );
         }
       } catch (error) {

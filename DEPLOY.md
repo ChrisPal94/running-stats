@@ -30,8 +30,9 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `GOOGLE_CLIENT_ID` | For Google | OAuth 2.0 Web client. |
 | `GOOGLE_CLIENT_SECRET` | For Google | OAuth 2.0 Web client. |
 | `GOOGLE_CALLBACK_URL` | For Google | `https://<public-host>/auth/google/callback` — must match Google Cloud Console exactly. |
-| `RESEND_API_KEY` | For magic link mail | Resend HTTP API. Unset = log the full `/auth/magic?token=…` URL and still show **Check your email**. |
-| `MAGIC_LINK_FROM` | For magic link mail | From address (verified in Resend). Required together with `RESEND_API_KEY` to send. |
+| `RESEND_API_KEY` | For magic link mail | Resend HTTP API. Required with `MAIL_FROM` to send. Unset in production → **Couldn’t send the link. Try again.** (token/link never logged). Unset in local/dev (`NODE_ENV !== production`) → log the full `/auth/magic?token=…` URL and still show **Check your email**. |
+| `MAIL_FROM` | For magic link mail | From address (verified in Resend). Prefer this name. |
+| `MAGIC_LINK_FROM` | Fallback | One-release fallback if `MAIL_FROM` is unset. |
 | `ADAPT_CRON_SECRET` | For `/api/adapt` | Bearer secret for the nightly job. 16+ characters. |
 | `ADAPT_LLM_API_KEY` | No | Unset = heuristic. If set and the LLM fails, the job logs and does not mutate the plan. |
 | `ADAPT_LLM_BASE_URL` | No | Default `https://api.openai.com/v1`. |
@@ -96,7 +97,7 @@ Use the Railway public HTTPS URL. Expect session cookies with `Secure`. Signup/l
 5. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`. Settings **You** can change Adaptation frequency (Daily / Weekly / Monthly) and Save. Settings **Connected apps** shows Intervals.icu (`Not connected` / `Connected · {id}`); Connect uses the server env key (no paste). Sync now / Disconnect do not delete `RunLog`s.
 6. **Today** — Skip / Feeling off persist immediately (no map). Done opens **Log this run** bottom sheet; Save writes a `RunLog` and toasts **Saved**; Skip map writes Feedback only. Empty copy is **No session today**; CTA **See the week** → `/plan`; optional **Next run: {weekday}** when a later Session exists. AdaptationEvent **Why?** opens **Why this changed** when `reason` is present; no Why? control when `reason` is empty.
 7. **Login** — log out, then email Continue → `/today` (existing plan). Password tab remains the default.
-8. **Magic link** — Email link tab → **Email me a link** → **Check your email** / **Link expires in 15 minutes** / **Resend link**. If `RESEND_API_KEY` + `MAGIC_LINK_FROM` are unset, copy the `/auth/magic?token=…` URL from web logs. First-time click → `/onboarding`. Returning with a plan → `/today`. Used or expired token → `/login` + toast **That link expired. Request a new one.**
+8. **Magic link** — Email link tab → **Email me a link** → **Check your email** / **Link expires in 15 minutes** / **Resend link**. Production needs `RESEND_API_KEY` + `MAIL_FROM` (`MAGIC_LINK_FROM` is a one-release fallback). If mail is unset in local/dev, copy the `/auth/magic?token=…` URL from web logs. Unset mail in production fails with **Couldn’t send the link. Try again.** and does not log the token. First-time click → `/onboarding`. Returning with a plan → `/today`. Used or expired token → `/login` + toast **That link expired. Request a new one.**
 9. **Google** (if env is set) — Continue with Google on `/signup` and `/login`; first Google → onboarding, returning Google with a plan → `/today`. Missing/wrong Google env → **Couldn’t connect to Google. Try email or try again.**
 10. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there (`app.db` on the volume).
 11. **Adapt HTTP** — `POST /api/adapt` without `Authorization` → `401`. With `Authorization: Bearer $ADAPT_CRON_SECRET` → `200` JSON (`processed` / `written` / `skipped` / `patched`). No Feedback that day → `written: 0` is success, not a failure.

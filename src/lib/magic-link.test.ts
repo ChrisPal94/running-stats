@@ -25,22 +25,36 @@ import type { Plan } from "./training.ts";
 const dataDir = mkdtempSync(join(tmpdir(), "rs-magic-"));
 process.env.AUTH_DATA_DIR = dataDir;
 process.env.AUTH_SECRET = "test-auth-secret-16+";
+const originalNodeEnv = process.env.NODE_ENV;
+process.env.NODE_ENV = "test";
 delete process.env.RESEND_API_KEY;
+delete process.env.MAIL_FROM;
 delete process.env.MAGIC_LINK_FROM;
 
 after(() => {
   rmSync(dataDir, { recursive: true, force: true });
+  if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = originalNodeEnv;
 });
 
 afterEach(() => {
   mock.restoreAll();
+  process.env.NODE_ENV = "test";
   delete process.env.RESEND_API_KEY;
+  delete process.env.MAIL_FROM;
   delete process.env.MAGIC_LINK_FROM;
 });
 
-function silenceAuthLogs(): void {
-  mock.method(console, "info", () => {});
-  mock.method(console, "error", () => {});
+function captureLogs(): string[] {
+  const lines: string[] = [];
+  const write = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  mock.method(console, "info", write);
+  mock.method(console, "error", write);
+  mock.method(console, "warn", write);
+  mock.method(console, "log", write);
+  return lines;
 }
 
 function formData(fields: Record<string, string>): FormData {
@@ -105,12 +119,10 @@ describe("magic link request", () => {
     }
   });
 
-  it("shows success and logs the sign-in URL when mail env is unset", async () => {
+  it("shows success and logs the sign-in URL when mail env is unset outside production", async () => {
+    process.env.NODE_ENV = "development";
     const email = uniqueEmail("log");
-    const lines: string[] = [];
-    mock.method(console, "info", (...args: unknown[]) => {
-      lines.push(args.map(String).join(" "));
-    });
+    const lines = captureLogs();
 
     const request = postRequest("https://running-stats-production.up.railway.app/login", {
       "x-forwarded-proto": "https",
@@ -127,8 +139,31 @@ describe("magic link request", () => {
     assert.ok(logged, "expected the sign-in URL to be logged for QA");
     assert.match(logged, /^\[auth\] Magic sign-in URL for /);
     assert.match(logged, /https:\/\/running-stats-production\.up\.railway\.app\/auth\/magic\?token=/);
+    assert.doesNotMatch(logged, /RESEND_API_KEY=|re_/);
     assert.equal(listMagicTokensByEmail(email).length, 1);
     assert.equal(listMagicTokensByEmail(email)[0]?.usedAt, undefined);
+  });
+
+  it("fails in production when mail is unset and never logs the token or link", async () => {
+    process.env.NODE_ENV = "production";
+    const email = uniqueEmail("prod-leak");
+    const lines = captureLogs();
+
+    const result = await requestMagicLink(
+      postRequest("https://running-stats-production.up.railway.app/login", {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "running-stats-production.up.railway.app",
+      }),
+      formData({ intent: "magic", email }),
+    );
+
+    assert.deepEqual(result, { ok: false, error: MAGIC_SEND_ERROR, email });
+    assert.equal(MAGIC_SEND_ERROR, "Couldn’t send the link. Try again.");
+    const joined = lines.join("\n");
+    assert.doesNotMatch(joined, /token=/);
+    assert.doesNotMatch(joined, /\/auth\/magic/);
+    assert.doesNotMatch(joined, /RESEND_API_KEY=|re_/);
+    assert.equal(listMagicTokensByEmail(email).length, 0);
   });
 
   it("stores a hash instead of the raw token", () => {
@@ -141,7 +176,7 @@ describe("magic link request", () => {
   });
 
   it("enforces a 30s resend cooldown without issuing a second token", async () => {
-    silenceAuthLogs();
+    captureLogs();
     const email = uniqueEmail("cool");
     const now = Date.parse("2026-09-16T15:00:00.000Z");
     const request = postRequest("http://localhost:4321/login");
@@ -161,7 +196,7 @@ describe("magic link request", () => {
   });
 
   it("issues a new token after the cooldown and retires the previous unused one", async () => {
-    silenceAuthLogs();
+    captureLogs();
     const email = uniqueEmail("after-cool");
     const now = Date.parse("2026-09-16T16:00:00.000Z");
     const request = postRequest("http://localhost:4321/login");
@@ -182,10 +217,10 @@ describe("magic link request", () => {
   });
 
   it("returns Couldn’t send the link. Try again. when Resend fails", async () => {
-    silenceAuthLogs();
+    const lines = captureLogs();
     const email = uniqueEmail("fail");
     process.env.RESEND_API_KEY = "re_test_key";
-    process.env.MAGIC_LINK_FROM = "coach@example.com";
+    process.env.MAIL_FROM = "coach@example.com";
     mock.method(globalThis, "fetch", async () => new Response("nope", { status: 500 }));
 
     const result = await requestMagicLink(
@@ -195,13 +230,17 @@ describe("magic link request", () => {
     assert.deepEqual(result, { ok: false, error: MAGIC_SEND_ERROR, email });
     assert.equal(MAGIC_SEND_ERROR, "Couldn’t send the link. Try again.");
     assert.equal(listMagicTokensByEmail(email).length, 0);
+    const joined = lines.join("\n");
+    assert.doesNotMatch(joined, /token=/);
+    assert.doesNotMatch(joined, /re_test_key/);
   });
 
-  it("sends a Sign in mail through Resend when configured", async () => {
-    silenceAuthLogs();
+  it("sends a Sign in mail through Resend when MAIL_FROM is set", async () => {
+    captureLogs();
     const email = uniqueEmail("mail");
     process.env.RESEND_API_KEY = "re_test_key";
-    process.env.MAGIC_LINK_FROM = "coach@example.com";
+    process.env.MAIL_FROM = "coach@example.com";
+    process.env.MAGIC_LINK_FROM = "legacy@example.com";
     const bodies: unknown[] = [];
     mock.method(globalThis, "fetch", async (_url: string | URL, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body ?? "{}")));
@@ -213,12 +252,33 @@ describe("magic link request", () => {
       formData({ intent: "magic", email }),
     );
     assert.equal(result.ok, true);
-    const payload = bodies[0] as { subject?: string; html?: string; to?: string[] };
+    const payload = bodies[0] as { subject?: string; html?: string; to?: string[]; from?: string };
     assert.equal(payload.subject, MAGIC_LINK_SUBJECT);
     assert.equal(MAGIC_LINK_SUBJECT, "Your Running Stats sign-in link");
     assert.equal(payload.to?.[0], email);
+    assert.equal(payload.from, "Running Stats <coach@example.com>");
     assert.match(String(payload.html), />Sign in</);
     assert.match(String(payload.html), /\/auth\/magic\?token=/);
+  });
+
+  it("falls back to MAGIC_LINK_FROM when MAIL_FROM is unset", async () => {
+    captureLogs();
+    const email = uniqueEmail("legacy-from");
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.MAGIC_LINK_FROM = "legacy@example.com";
+    const bodies: unknown[] = [];
+    mock.method(globalThis, "fetch", async (_url: string | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body ?? "{}")));
+      return new Response("{}", { status: 200 });
+    });
+
+    const result = await requestMagicLink(
+      postRequest("http://localhost:4321/login"),
+      formData({ intent: "magic", email }),
+    );
+    assert.equal(result.ok, true);
+    const payload = bodies[0] as { from?: string };
+    assert.equal(payload.from, "Running Stats <legacy@example.com>");
   });
 });
 
