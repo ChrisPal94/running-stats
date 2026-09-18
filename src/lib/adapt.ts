@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { adaptRunLogLine, type AdaptRunCounts } from "./adapt-cron";
 import {
   addDaysYmd,
   APP_TIME_ZONE,
@@ -466,13 +467,7 @@ export function planDecisions(
   return decisions;
 }
 
-export async function runNocturnalAdaptation(now = new Date()): Promise<{
-  processed: number;
-  written: number;
-  skipped: number;
-  patched: number;
-  llmFailed: number;
-}> {
+export async function runNocturnalAdaptation(now = new Date()): Promise<AdaptRunCounts> {
   const snapshot = await getAdaptationJobSnapshot();
   const planned = planDecisions(snapshot, now);
   const decisions: AdaptationDecision[] = [];
@@ -550,9 +545,7 @@ export async function runAdaptCronLoop(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, wait || 1000));
     try {
       const result = await runNocturnalAdaptation();
-      console.log(
-        `[adapt] wrote ${result.written} AdaptationEvent(s), patched ${result.patched} session(s) (${result.processed} plan(s) considered, ${result.skipped} skipped, ${result.llmFailed} LLM failed)`,
-      );
+      console.log(adaptRunLogLine(result));
     } catch (error) {
       console.error("[adapt] run failed; will retry at next 21:00", error);
     }

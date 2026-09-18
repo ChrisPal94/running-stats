@@ -10,7 +10,7 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 | --- | --- |
 | Build | `npm run build` (`astro check && astro build`) |
 | Start | `HOST=0.0.0.0 node ./dist/server/entry.mjs` (`npm start`) |
-| Healthcheck | Path `/api/health` — unauthenticated `GET` returns `200` JSON `{ ok: true }`. Does not touch SQLite or secrets. |
+| Healthcheck | Path `/api/health` — unauthenticated `GET` returns `200` JSON `{ ok: true, adaptCronConfigured: true or false }`. Does not touch SQLite or return secrets. `adaptCronConfigured` is true when `ADAPT_CRON_SECRET` is set (non-empty after trim). Cron is a **separate** Railway service (below), not this web process. |
 | Volume | Mount at `.data` (Nixpacks workdir is `/app`, so `/app/.data`) |
 | Runtime | Node 22.14+ (built-in `node:sqlite`; no extra native module) |
 
@@ -64,7 +64,7 @@ Expect **200** (invalid credentials still render the form), not **403**.
 
 21:00 `America/Guayaquil` is `02:00` UTC (ECT is UTC−5, no DST).
 
-This is a **separate Railway Cron service** (or Cron Job). It only HTTP-POSTs the public web URL. It is **not** a second Node app: do not run `npm start` / `npm run adapt` on it, and do **not** mount `.data` there. SQLite stays on the web service volume.
+This is a **separate Railway Cron service** (or Cron Job). It only HTTP-POSTs the public web URL. It is **not** a second Node app: do not run `npm start` / `npm run adapt` on it, and do **not** mount `.data` there. SQLite stays on the web service volume. `GET /api/health` only reports whether the secret is configured on the **web** service (`adaptCronConfigured`); it does not run Cron.
 
 Railway Cron Job schedule (UTC):
 
@@ -90,7 +90,7 @@ Local equivalent (not used on Railway): `npm run adapt` once, or `npm run adapt:
 
 Use the Railway public HTTPS URL. Expect session cookies with `Secure`. Signup/login POSTs must not return 403 (see Reverse proxy / CSRF above).
 
-1. **Health** — `GET /api/health` (no auth) → `200` `{ "ok": true }`.
+1. **Health** — `GET /api/health` (no auth) → `200` `{ "ok": true, "adaptCronConfigured": true|false }`. Boolean only; never the secret. Cron is a separate Railway service (see Cron above), not this web process.
 2. **Landing** — `/` loads; **Start your plan** goes to `/signup`.
 3. **Signup** — email + password Continue → `/onboarding`.
 4. **Onboarding** — Goal → Level → Baseline → Days (min 3) → Cadence (Daily / Weekly / Monthly) → **Generate my plan** → `/today`.
