@@ -44,13 +44,19 @@ Run activity on sync.
       copy (`src/components/OnboardingWizard.astro`).
 - [x] 3. Intervals sync: Cooper detection + baseline resolution + future-session
       re-adjust + toast (`src/lib/training.ts`, `src/lib/intervals.ts`, tests).
-- [ ] 4. Full verification: `npm test`, `npm run check`; manual flow
-      signup → cooper → sync.
+- [x] 4. Automated verification: `npm test` 70 pass / 0 fail; `npm run check`
+      0 errors (2 pre-existing hints). Independent gentle-ai-verify PASS on all
+      contract points. Manual flow (signup → cooper → sync with
+      INTERVALS_ICU_API_KEY) pending: no API key in local .env.
 
 ## Evidence
 
-(commits recorded per task)
-
+- Commit: 24feb56 `feat(onboarding): resolve Cooper test baseline via Intervals
+  sync` (7 files, +554/-52) on `feature/cooper-test-via-intervals`.
+- package-lock.json dirty since before the feature (esbuild hoist cleanup);
+  excluded from the commit — user to decide.
+- Sync-window note: resolution only sees runs inside the fetch window
+  (last ~27 days); a Cooper test older than the window resolves when re-fetched.
 - Task 1–3 implementation verified with `npx tsx --test src/lib/training-cooper.test.ts
   src/lib/intervals-sync.test.ts` (29 pass) and full `npm test` (70 pass),
   `npm run check` (0 errors, 2 pre-existing hints in login/signup.astro).
