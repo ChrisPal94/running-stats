@@ -72,13 +72,13 @@ Railway Cron Job schedule (UTC):
 0 2 * * *
 ```
 
-Command — `POST` the web service public URL `/api/adapt` with the **same** `ADAPT_CRON_SECRET` as the web service (Railway shared variable or duplicate; substitute the public host):
+Command — `POST` the web service public URL `/api/adapt` with the **same** `ADAPT_CRON_SECRET` as the web service (Railway shared variable or duplicate; substitute the public host). Include `Content-Type: application/json`: a bare `POST` without it hits Astro CSRF and returns **403**.
 
 ```bash
-curl -fsS -X POST -H "Authorization: Bearer $ADAPT_CRON_SECRET" https://<public-host>/api/adapt
+curl -fsS -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $ADAPT_CRON_SECRET" https://<public-host>/api/adapt
 ```
 
-`GET` with the same `Authorization` header also works. Alternate header: `X-Adapt-Cron-Secret`.
+`GET` with the same `Authorization: Bearer $ADAPT_CRON_SECRET` also works and avoids the Content-Type CSRF footgun. Alternate header: `X-Adapt-Cron-Secret`.
 
 Missing secret on the web service → `503`. Wrong secret → `401`.
 
@@ -100,6 +100,6 @@ Use the Railway public HTTPS URL. Expect session cookies with `Secure`. Signup/l
 8. **Magic link** — Email link tab → **Email me a link** → **Check your email** / **Link expires in 15 minutes** / **Resend link**. Production needs `RESEND_API_KEY` + `MAIL_FROM` (`MAGIC_LINK_FROM` is a one-release fallback). If mail is unset in local/dev, copy the `/auth/magic?token=…` URL from web logs. Unset mail in production fails with **Couldn’t send the link. Try again.** and does not log the token. First-time click → `/onboarding`. Returning with a plan → `/today`. Used or expired token → `/login` + toast **That link expired. Request a new one.**
 9. **Google** (if env is set) — Continue with Google on `/signup` and `/login`; first Google → onboarding, returning Google with a plan → `/today`. Missing/wrong Google env → **Couldn’t connect to Google. Try email or try again.**
 10. **Volume** — sign in, generate a plan, redeploy or restart the web service, sign in again: users and plan are still there (`app.db` on the volume).
-11. **Adapt HTTP** — `POST /api/adapt` without `Authorization` → `401`. With `Authorization: Bearer $ADAPT_CRON_SECRET` → `200` JSON (`processed` / `written` / `skipped` / `patched`). No Feedback that day → `written: 0` is success, not a failure.
+11. **Adapt HTTP** — Bare `POST /api/adapt` without `Content-Type` → `403` (Astro CSRF). `POST` with `-H "Content-Type: application/json"` and no/wrong `Authorization` → `401`. Same `Content-Type` plus `Authorization: Bearer $ADAPT_CRON_SECRET` → `200` JSON (`processed` / `written` / `skipped` / `patched`). `GET` with the same Bearer also works. No Feedback that day → `written: 0` is success, not a failure.
 
 Out of scope for this deploy pass: screenshots, Strava, live plan editing.

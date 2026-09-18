@@ -104,7 +104,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 
 ## Nocturnal adaptation (MVP)
 
-- **When:** 21:00 `America/Guayaquil`. Locally: `npm run adapt` (once) or `npm run adapt:cron` (waits until 21:00, then every night). HTTP: `POST` or `GET` `/api/adapt` with `Authorization: Bearer $ADAPT_CRON_SECRET` (or `X-Adapt-Cron-Secret`). Crontab: `CRON_TZ=America/Guayaquil` + `0 21 * * * curl -fsS -X POST -H "Authorization: Bearer $ADAPT_CRON_SECRET" https://host/api/adapt` — or UTC `0 2 * * *` (21:00 ECT, UTC−5, no DST).
+- **When:** 21:00 `America/Guayaquil`. Locally: `npm run adapt` (once) or `npm run adapt:cron` (waits until 21:00, then every night). HTTP: `POST` or `GET` `/api/adapt` with `Authorization: Bearer $ADAPT_CRON_SECRET` (or `X-Adapt-Cron-Secret`). Crontab: `CRON_TZ=America/Guayaquil` + `0 21 * * * curl -fsS -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $ADAPT_CRON_SECRET" https://host/api/adapt` — or UTC `0 2 * * *` (21:00 ECT, UTC−5, no DST). Bare `POST` without `Content-Type` hits Astro CSRF (**403**); `GET` with the same Bearer avoids that footgun.
 - **Input:** Sessions + Feedback for that Guayaquil day (Done / Skip / Feeling off), gated by `Plan.feedbackCadence` (default `"daily"`). Daily: if there is **no Feedback that day**, the job does not create an AdaptationEvent and does not touch tomorrow’s Sessions. Weekly: skip unless today is Sunday (end of the Monday–Sunday Guayaquil week); then use the latest Feedback in that week. Monthly: skip unless today is the last civil day of the month; then use the latest Feedback in that month. No Feedback in the window → no write.
 - **Who writes AdaptationEvents:** only this job. Onboarding and Today CTAs never create them. AdaptationEvent shape is unchanged (`title` / `summary` / `reason` / `sourceDate`).
 - **If Feedback exists:** write one AdaptationEvent and adjust **tomorrow’s Session(s) only** — never an opaque full Plan rewrite. Idempotent per user + source day.
@@ -119,7 +119,7 @@ See **DEPLOY.md** for variables and Bowser smoke tests.
 
 - **Web:** build `npm run build`, start `HOST=0.0.0.0 node ./dist/server/entry.mjs` (`npm start`).
 - **Volume:** mounted at `.data` (default `AUTH_DATA_DIR`; SQLite file `app.db`).
-- **Cron:** `0 2 * * *` UTC (= 21:00 America/Guayaquil) `curl` `POST` `/api/adapt` with `Authorization: Bearer $ADAPT_CRON_SECRET`.
+- **Cron:** `0 2 * * *` UTC (= 21:00 America/Guayaquil) `curl` `POST` `/api/adapt` with `Content-Type: application/json` and `Authorization: Bearer $ADAPT_CRON_SECRET` (or `GET` with the same Bearer). See **DEPLOY.md**.
 
 ## Security / deps (tech note)
 
