@@ -95,12 +95,12 @@ export function readPassword(value: FormDataEntryValue | null): string {
   return String(value ?? "");
 }
 
-function isEmail(email: string): boolean {
+export function isValidEmail(email: string): boolean {
   return email.length > 0 && email.length <= EMAIL_MAX && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function validateCredentials(email: string, password: string): string | null {
-  if (!isEmail(email)) return "Enter a valid email.";
+  if (!isValidEmail(email)) return "Enter a valid email.";
   if (password.length < PASSWORD_MIN) {
     return `Password must be at least ${PASSWORD_MIN} characters.`;
   }
@@ -188,10 +188,11 @@ export async function getCurrentUser(cookies: AstroCookies): Promise<AuthUser | 
 export async function signupFromForm(
   request: Request,
   cookies: AstroCookies,
+  formData?: FormData,
 ): Promise<AuthFormResult> {
-  const formData = await request.formData();
-  const email = normalizeEmail(formData.get("email"));
-  const password = readPassword(formData.get("password"));
+  const data = formData ?? (await request.formData());
+  const email = normalizeEmail(data.get("email"));
+  const password = readPassword(data.get("password"));
 
   if (!isSameOrigin(request)) {
     return { ok: false, error: "This request could not be verified. Try again.", email };
@@ -229,10 +230,11 @@ export async function signupFromForm(
 export async function loginFromForm(
   request: Request,
   cookies: AstroCookies,
+  formData?: FormData,
 ): Promise<AuthFormResult> {
-  const formData = await request.formData();
-  const email = normalizeEmail(formData.get("email"));
-  const password = readPassword(formData.get("password"));
+  const data = formData ?? (await request.formData());
+  const email = normalizeEmail(data.get("email"));
+  const password = readPassword(data.get("password"));
 
   if (!isSameOrigin(request)) {
     return { ok: false, error: "This request could not be verified. Try again.", email };
@@ -354,7 +356,7 @@ export async function upsertGoogleUser(
   email: string,
 ): Promise<UpsertGoogleUserResult> {
   const normalized = email.trim().toLowerCase();
-  if (!googleId || !isEmail(normalized)) {
+  if (!googleId || !isValidEmail(normalized)) {
     throw new Error("Google account is missing a verified email.");
   }
 
@@ -379,4 +381,25 @@ export async function upsertGoogleUser(
     insertUser(user);
     return { user: publicUser(user), created: true };
   });
+}
+
+/** Find or create a passwordless user. Callers must serialize writes (`enqueueWrite`). */
+export function upsertPasswordlessUser(email: string): UpsertGoogleUserResult {
+  const normalized = email.trim().toLowerCase();
+  if (!isValidEmail(normalized)) {
+    throw new Error("Magic link is missing a valid email.");
+  }
+
+  const existing = getUserByEmail(normalized);
+  if (existing) {
+    return { user: publicUser(existing), created: false };
+  }
+
+  const user: StoredUser = {
+    id: randomBytes(16).toString("base64url"),
+    email: normalized,
+    createdAt: new Date().toISOString(),
+  };
+  insertUser(user);
+  return { user: publicUser(user), created: true };
 }
