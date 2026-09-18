@@ -106,7 +106,7 @@ export const FEEDBACK_CADENCES = [
   },
 ] as const satisfies ReadonlyArray<{ id: FeedbackCadence; label: string; help: string }>;
 
-export const BASELINE_KINDS = ["last-race", "cooper", "skip"] as const;
+export const BASELINE_KINDS = ["last-race", "cooper", "cooper-pending", "skip"] as const;
 export type BaselineKind = (typeof BASELINE_KINDS)[number];
 
 export const RACE_DISTANCE_IDS = ["5k", "10k", "half", "marathon", "custom"] as const;
@@ -143,6 +143,7 @@ export const RACE_DISTANCES = [
 export type Baseline =
   | { kind: "last-race"; distanceKm: number; timeSec: number; paceSecPerKm: number; date?: string }
   | { kind: "cooper"; distanceKm: number; durationSec: 720 }
+  | { kind: "cooper-pending" }
   | { kind: "skip" };
 
 export type OnboardingAnswers = {
@@ -639,7 +640,7 @@ export function parseRunLogForm(
   };
 }
 
-/** Skip, omit, and null all mean “no baseline” — current Plan v1 heuristic. */
+/** Skip, omit, null, and cooper-pending all mean “no baseline yet” — current Plan v1 heuristic. */
 export function isSkippedBaseline(baseline?: Baseline | null): boolean {
   return !baseline || baseline.kind === "skip";
 }
@@ -647,13 +648,14 @@ export function isSkippedBaseline(baseline?: Baseline | null): boolean {
 export function isPresentBaseline(
   baseline?: Baseline | null,
 ): baseline is Extract<Baseline, { kind: "last-race" } | { kind: "cooper" }> {
-  return Boolean(baseline && baseline.kind !== "skip");
+  return Boolean(baseline && baseline.kind !== "skip" && baseline.kind !== "cooper-pending");
 }
 
 export function isBaseline(value: unknown): value is Baseline {
   if (!value || typeof value !== "object") return false;
   const record = value as Partial<Baseline> & { kind?: string };
   if (record.kind === "skip") return true;
+  if (record.kind === "cooper-pending") return true;
   if (record.kind === "cooper") {
     const cooper = record as Extract<Baseline, { kind: "cooper" }>;
     return (
@@ -702,7 +704,7 @@ function riegelEquivalentPaceSecPerKm(distanceKm: number, timeSec: number, targe
   return equivalentTime / targetKm;
 }
 
-/** Fitness vs the selected level. Skip / omit / null is 1. Last-race / Cooper are clamped to ±20%. */
+/** Fitness vs the selected level. Skip / omit / null / cooper-pending is 1. Last-race / Cooper are clamped to ±20%. */
 export function baselineFitnessFactor(baseline: Baseline | null | undefined, level: Level): number {
   if (!isPresentBaseline(baseline)) return 1;
   if (baseline.kind === "last-race") {
@@ -726,19 +728,8 @@ export function parseBaselineForm(
   }
 
   if (kindRaw === "cooper") {
-    const amount = parsePositiveNumber(String(formData.get("cooperDistance") ?? ""));
-    if (amount === null) {
-      return { ok: false, error: "Enter the distance you covered." };
-    }
-    const unit = String(formData.get("cooperUnit") ?? "km");
-    const distanceKm = Math.round((unit === "m" ? amount / 1000 : amount) * 1000) / 1000;
-    if (distanceKm < COOPER_MIN_KM || distanceKm > COOPER_MAX_KM) {
-      return { ok: false, error: "Cooper distance must be between 0.5 and 5 km." };
-    }
-    return {
-      ok: true,
-      baseline: { kind: "cooper", distanceKm, durationSec: COOPER_DURATION_SEC },
-    };
+    // The 12-minute result arrives later via an Intervals.icu sync; store the intent now.
+    return { ok: true, baseline: { kind: "cooper-pending" } };
   }
 
   const distanceIdRaw = String(formData.get("lastRaceDistance") ?? "");
@@ -1706,6 +1697,7 @@ export async function applyIntervalsRuns(
   skippedNoSession: number;
   skippedManual: number;
   pendingChoices: IntervalsRunChoice[];
+  cooperResolved: boolean;
 }> {
   return enqueueWrite(async () => {
     const data = await readTraining();
@@ -1714,6 +1706,8 @@ export async function applyIntervalsRuns(
     for (const session of sessions) {
       if (!byDate.has(session.date)) byDate.set(session.date, session);
     }
+
+    const cooperResolved = resolveCooperPendingBaseline(data, userId, runs, sessions);
 
     const runsByDate = new Map<string, IntervalsRunStats[]>();
     for (const run of runs) {
@@ -1763,8 +1757,71 @@ export async function applyIntervalsRuns(
     }
 
     await writeTraining(data);
-    return { imported, skippedNoSession, skippedManual, pendingChoices };
+    return { imported, skippedNoSession, skippedManual, pendingChoices, cooperResolved };
   });
+}
+
+const COOPER_PENDING_TIME_MIN_SEC = 660;
+const COOPER_PENDING_TIME_MAX_SEC = 780;
+
+/** Closest fetched Run to a 12-minute effort inside the tolerance band, or null. */
+function pickCooperPendingCandidate(runs: IntervalsRunStats[]): IntervalsRunStats | null {
+  let best: IntervalsRunStats | null = null;
+  for (const run of runs) {
+    if (run.timeSec < COOPER_PENDING_TIME_MIN_SEC || run.timeSec > COOPER_PENDING_TIME_MAX_SEC) continue;
+    if (run.distanceKm < COOPER_MIN_KM || run.distanceKm > COOPER_MAX_KM) continue;
+    if (
+      !best ||
+      Math.abs(run.timeSec - COOPER_DURATION_SEC) < Math.abs(best.timeSec - COOPER_DURATION_SEC)
+    ) {
+      best = run;
+    }
+  }
+  return best;
+}
+
+/**
+ * Resolve a pending Cooper baseline from fetched Intervals runs, independent of
+ * session-day matching. On a hit, the baseline lands on Plan + OnboardingRecord
+ * and future sessions (date > today, Guayaquil) are re-adjusted with the now-
+ * present baseline (kinds stay, distances and titles update). Past sessions,
+ * RunLogs, Feedback, and AdaptationEvents are untouched.
+ */
+function resolveCooperPendingBaseline(
+  data: TrainingFile,
+  userId: string,
+  runs: IntervalsRunStats[],
+  userSessions: Session[],
+): boolean {
+  const plan = data.plans.find((entry) => entry.userId === userId);
+  if (!plan || plan.baseline?.kind !== "cooper-pending") return false;
+  const candidate = pickCooperPendingCandidate(runs);
+  if (!candidate) return false;
+
+  const baseline: Extract<Baseline, { kind: "cooper" }> = {
+    kind: "cooper",
+    distanceKm: candidate.distanceKm,
+    durationSec: COOPER_DURATION_SEC,
+  };
+  plan.baseline = baseline;
+  const onboarding = data.onboarding.find((entry) => entry.userId === userId);
+  if (onboarding) {
+    onboarding.baseline = baseline;
+    onboarding.updatedAt = new Date().toISOString();
+  }
+
+  const kinds = assignKinds(plan.days);
+  const distances = planDistances(plan.days, kinds, plan.goal, plan.level, baseline);
+  const today = appTodayYmd();
+  for (const session of userSessions) {
+    if (session.planId !== plan.id || session.date <= today) continue;
+    if (!plan.days.includes(session.weekday)) continue;
+    const distanceKm = distances[session.weekday];
+    if (typeof distanceKm !== "number") continue;
+    session.distanceKm = distanceKm;
+    session.title = `${SESSION_COPY[session.kind].title} · ${distanceKm} km`;
+  }
+  return true;
 }
 
 function upsertImportedRunLog(
@@ -1816,6 +1873,7 @@ function syncFinishedRedirect(skippedNoSession: boolean): Extract<SettingsFormRe
 function syncInitialFinishedRedirect(result: {
   imported: number;
   skippedNoSession: number;
+  cooperResolved: boolean;
 }): Extract<SettingsFormResult, { redirect: string }> {
   return {
     ok: true,
@@ -1823,6 +1881,7 @@ function syncInitialFinishedRedirect(result: {
       intervalsSyncToast({
         imported: result.imported,
         skippedNoSession: result.skippedNoSession,
+        cooperResolved: result.cooperResolved,
       }),
     ),
   };
@@ -1855,6 +1914,7 @@ export async function syncIntervalsForUser(userId: string): Promise<
       skippedNoSession: number;
       skippedManual: number;
       pendingChoices: IntervalsRunChoice[];
+      cooperResolved: boolean;
     }
   | { ok: false; error: string }
 > {
@@ -1880,6 +1940,7 @@ export async function syncIntervalsForUser(userId: string): Promise<
     skippedNoSession: result.skippedNoSession,
     skippedManual: result.skippedManual,
     pendingChoices: result.pendingChoices,
+    cooperResolved: result.cooperResolved,
   };
 }
 

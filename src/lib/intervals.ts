@@ -22,14 +22,17 @@ export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
 export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
 export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
 export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
+export const INTERVALS_COOPER_SYNC_TOAST = "Cooper test result synced — plan updated.";
 
-export type IntervalsSyncToast = "no-session" | "no-new-runs" | null;
+export type IntervalsSyncToast = "no-session" | "no-new-runs" | "cooper" | null;
 
-/** Toast after Sync now when the Which run? picker is not shown. */
+/** Toast after Sync now when the Which run? picker is not shown. Cooper wins when its result was applied. */
 export function intervalsSyncToast(input: {
   imported: number;
   skippedNoSession: number;
+  cooperResolved?: boolean;
 }): IntervalsSyncToast {
+  if (input.cooperResolved) return "cooper";
   if (input.skippedNoSession > 0) return "no-session";
   if (input.imported === 0) return "no-new-runs";
   return null;
@@ -38,11 +41,14 @@ export function intervalsSyncToast(input: {
 export function intervalsSyncToastRedirect(toast: IntervalsSyncToast): string {
   if (toast === "no-session") return "/settings?toast=no-session";
   if (toast === "no-new-runs") return "/settings?toast=no-new-runs";
+  if (toast === "cooper") return "/settings?toast=cooper";
   return "/settings";
 }
 
 export function intervalsSyncToastCopy(toast: Exclude<IntervalsSyncToast, null>): string {
-  return toast === "no-session" ? INTERVALS_NO_SESSION_TOAST : INTERVALS_NO_NEW_RUNS_TOAST;
+  if (toast === "no-session") return INTERVALS_NO_SESSION_TOAST;
+  if (toast === "no-new-runs") return INTERVALS_NO_NEW_RUNS_TOAST;
+  return INTERVALS_COOPER_SYNC_TOAST;
 }
 
 const FETCH_TIMEOUT_MS = 15_000;

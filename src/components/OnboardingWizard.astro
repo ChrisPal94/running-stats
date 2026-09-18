@@ -33,14 +33,12 @@ const baseline = isBaseline(draft?.baseline) ? draft.baseline : null;
 const selectedKind = baseline?.kind ?? "last-race";
 const selectedCadence = normalizeFeedbackCadence(draft?.feedbackCadence ?? DEFAULT_FEEDBACK_CADENCE);
 const lastRace = baseline?.kind === "last-race" ? baseline : null;
-const cooper = baseline?.kind === "cooper" ? baseline : null;
 const lastRaceDistance = lastRace ? raceDistanceIdFromKm(lastRace.distanceKm) : "5k";
 const lastRaceTime = lastRace ? formatHms(lastRace.timeSec) : "";
 const lastRaceCustomKm = lastRaceDistance === "custom" && lastRace ? String(lastRace.distanceKm) : "";
 const lastRaceDate = lastRace?.date ?? "";
 const lastRacePace = lastRace ? formatPace(lastRace.paceSecPerKm) : "";
 const showPaceWarning = lastRace ? isPaceSoftOutOfRange(lastRace.paceSecPerKm) : false;
-const cooperDistance = cooper ? String(cooper.distanceKm) : "";
 
 const headings = {
   1: { title: "Your goal", sub: "What are you training for?" },
@@ -278,34 +276,11 @@ const chipClass =
         </div>
 
         <div data-panel="cooper" class="flex flex-col gap-4" hidden={selectedKind !== "cooper"}>
-          <p class="text-sm leading-6 text-[#d6ded6]">Run as far as you can in 12 minutes</p>
-          <div class="flex flex-col gap-2">
-            <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">
-              Distance covered
-            </span>
-            <div class="flex gap-2">
-              <input
-                type="text"
-                name="cooperDistance"
-                value={cooperDistance}
-                inputmode="decimal"
-                placeholder="e.g. 2.4"
-                data-cooper-distance
-                class="min-w-0 flex-1 rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
-              />
-              <div class="flex rounded-xl border border-white/12 p-1" role="radiogroup" aria-label="Distance unit">
-                <label class="flex cursor-pointer items-center rounded-lg px-3 py-2 text-xs font-semibold text-mist uppercase has-[:checked]:bg-lime has-[:checked]:text-ink">
-                  <input class="sr-only" type="radio" name="cooperUnit" value="km" checked data-cooper-unit />
-                  km
-                </label>
-                <label class="flex cursor-pointer items-center rounded-lg px-3 py-2 text-xs font-semibold text-mist uppercase has-[:checked]:bg-lime has-[:checked]:text-ink">
-                  <input class="sr-only" type="radio" name="cooperUnit" value="m" data-cooper-unit />
-                  m
-                </label>
-              </div>
-            </div>
-            <p class="text-xs leading-5 text-mist">0.5–5 km (or 500–5000 m).</p>
-          </div>
+          <p class="text-sm leading-6 text-[#d6ded6]">Run as far as you can in 12 minutes.</p>
+          <p class="rounded-xl border border-lime/25 bg-lime/8 px-4 py-3 text-xs leading-5 text-[#d6ded6]">
+            Connect Intervals.icu in Settings and sync — your Cooper result will be picked up
+            automatically.
+          </p>
         </div>
 
         <div data-panel="skip" hidden={selectedKind !== "skip"}></div>
