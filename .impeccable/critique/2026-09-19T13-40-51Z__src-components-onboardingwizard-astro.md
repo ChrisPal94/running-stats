@@ -10,6 +10,7 @@ target_fingerprint: "sha256:0e46253affd199c01dc41918109d61ebf5af406447f86d2d6990
 target_path: /Users/christian/code/running-stats/src/components/OnboardingWizard.astro
 timestamp: 2026-09-19T13-40-51Z
 slug: src-components-onboardingwizard-astro
+closed: true
 ---
 # Critique: Onboarding de Running Stats
 
