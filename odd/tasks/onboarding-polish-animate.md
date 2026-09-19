@@ -35,9 +35,14 @@ Chakra Petch / ink-panel-lime world.
       Evidence: commit df4d9b4 (2 files, +31/-12). Amber #f5c542 ≈12.3:1 on ink.
       Writer verified settings.astro has no baseline editing before writing the
       skip line (no false claims). 78/78 tests, 0 check errors.
-- [ ] 3. Verification: full path walk (magic link, keyboard + mobile ~390),
+- [x] 3. Verification: full path walk (magic link, keyboard + mobile ~390),
       `npm test` + `npm run check`, detector scan on changed files, and the
       user's visual pass on localhost:4321.
+      Evidence: commits 6495793 (motion) + df4d9b4 (semantic). Independent
+      gentle-ai-verify: detector 0 findings, 78/78 tests, check 0 errors,
+      CSS sanity (keyframes, no layout-property animation, reduced-motion
+      override, aria-live, amber warning, min-height preview) all pass.
+      User visual pass pending on localhost:4321 (magic link).
 
 ## Evidence
 
