@@ -85,11 +85,11 @@ const headings = {
 const heading = headings[step];
 const steps = [1, 2, 3, 4, 5] as const;
 const kindToggleClass =
-  "group flex min-h-11 flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-full border border-white/12 px-1.5 py-2 text-center text-[0.62rem] font-semibold leading-tight text-mist uppercase transition-colors has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink";
+  "group flex min-h-11 flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-full border border-white/12 px-1.5 py-2 text-center text-[0.62rem] font-semibold leading-tight text-mist uppercase transition-colors has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink";
 const kindToggleHintClass =
   "block text-[0.55rem] font-medium leading-tight tracking-normal normal-case text-mist/70 group-has-[:checked]:text-ink/70";
 const chipClass =
-  "cursor-pointer rounded-2xl border border-white/12 bg-panel px-3 py-3 text-center text-sm font-semibold text-cloud transition-colors hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink";
+  "cursor-pointer rounded-2xl border border-white/12 bg-panel px-3 py-3 text-center text-sm font-semibold text-cloud transition-colors hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink";
 ---
 
 <div class="flex max-w-md flex-col gap-5">
@@ -360,7 +360,7 @@ const chipClass =
           <div class="flex items-center justify-between gap-1" role="group" aria-label="Days you can run">
             {WEEKDAYS.map((day) => (
               <label
-                class="relative grid h-10 w-10 flex-1 cursor-pointer place-items-center rounded-full border border-white/12 text-xs font-semibold text-mist transition-colors has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink"
+                class="relative grid h-10 w-10 flex-1 cursor-pointer place-items-center rounded-full border border-white/12 text-xs font-semibold text-mist transition-colors has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink"
               >
                 <input
                   class="sr-only"
@@ -407,7 +407,7 @@ const chipClass =
           <div class="flex flex-col gap-2" role="radiogroup" aria-label="Adaptation frequency">
             {FEEDBACK_CADENCES.map((cadence) => (
               <label
-                class="cursor-pointer rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-left transition-colors hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime/10"
+                class="cursor-pointer rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-left transition-colors hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime/10 has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink"
               >
                 <input
                   class="sr-only"
