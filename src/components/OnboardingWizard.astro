@@ -85,15 +85,15 @@ const headings = {
 const heading = headings[step];
 const steps = [1, 2, 3, 4, 5] as const;
 const kindToggleClass =
-  "group flex min-h-11 flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-full border border-white/12 px-1.5 py-2 text-center text-[0.62rem] font-semibold leading-tight text-mist uppercase transition-colors has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink";
+  "group flex min-h-11 flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-full border border-white/12 px-1.5 py-2 text-center text-[0.62rem] font-semibold leading-tight text-mist uppercase transition-[background-color,border-color,color,transform] active:scale-[0.98] has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink";
 const kindToggleHintClass =
   "block text-[0.55rem] font-medium leading-tight tracking-normal normal-case text-mist/70 group-has-[:checked]:text-ink/70";
 const chipClass =
-  "cursor-pointer rounded-2xl border border-white/12 bg-panel px-3 py-3 text-center text-sm font-semibold text-cloud transition-colors hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink";
+  "cursor-pointer rounded-2xl border border-white/12 bg-panel px-3 py-3 text-center text-sm font-semibold text-cloud transition-[background-color,border-color,color,transform] active:scale-[0.98] hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink";
 ---
 
 <div class="flex max-w-md flex-col gap-5">
-  <div>
+  <div class="wizard-arrive">
     <p class="text-[0.66rem] font-semibold tracking-[0.13em] text-lime uppercase">{step} / 5</p>
     <div class="mt-3 flex gap-1.5" aria-hidden="true">
       {
@@ -101,7 +101,7 @@ const chipClass =
           <span
             class:list={[
               "h-1 flex-1 rounded-full",
-              index <= step ? "bg-lime" : "bg-white/12",
+              index === step ? "bg-lime wizard-progress-fill" : index < step ? "bg-lime" : "bg-white/12",
             ]}
           />
         ))
@@ -110,7 +110,7 @@ const chipClass =
     <p class="sr-only">Step {step} of 5</p>
   </div>
 
-  <div>
+  <div class="wizard-arrive wizard-arrive-2">
     <h1
       class="max-w-[16ch] text-[clamp(1.85rem,6vw,3rem)] leading-[0.9] font-bold tracking-[-0.04em] text-cloud uppercase"
     >
@@ -122,7 +122,7 @@ const chipClass =
   {
     error && (
       <p
-        class="rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
+        class="wizard-arrive wizard-arrive-3 rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
         role="alert"
       >
         {error}
@@ -132,7 +132,7 @@ const chipClass =
 
   {
     step === 1 && (
-      <form method="post" class="flex flex-col gap-4">
+      <form method="post" class="wizard-arrive wizard-arrive-3 flex flex-col gap-4">
         <label class="flex flex-col gap-2">
           <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">
             Race date <span class="normal-case tracking-normal text-mist/80">(optional)</span>
@@ -155,7 +155,7 @@ const chipClass =
               name="goal"
               value={goal.id}
               class:list={[
-                "rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-sm font-semibold text-cloud transition-colors hover:border-lime/50 hover:bg-white/[0.04]",
+                "rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-sm font-semibold text-cloud transition-[background-color,border-color,color,transform] active:scale-[0.98] hover:border-lime/50 hover:bg-white/[0.04]",
                 goal.id === "consistent" && "col-span-2",
               ]}
             >
@@ -169,13 +169,13 @@ const chipClass =
 
   {
     step === 2 && (
-      <form method="post" class="flex flex-col gap-2">
+      <form method="post" class="wizard-arrive wizard-arrive-3 flex flex-col gap-2">
         {LEVELS.map((level) => (
           <button
             type="submit"
             name="level"
             value={level.id}
-            class="rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-left transition-colors hover:border-lime/50 hover:bg-white/[0.04]"
+            class="rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-left transition-[background-color,border-color,color,transform] active:scale-[0.98] hover:border-lime/50 hover:bg-white/[0.04]"
           >
             <span class="block text-sm font-semibold text-cloud">{level.label}</span>
             <span class="mt-1 block text-xs leading-5 font-normal text-mist">{level.help}</span>
@@ -195,7 +195,7 @@ const chipClass =
 
   {
     step === 3 && (
-      <form method="post" class="flex flex-col gap-5" data-baseline-form>
+      <form method="post" class="wizard-arrive wizard-arrive-3 flex flex-col gap-5" data-baseline-form>
         <input type="hidden" name="intent" value="baseline" />
         <fieldset>
           <legend class="sr-only">How fit are you right now?</legend>
@@ -353,14 +353,14 @@ const chipClass =
 
   {
     step === 4 && (
-      <form method="post" class="flex flex-col gap-5" data-days-form>
+      <form method="post" class="wizard-arrive wizard-arrive-3 flex flex-col gap-5" data-days-form>
         <input type="hidden" name="intent" value="days" />
         <fieldset>
           <legend class="sr-only">Days you can run</legend>
           <div class="flex items-center justify-between gap-1" role="group" aria-label="Days you can run">
             {WEEKDAYS.map((day) => (
               <label
-                class="relative grid h-10 w-10 flex-1 cursor-pointer place-items-center rounded-full border border-white/12 text-xs font-semibold text-mist transition-colors has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink"
+                class="relative grid h-10 w-10 flex-1 cursor-pointer place-items-center rounded-full border border-white/12 text-xs font-semibold text-mist transition-[background-color,border-color,color,transform] active:scale-[0.98] has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink"
               >
                 <input
                   class="sr-only"
@@ -400,14 +400,14 @@ const chipClass =
 
   {
     step === 5 && (
-      <form method="post" class="flex flex-col gap-5">
+      <form method="post" class="wizard-arrive wizard-arrive-3 flex flex-col gap-5">
         <input type="hidden" name="intent" value="generate" />
         <fieldset>
           <legend class="sr-only">How often should we adapt?</legend>
           <div class="flex flex-col gap-2" role="radiogroup" aria-label="Adaptation frequency">
             {FEEDBACK_CADENCES.map((cadence) => (
               <label
-                class="cursor-pointer rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-left transition-colors hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime/10 has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink"
+                class="cursor-pointer rounded-2xl border border-white/12 bg-panel px-4 py-3.5 text-left transition-[background-color,border-color,color,transform] active:scale-[0.98] hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime/10 has-[:focus-visible]:border-lime has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-lime/60 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink"
               >
                 <input
                   class="sr-only"
