@@ -58,6 +58,18 @@ AdaptationEvent.
 
 - (filled per task: commit hash + verification)
 
+## Review + close
+
+- Native review (RDD): lineage `review-396ccfd47772b839`, slice main..HEAD,
+  tier medium (1724 lines), one review-reliability run — **approved**,
+  acknowledged (authority burned). Advisory, non-blocking findings for later
+  work (never a reason to re-run review on this candidate):
+  - R3-IS-SKIPPED-BASELINE (training.ts:652, WARNING) — review isSkipped
+    semantics vs cooper-pending.
+  - R3-STEP3-NEUTRAL-SUBMIT (OnboardingWizard.astro:526, WARNING) — neutral
+    step-3 submit client path.
+- Delivery (push / PR / merge) remains the user's decision.
+
 ## Notes
 
 - Critique snapshot: 26/40, 2×P1, 2×P2, 1×P3; detector clean (0 findings).
