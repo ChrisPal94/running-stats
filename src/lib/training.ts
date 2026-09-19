@@ -1698,7 +1698,7 @@ export async function handleOnboardingPost(
         baseline: answers.baseline,
         feedbackCadence,
       });
-      return { ok: true, redirect: "/today" };
+      return { ok: true, redirect: "/today?ready=1" };
     } catch (error) {
       console.error("[training] generate plan failed", error);
       return { ok: false, error: "Something went wrong. Try again.", step: 5 };
