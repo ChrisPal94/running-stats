@@ -246,7 +246,10 @@ export type Feedback = {
   createdAt: string;
 };
 
-/** Written only by the nocturnal adaptation job. The shell displays these read-only. */
+/**
+ * Written by the nocturnal adaptation job and by Intervals sync when a pending
+ * Cooper baseline resolves. The shell displays these read-only.
+ */
 export type AdaptationEvent = {
   id: string;
   userId: string;
@@ -654,6 +657,14 @@ export function isSkippedBaseline(baseline?: Baseline | null): boolean {
   return !baseline || baseline.kind === "skip";
 }
 
+/** Persistent Today hint while the plan baseline is cooper-pending. */
+export const COOPER_PENDING_HINT = "Cooper result pending — run your 12-minute test and sync Intervals.icu.";
+
+/** Today shell hint copy, or null when the plan baseline is not cooper-pending. Pure. */
+export function cooperPendingHint(baseline: Baseline | undefined): string | null {
+  return baseline?.kind === "cooper-pending" ? COOPER_PENDING_HINT : null;
+}
+
 export function isPresentBaseline(
   baseline?: Baseline | null,
 ): baseline is Extract<Baseline, { kind: "last-race" } | { kind: "cooper" }> {
@@ -876,8 +887,14 @@ async function readTraining(): Promise<TrainingFile> {
   };
 }
 
-/** Persist training data without creating or mutating AdaptationEvents. */
-async function writeTraining(data: TrainingFile): Promise<void> {
+/**
+ * Persist training data. AdaptationEvents are preserved unless a caller that
+ * writes one passes `"replace"` to rewrite them from the snapshot.
+ */
+async function writeTraining(
+  data: TrainingFile,
+  adaptationEvents: "preserve" | "replace" = "preserve",
+): Promise<void> {
   saveTrainingSnapshot(
     {
       onboarding: data.onboarding,
@@ -887,7 +904,7 @@ async function writeTraining(data: TrainingFile): Promise<void> {
       runLogs: data.runLogs,
       adaptationEvents: data.adaptationEvents,
     },
-    "preserve",
+    adaptationEvents,
   );
 }
 
@@ -1728,7 +1745,9 @@ export async function applyIntervalsRuns(
       if (!byDate.has(session.date)) byDate.set(session.date, session);
     }
 
-    const cooperResolved = resolveCooperPendingBaseline(data, userId, runs, sessions);
+    const cooper = resolveCooperPendingBaseline(data, userId, runs, sessions);
+    const cooperResolved = cooper.resolved;
+    if (cooper.event) data.adaptationEvents.push(cooper.event);
 
     const runsByDate = new Map<string, IntervalsRunStats[]>();
     for (const run of runs) {
@@ -1777,7 +1796,7 @@ export async function applyIntervalsRuns(
       imported += 1;
     }
 
-    await writeTraining(data);
+    await writeTraining(data, cooper.event ? "replace" : "preserve");
     return { imported, skippedNoSession, skippedManual, pendingChoices, cooperResolved };
   });
 }
@@ -1801,23 +1820,27 @@ function pickCooperPendingCandidate(runs: IntervalsRunStats[]): IntervalsRunStat
   return best;
 }
 
+/** Chip label for the AdaptationEvent written when a Cooper result resolves. */
+export const COOPER_SYNC_EVENT_TITLE = "Cooper test synced";
+
 /**
  * Resolve a pending Cooper baseline from fetched Intervals runs, independent of
  * session-day matching. On a hit, the baseline lands on Plan + OnboardingRecord
  * and future sessions (date > today, Guayaquil) are re-adjusted with the now-
  * present baseline (kinds stay, distances and titles update). Past sessions,
- * RunLogs, Feedback, and AdaptationEvents are untouched.
+ * RunLogs, and Feedback are untouched. When future sessions actually changed,
+ * one AdaptationEvent explains the adjustment; the caller persists it.
  */
 function resolveCooperPendingBaseline(
   data: TrainingFile,
   userId: string,
   runs: IntervalsRunStats[],
   userSessions: Session[],
-): boolean {
+): { resolved: boolean; event: AdaptationEvent | null } {
   const plan = data.plans.find((entry) => entry.userId === userId);
-  if (!plan || plan.baseline?.kind !== "cooper-pending") return false;
+  if (!plan || plan.baseline?.kind !== "cooper-pending") return { resolved: false, event: null };
   const candidate = pickCooperPendingCandidate(runs);
-  if (!candidate) return false;
+  if (!candidate) return { resolved: false, event: null };
 
   const baseline: Extract<Baseline, { kind: "cooper" }> = {
     kind: "cooper",
@@ -1834,15 +1857,30 @@ function resolveCooperPendingBaseline(
   const kinds = assignKinds(plan.days);
   const distances = planDistances(plan.days, kinds, plan.goal, plan.level, baseline);
   const today = appTodayYmd();
+  let changed = 0;
   for (const session of userSessions) {
     if (session.planId !== plan.id || session.date <= today) continue;
     if (!plan.days.includes(session.weekday)) continue;
     const distanceKm = distances[session.weekday];
-    if (typeof distanceKm !== "number") continue;
+    if (typeof distanceKm !== "number" || session.distanceKm === distanceKm) continue;
     session.distanceKm = distanceKm;
     session.title = `${SESSION_COPY[session.kind].title} · ${distanceKm} km`;
+    changed += 1;
   }
-  return true;
+
+  if (changed === 0) return { resolved: true, event: null };
+
+  const event: AdaptationEvent = {
+    id: newId(),
+    userId,
+    planId: plan.id,
+    date: today,
+    title: COOPER_SYNC_EVENT_TITLE,
+    summary: "Plan adjusted to your Cooper baseline — future sessions updated.",
+    reason: `Your 12-minute run of ${baseline.distanceKm.toFixed(2)} km set your baseline; future sessions were recomputed from it.`,
+    createdAt: new Date().toISOString(),
+  };
+  return { resolved: true, event };
 }
 
 function upsertImportedRunLog(

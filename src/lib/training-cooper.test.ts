@@ -10,6 +10,8 @@ import {
   applyIntervalsRuns,
   baselineFitnessFactor,
   BASELINE_KINDS,
+  COOPER_PENDING_HINT,
+  cooperPendingHint,
   generatePlanV1,
   handleOnboardingPost,
   isBaseline,
@@ -44,6 +46,22 @@ function sessionsSorted(sessions: Session[]): Pick<Session, "date" | "kind" | "t
     .map(({ date, kind, title, distanceKm, cue }) => ({ date, kind, title, distanceKm, cue }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
+
+describe("cooper-pending Today hint", () => {
+  it("shows the hint only for a cooper-pending baseline", () => {
+    assert.equal(cooperPendingHint({ kind: "cooper-pending" }), COOPER_PENDING_HINT);
+    assert.equal(cooperPendingHint({ kind: "cooper", distanceKm: 2.8, durationSec: 720 }), null);
+    assert.equal(cooperPendingHint({ kind: "skip" }), null);
+    assert.equal(cooperPendingHint(undefined), null);
+  });
+
+  it("the hint copy mentions the 12-minute test and Intervals.icu", () => {
+    assert.equal(
+      COOPER_PENDING_HINT,
+      "Cooper result pending — run your 12-minute test and sync Intervals.icu.",
+    );
+  });
+});
 
 describe("cooper-pending baseline model", () => {
   it("lists cooper-pending in BASELINE_KINDS and accepts it via isBaseline", () => {
@@ -313,7 +331,105 @@ describe("Cooper pending baseline via Intervals sync", () => {
       assert.equal(storedFuture?.title, `${storedFuture?.title.split(" · ")[0]} · ${expected} km`);
     }
 
-    assert.equal(snapshot.adaptationEvents.length, 0);
+    // The shared test store accumulates events across cases, so scope by user.
+    const events = snapshot.adaptationEvents.filter((entry) => entry.userId === userId);
+    assert.equal(events.length, 1);
+    const event = events[0];
+    assert.equal(event?.userId, userId);
+    assert.equal(event?.planId, planId);
+    assert.equal(event?.title, "Cooper test synced");
+    assert.equal(event?.summary, "Plan adjusted to your Cooper baseline — future sessions updated.");
+    assert.equal(
+      event?.reason,
+      "Your 12-minute run of 2.80 km set your baseline; future sessions were recomputed from it.",
+    );
+    assert.equal(event?.date, today);
+    assert.equal(event?.sourceDate, undefined);
+  });
+
+  it("writes no AdaptationEvent when nothing changed and no Cooper candidate exists", async () => {
+    const userId = "cooper-no-event-no-candidate";
+    const { planId } = cooperSeed(userId);
+    const today = appTodayYmd();
+
+    const result = await applyIntervalsRuns(userId, [
+      runStats(addDaysYmd(today, -1), "act-long", 5, 900),
+    ]);
+
+    const snapshot = loadTrainingSnapshot();
+    assert.equal(result.cooperResolved, false);
+    assert.deepEqual(snapshot.plans.find((entry) => entry.id === planId)?.baseline, {
+      kind: "cooper-pending",
+    });
+    assert.equal(snapshot.adaptationEvents.filter((entry) => entry.userId === userId).length, 0);
+  });
+
+  it("writes no AdaptationEvent when the baseline resolves but no future session changes", async () => {
+    const userId = "cooper-no-changed-sessions";
+    const planId = `${userId}-plan`;
+    const today = appTodayYmd();
+    const pastDate = pastPlanDayDate(today);
+
+    saveTrainingSnapshot({
+      onboarding: [
+        {
+          userId,
+          goal: "5k",
+          raceDate: null,
+          level: "beginner",
+          days: [...DAYS],
+          baseline: { kind: "cooper-pending" },
+          feedbackCadence: "daily",
+          updatedAt: "2026-09-01T12:00:00.000Z",
+          completedAt: "2026-09-01T12:00:00.000Z",
+          planId,
+        },
+      ],
+      plans: [
+        {
+          id: planId,
+          userId,
+          version: 1,
+          createdAt: "2026-09-01T12:00:00.000Z",
+          goal: "5k",
+          raceDate: null,
+          level: "beginner",
+          days: [...DAYS],
+          baseline: { kind: "cooper-pending" },
+          feedbackCadence: "daily",
+        },
+      ],
+      sessions: [
+        {
+          id: `${userId}-past`,
+          planId,
+          userId,
+          date: pastDate,
+          weekday: weekdayOf(pastDate),
+          weekIndex: 0,
+          kind: "easy",
+          title: "Easy run · 8 km",
+          cue: "Keep it conversational",
+          distanceKm: 8,
+        },
+      ],
+      feedbacks: [],
+      runLogs: [],
+      adaptationEvents: [],
+    });
+
+    const result = await applyIntervalsRuns(userId, [
+      runStats(addDaysYmd(today, -2), "act-cooper", 2.8, 700),
+    ]);
+
+    const snapshot = loadTrainingSnapshot();
+    assert.equal(result.cooperResolved, true);
+    assert.deepEqual(snapshot.plans.find((entry) => entry.id === planId)?.baseline, {
+      kind: "cooper",
+      distanceKm: 2.8,
+      durationSec: 720,
+    });
+    assert.equal(snapshot.adaptationEvents.filter((entry) => entry.userId === userId).length, 0);
   });
 
   it("picks the Cooper candidate closest to 720s inside the 660–780s and 0.5–5 km band", async () => {
@@ -372,6 +488,7 @@ describe("Cooper pending baseline via Intervals sync", () => {
     const plan = snapshot.plans.find((entry) => entry.id === planId);
     assert.equal(second.cooperResolved, false);
     assert.deepEqual(plan?.baseline, { kind: "cooper", distanceKm: 2.8, durationSec: 720 });
+    assert.equal(snapshot.adaptationEvents.filter((entry) => entry.userId === userId).length, 1);
     for (const session of future) {
       const before = firstSessions.find((entry) => entry.id === session.id);
       const after = snapshot.sessions.find((entry) => entry.id === session.id);

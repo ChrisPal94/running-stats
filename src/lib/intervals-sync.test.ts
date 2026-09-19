@@ -472,6 +472,8 @@ describe("Settings Sync with a Cooper-pending plan", () => {
       snapshot.onboarding.find((entry) => entry.userId === userId)?.baseline,
       { kind: "cooper", distanceKm: 2.8, durationSec: 720 },
     );
+    // No planned Sessions means nothing changed, so no AdaptationEvent is written.
+    assert.equal(snapshot.adaptationEvents.length, 0);
   });
 
   it("stays silent about Cooper when no Run falls in the 12-minute band", async () => {
