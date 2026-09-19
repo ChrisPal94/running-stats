@@ -11,6 +11,7 @@ import {
   baselineFitnessFactor,
   BASELINE_KINDS,
   generatePlanV1,
+  handleOnboardingPost,
   isBaseline,
   parseBaselineForm,
   type OnboardingAnswers,
@@ -88,6 +89,83 @@ describe("cooper-pending baseline model", () => {
 
     assert.deepEqual(sessionsSorted(pending.sessions), sessionsSorted(skipped.sessions));
     assert.deepEqual(pending.plan.baseline, { kind: "cooper-pending" });
+  });
+});
+
+describe("onboarding baseline POST error echo", () => {
+  function seedDraft(userId: string): void {
+    saveTrainingSnapshot({
+      onboarding: [
+        {
+          userId,
+          goal: "5k",
+          raceDate: null,
+          level: "beginner",
+          updatedAt: "2026-09-01T12:00:00.000Z",
+        },
+      ],
+      plans: [],
+      sessions: [],
+      feedbacks: [],
+      runLogs: [],
+      adaptationEvents: [],
+    });
+  }
+
+  it("returns the submitted baseline form values when the last-race time fails to parse", async () => {
+    seedDraft("baseline-echo");
+    const formData = new FormData();
+    formData.set("intent", "baseline");
+    formData.set("baselineKind", "last-race");
+    formData.set("lastRaceDistance", "5k");
+    formData.set("lastRaceTime", "25:30");
+
+    const result = await handleOnboardingPost("baseline-echo", formData);
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.error, "Enter your time as hh:mm:ss.");
+    assert.equal(result.step, 3);
+    assert.deepEqual(result.form, {
+      baselineKind: "last-race",
+      lastRaceDistance: "5k",
+      lastRaceCustomKm: "",
+      lastRaceTime: "25:30",
+      lastRaceDate: "",
+    });
+  });
+
+  it("asks for a baseline option when no kind is submitted and echoes an empty kind", async () => {
+    seedDraft("baseline-neutral");
+    const formData = new FormData();
+    formData.set("intent", "baseline");
+
+    const result = await handleOnboardingPost("baseline-neutral", formData);
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.error, "Pick a baseline option.");
+    assert.deepEqual(result.form, {
+      baselineKind: "",
+      lastRaceDistance: "",
+      lastRaceCustomKm: "",
+      lastRaceTime: "",
+      lastRaceDate: "",
+    });
+  });
+
+  it("still parses a cooper submit and stores cooper-pending", async () => {
+    seedDraft("baseline-cooper");
+    const formData = new FormData();
+    formData.set("intent", "baseline");
+    formData.set("baselineKind", "cooper");
+
+    const result = await handleOnboardingPost("baseline-cooper", formData);
+
+    assert.deepEqual(result, { ok: true, redirect: "/onboarding?step=4" });
+    assert.deepEqual(loadTrainingSnapshot().onboarding.find((entry) => entry.userId === "baseline-cooper")?.baseline, {
+      kind: "cooper-pending",
+    });
   });
 });
 

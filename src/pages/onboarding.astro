@@ -12,6 +12,7 @@ import {
   handleOnboardingPost,
   onboardingStep,
   type OnboardingStep,
+  type SubmittedBaselineForm,
 } from "../lib/training";
 
 const user = await getCurrentUser(Astro.cookies);
@@ -26,6 +27,7 @@ if (existingPlan && Astro.request.method !== "POST") {
 
 let error = "";
 let step: OnboardingStep = 1;
+let submitted: SubmittedBaselineForm | undefined;
 
 if (Astro.request.method === "POST") {
   if (!isSameOrigin(Astro.request)) {
@@ -40,6 +42,7 @@ if (Astro.request.method === "POST") {
     }
     error = result.error;
     step = result.step;
+    submitted = result.form;
   }
 } else {
   const draft = await getOnboarding(user.id);
@@ -65,7 +68,7 @@ const titles = {
   <div class="relative isolate min-h-svh bg-ink">
     <Header />
     <main class="mx-auto w-full max-w-3xl px-5 pb-16 pt-4 sm:px-8 sm:pt-6 lg:px-12">
-      <OnboardingWizard step={step} error={error} draft={draft} />
+      <OnboardingWizard step={step} error={error} draft={draft} submitted={submitted} />
     </main>
   </div>
 </BaseLayout>

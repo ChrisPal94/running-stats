@@ -12,10 +12,13 @@ import {
   formatPace,
   isBaseline,
   isPaceSoftOutOfRange,
+  isRaceDistanceId,
   normalizeFeedbackCadence,
+  parseHmsToSeconds,
   raceDistanceIdFromKm,
   type OnboardingRecord,
   type OnboardingStep,
+  type SubmittedBaselineForm,
 } from "../lib/training";
 import { appTodayYmd } from "../lib/calendar";
 
@@ -23,22 +26,53 @@ interface Props {
   step: OnboardingStep;
   error?: string;
   draft: OnboardingRecord | null;
+  submitted?: SubmittedBaselineForm | null;
 }
 
-const { step, error = "", draft } = Astro.props;
+const { step, error = "", draft, submitted = null } = Astro.props;
 const today = appTodayYmd();
 const selectedDays = draft?.days?.length ? draft.days : DEFAULT_DAYS;
 const raceDate = draft?.raceDate ?? "";
 const baseline = isBaseline(draft?.baseline) ? draft.baseline : null;
-const selectedKind = baseline?.kind ?? "last-race";
 const selectedCadence = normalizeFeedbackCadence(draft?.feedbackCadence ?? DEFAULT_FEEDBACK_CADENCE);
+
+const WIZARD_KINDS = ["last-race", "cooper", "skip"] as const;
+type WizardBaselineKind = (typeof WIZARD_KINDS)[number];
+const isWizardKind = (value: string): value is WizardBaselineKind =>
+  (WIZARD_KINDS as readonly string[]).includes(value);
+
+/**
+ * Step 3 values prefer the failed submission echo over the stored draft, so typed
+ * values survive a failed POST. With neither source, nothing is pre-selected.
+ */
+const draftKind: WizardBaselineKind | null = !baseline
+  ? null
+  : baseline.kind === "last-race"
+    ? "last-race"
+    : baseline.kind === "skip"
+      ? "skip"
+      : "cooper";
+const submittedKind = submitted && isWizardKind(submitted.baselineKind) ? submitted.baselineKind : null;
+const selectedKind = submitted ? submittedKind : draftKind;
 const lastRace = baseline?.kind === "last-race" ? baseline : null;
-const lastRaceDistance = lastRace ? raceDistanceIdFromKm(lastRace.distanceKm) : "5k";
-const lastRaceTime = lastRace ? formatHms(lastRace.timeSec) : "";
-const lastRaceCustomKm = lastRaceDistance === "custom" && lastRace ? String(lastRace.distanceKm) : "";
-const lastRaceDate = lastRace?.date ?? "";
+const lastRaceDistance = submitted
+  ? isRaceDistanceId(submitted.lastRaceDistance)
+    ? submitted.lastRaceDistance
+    : ""
+  : lastRace
+    ? raceDistanceIdFromKm(lastRace.distanceKm)
+    : "";
+const lastRaceTime = submitted ? submitted.lastRaceTime : lastRace ? formatHms(lastRace.timeSec) : "";
+const lastRaceCustomKm = submitted
+  ? submitted.lastRaceCustomKm
+  : lastRaceDistance === "custom" && lastRace
+    ? String(lastRace.distanceKm)
+    : "";
+const lastRaceDate = submitted ? submitted.lastRaceDate : (lastRace?.date ?? "");
 const lastRacePace = lastRace ? formatPace(lastRace.paceSecPerKm) : "";
 const showPaceWarning = lastRace ? isPaceSoftOutOfRange(lastRace.paceSecPerKm) : false;
+const lastRaceReady = Boolean(lastRaceDistance) && parseHmsToSeconds(lastRaceTime) !== null;
+const continueBaselineDisabled = selectedKind === "last-race" && !lastRaceReady;
 
 const headings = {
   1: { title: "Your goal", sub: "What are you training for?" },
@@ -51,7 +85,9 @@ const headings = {
 const heading = headings[step];
 const steps = [1, 2, 3, 4, 5] as const;
 const kindToggleClass =
-  "flex min-h-11 flex-1 cursor-pointer items-center justify-center rounded-full border border-white/12 px-1.5 py-2 text-center text-[0.62rem] font-semibold leading-tight text-mist uppercase transition-colors has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink";
+  "group flex min-h-11 flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-full border border-white/12 px-1.5 py-2 text-center text-[0.62rem] font-semibold leading-tight text-mist uppercase transition-colors has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink";
+const kindToggleHintClass =
+  "block text-[0.55rem] font-medium leading-tight tracking-normal normal-case text-mist/70 group-has-[:checked]:text-ink/70";
 const chipClass =
   "cursor-pointer rounded-2xl border border-white/12 bg-panel px-3 py-3 text-center text-sm font-semibold text-cloud transition-colors hover:border-lime/50 hover:bg-white/[0.04] has-[:checked]:border-lime has-[:checked]:bg-lime has-[:checked]:text-ink";
 ---
@@ -173,7 +209,8 @@ const chipClass =
                 checked={selectedKind === "last-race"}
                 data-baseline-kind
               />
-              Last race
+              <span>Last race</span>
+              <span class={kindToggleHintClass}>Use a recent race time</span>
             </label>
             <label class={kindToggleClass}>
               <input
@@ -184,7 +221,8 @@ const chipClass =
                 checked={selectedKind === "cooper"}
                 data-baseline-kind
               />
-              Cooper test
+              <span>Cooper test</span>
+              <span class={kindToggleHintClass}>Synced from a 12-minute run</span>
             </label>
             <label class={kindToggleClass}>
               <input
@@ -195,7 +233,8 @@ const chipClass =
                 checked={selectedKind === "skip"}
                 data-baseline-kind
               />
-              Skip for now
+              <span>Skip for now</span>
+              <span class={kindToggleHintClass}>Start conservative, adjust later</span>
             </label>
           </div>
         </fieldset>
@@ -285,9 +324,18 @@ const chipClass =
 
         <div data-panel="skip" hidden={selectedKind !== "skip"}></div>
 
+        <p
+          class="text-xs leading-5 text-mist"
+          data-baseline-hint
+          hidden={selectedKind !== "last-race"}
+        >
+          {lastRaceReady ? "Looks good." : "Pick a distance and your time to continue."}
+        </p>
         <button
           type="submit"
-          class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]"
+          data-continue-baseline
+          disabled={continueBaselineDisabled}
+          class="inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow,opacity] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)] disabled:pointer-events-none disabled:translate-y-0 disabled:opacity-40 disabled:shadow-none"
         >
           Continue
         </button>
@@ -429,6 +477,8 @@ const chipClass =
     const pacePreview = baselineForm.querySelector<HTMLElement>("[data-pace-preview]");
     const paceValue = baselineForm.querySelector("[data-pace-value]");
     const paceWarning = baselineForm.querySelector<HTMLElement>("[data-pace-warning]");
+    const continueButton = baselineForm.querySelector<HTMLButtonElement>("[data-continue-baseline]");
+    const hint = baselineForm.querySelector<HTMLElement>("[data-baseline-hint]");
 
     const parseHms = (raw: string) => {
       const match = /^(\d{1,2}):([0-5]\d):([0-5]\d)$/.exec(raw.trim());
@@ -436,7 +486,7 @@ const chipClass =
       return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
     };
 
-    const selectedKind = () => kindInputs.find((input) => input.checked)?.value ?? "last-race";
+    const selectedKind = () => kindInputs.find((input) => input.checked)?.value ?? "";
 
     const selectedKm = () => {
       const selected = distanceInputs.find((input) => input.checked);
@@ -473,6 +523,12 @@ const chipClass =
       const customSelected = distanceInputs.some((input) => input.checked && input.value === "custom");
       if (customWrap) customWrap.hidden = kind !== "last-race" || !customSelected;
       syncPace();
+      const ready = kind !== "last-race" || (selectedKm() > 0 && parseHms(timeInput?.value ?? "") !== null);
+      if (continueButton) continueButton.disabled = !ready;
+      if (hint) {
+        hint.hidden = kind !== "last-race";
+        hint.textContent = ready ? "Looks good." : "Pick a distance and your time to continue.";
+      }
     };
 
     kindInputs.forEach((input) => input.addEventListener("change", sync));

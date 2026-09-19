@@ -327,9 +327,18 @@ export type SettingsFormResult =
 
 export type { IntervalsRunChoice, IntervalsRunPickerState };
 
+/** Raw submitted baseline inputs echoed back after a failed POST so typed values survive the re-render. */
+export type SubmittedBaselineForm = {
+  baselineKind: BaselineKind | "";
+  lastRaceDistance: string;
+  lastRaceCustomKm: string;
+  lastRaceTime: string;
+  lastRaceDate: string;
+};
+
 export type OnboardingFormResult =
   | { ok: true; redirect: string }
-  | { ok: false; error: string; step: OnboardingStep };
+  | { ok: false; error: string; step: OnboardingStep; form?: SubmittedBaselineForm };
 
 export type TodayActionResult =
   | { ok: true; redirect: string }
@@ -378,7 +387,7 @@ function isBaselineKind(value: string): value is BaselineKind {
   return (BASELINE_KINDS as readonly string[]).includes(value);
 }
 
-function isRaceDistanceId(value: string): value is RaceDistanceId {
+export function isRaceDistanceId(value: string): value is RaceDistanceId {
   return (RACE_DISTANCE_IDS as readonly string[]).includes(value);
 }
 
@@ -720,7 +729,7 @@ export function parseBaselineForm(
 ): { ok: true; baseline: Baseline } | { ok: false; error: string } {
   const kindRaw = String(formData.get("baselineKind") ?? "");
   if (!isBaselineKind(kindRaw)) {
-    return { ok: false, error: "Choose Last race, Cooper test, or Skip for now." };
+    return { ok: false, error: "Pick a baseline option." };
   }
 
   if (kindRaw === "skip") {
@@ -774,6 +783,18 @@ export function parseBaselineForm(
     baseline: date
       ? { kind: "last-race", distanceKm, timeSec, paceSecPerKm, date }
       : { kind: "last-race", distanceKm, timeSec, paceSecPerKm },
+  };
+}
+
+/** Read the raw submitted baseline inputs without validating, for echoing back after a failed POST. */
+export function readSubmittedBaselineForm(formData: FormData): SubmittedBaselineForm {
+  const kindRaw = String(formData.get("baselineKind") ?? "");
+  return {
+    baselineKind: isBaselineKind(kindRaw) ? kindRaw : "",
+    lastRaceDistance: String(formData.get("lastRaceDistance") ?? ""),
+    lastRaceCustomKm: String(formData.get("lastRaceCustomKm") ?? ""),
+    lastRaceTime: String(formData.get("lastRaceTime") ?? ""),
+    lastRaceDate: String(formData.get("lastRaceDate") ?? ""),
   };
 }
 
@@ -1592,7 +1613,7 @@ export async function handleOnboardingPost(
     }
     const parsed = parseBaselineForm(formData);
     if (!parsed.ok) {
-      return { ok: false, error: parsed.error, step: 3 };
+      return { ok: false, error: parsed.error, step: 3, form: readSubmittedBaselineForm(formData) };
     }
     await saveOnboardingDraft(userId, { baseline: parsed.baseline });
     return { ok: true, redirect: "/onboarding?step=4" };
