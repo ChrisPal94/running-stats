@@ -94,7 +94,7 @@ const chipClass =
 
 <div class="flex max-w-md flex-col gap-5">
   <div class="wizard-arrive">
-    <p class="text-[0.66rem] font-semibold tracking-[0.13em] text-lime uppercase">{step} / 5</p>
+    <p class="text-[0.66rem] font-semibold tracking-[0.13em] text-lime uppercase tabular-nums">{step} / 5</p>
     <div class="mt-3 flex gap-1.5" aria-hidden="true">
       {
         steps.map((index) => (
@@ -287,14 +287,18 @@ const chipClass =
               placeholder="hh:mm:ss"
               autocomplete="off"
               data-last-race-time
-              class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
+              class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud tabular-nums outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
             />
           </label>
-          <p class="text-sm text-cloud" data-pace-preview hidden={!lastRacePace}>
-            Pace <span data-pace-value>{lastRacePace}</span>
+          <p
+            class="flex min-h-5 items-center text-sm font-medium text-cloud tabular-nums"
+            data-pace-preview
+            hidden={!lastRacePace}
+          >
+            Pace <span class="text-lime" data-pace-value>{lastRacePace}</span>
           </p>
           <p
-            class="rounded-xl border border-lime/25 bg-lime/8 px-4 py-3 text-xs leading-5 text-[#d6ded6]"
+            class="rounded-xl border border-amber/25 bg-amber/8 px-4 py-3 text-xs leading-5 text-[#f5dc8a]"
             data-pace-warning
             hidden={!showPaceWarning}
           >
@@ -322,13 +326,13 @@ const chipClass =
           </p>
         </div>
 
-        <div data-panel="skip" hidden={selectedKind !== "skip"}></div>
+        <div data-panel="skip" hidden={selectedKind !== "skip"}>
+          <p class="text-xs leading-5 text-mist">
+            Your plan starts conservative — log runs and it adapts from there.
+          </p>
+        </div>
 
-        <p
-          class="text-xs leading-5 text-mist"
-          data-baseline-hint
-          hidden={selectedKind !== "last-race"}
-        >
+        <p class="text-xs leading-5 text-mist" data-baseline-hint aria-live="polite" hidden={selectedKind !== "last-race"}>
           {lastRaceReady ? "Looks good." : "Pick a distance and your time to continue."}
         </p>
         <button
@@ -376,7 +380,7 @@ const chipClass =
             ))}
           </div>
         </fieldset>
-        <p class="text-xs leading-5 text-mist" data-days-hint>
+        <p class="text-xs leading-5 text-mist" data-days-hint aria-live="polite">
           {MIN_TRAINING_DAYS} days selected is enough to continue.
         </p>
         <button
