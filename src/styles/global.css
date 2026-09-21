@@ -43,10 +43,14 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
-a {
-  color: inherit;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.3em;
+/* Unlayered `a { color }` beats Tailwind text-* utilities and washed the
+   lime CTAs to cloud. Keep link defaults in base so `text-ink` can win. */
+@layer base {
+  a {
+    color: inherit;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.3em;
+  }
 }
 
 ::selection {
