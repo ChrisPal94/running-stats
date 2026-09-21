@@ -42,7 +42,7 @@ Chakra Petch / ink-panel-lime world.
       gentle-ai-verify: detector 0 findings, 78/78 tests, check 0 errors,
       CSS sanity (keyframes, no layout-property animation, reduced-motion
       override, aria-live, amber warning, min-height preview) all pass.
-      User visual pass pending on localhost:4321 (magic link).
+      User visual pass on localhost:4321 (magic link): approved 2026-09-21.
 
 ## Evidence
 
