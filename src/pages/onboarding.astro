@@ -3,7 +3,6 @@ export const prerender = false;
 
 import OnboardingWizard from "../components/OnboardingWizard.astro";
 import BaseLayout from "../layouts/BaseLayout.astro";
-import Header from "../components/Header.astro";
 import { getCurrentUser } from "../lib/auth";
 import { isSameOrigin } from "../lib/public-origin";
 import {
@@ -12,6 +11,7 @@ import {
   handleOnboardingPost,
   onboardingStep,
   type OnboardingStep,
+  type SubmittedBaselineForm,
 } from "../lib/training";
 
 const user = await getCurrentUser(Astro.cookies);
@@ -26,6 +26,7 @@ if (existingPlan && Astro.request.method !== "POST") {
 
 let error = "";
 let step: OnboardingStep = 1;
+let submitted: SubmittedBaselineForm | undefined;
 
 if (Astro.request.method === "POST") {
   if (!isSameOrigin(Astro.request)) {
@@ -40,6 +41,7 @@ if (Astro.request.method === "POST") {
     }
     error = result.error;
     step = result.step;
+    submitted = result.form;
   }
 } else {
   const draft = await getOnboarding(user.id);
@@ -63,9 +65,35 @@ const titles = {
   description="Set up your adaptive training plan in five steps."
 >
   <div class="relative isolate min-h-svh bg-ink">
-    <Header />
+    <header
+      class="relative z-20 px-5 py-3 sm:px-8 sm:py-5 lg:px-12 lg:py-7"
+      aria-label="Running Stats"
+    >
+      <div class="flex items-center gap-3">
+        <svg
+          class="h-9 w-9 text-lime"
+          viewBox="0 0 48 48"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M29.8 5.5c3.2 0 5.7 2.6 5.7 5.8 0 3.1-2.5 5.7-5.7 5.7a5.8 5.8 0 0 1 0-11.5Z"
+            fill="currentColor"
+          />
+          <path
+            d="m19.4 18.7 7.5-2.8c2-.8 4.3 0 5.4 1.8l3 4.8 5.4 1.4-1.8 5.3-6.5-2a4.4 4.4 0 0 1-2.3-1.7l-1.3-2-3.5 5 5.3 4.8-4 9.2-5.5-2.4 2.8-6.2-5.7-4.7-4.3 5.2-7-1.7 1.4-5.5 3.2.8 5.2-6.7c1-1.2 2.2-2 3.7-2.6Z"
+            fill="currentColor"
+          />
+        </svg>
+        <span
+          class="hidden text-sm font-bold tracking-[0.16em] text-cloud uppercase sm:inline"
+        >
+          Running Stats
+        </span>
+      </div>
+    </header>
     <main class="mx-auto w-full max-w-3xl px-5 pb-16 pt-4 sm:px-8 sm:pt-6 lg:px-12">
-      <OnboardingWizard step={step} error={error} draft={draft} />
+      <OnboardingWizard step={step} error={error} draft={draft} submitted={submitted} />
     </main>
   </div>
 </BaseLayout>

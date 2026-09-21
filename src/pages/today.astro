@@ -10,8 +10,10 @@ import {
   getFeedbackForDate,
   getFeedbackForSession,
   getNextSessionAfterToday,
+  getPlanForUser,
   getRunLogForSession,
   getSessionForToday,
+  cooperPendingHint,
   formatNextRunHint,
   handleTodayPost,
   type RunLogFormDraft,
@@ -43,6 +45,8 @@ if (Astro.request.method === "POST") {
 }
 
 const session = await getSessionForToday(user.id);
+const plan = await getPlanForUser(user.id);
+const cooperHint = cooperPendingHint(plan?.baseline);
 const upcoming = session ? null : await getNextSessionAfterToday(user.id);
 const nextRunHint = upcoming ? formatNextRunHint(upcoming.date) : null;
 const feedback = session ? await getFeedbackForSession(user.id, session.id) : null;
@@ -52,6 +56,8 @@ const sourceFeedback = adaptationEvent?.sourceDate
   ? await getFeedbackForDate(user.id, adaptationEvent.sourceDate)
   : null;
 const savedToast = Astro.url.searchParams.get("saved") === "1";
+const planReady = Astro.url.searchParams.get("ready") === "1";
+const readyCopy = planReady ? (nextRunHint ? `Your plan is ready. ${nextRunHint}.` : "Your plan is ready.") : null;
 ---
 
 <AppShell
@@ -60,6 +66,17 @@ const savedToast = Astro.url.searchParams.get("saved") === "1";
   current="today"
   email={user.email}
 >
+  {readyCopy && (
+    <p class="mb-4 rounded-2xl border border-lime/30 bg-lime/8 px-4 py-3 text-xs leading-5 text-[#d6ded6]">
+      {readyCopy}
+    </p>
+  )}
+  {cooperHint && (
+    <p class="mb-4 rounded-2xl border border-lime/30 bg-lime/8 px-4 py-3 text-xs leading-5 text-[#d6ded6]">
+      {cooperHint}{" "}
+      <a href="/settings" class="font-semibold text-lime underline underline-offset-2">Settings</a>
+    </p>
+  )}
   <TodayCard
     session={session}
     nextRunHint={nextRunHint}

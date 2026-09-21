@@ -61,7 +61,9 @@ if (Astro.request.method === "POST") {
 const saved = Astro.url.searchParams.get("saved") === "1";
 const toastParam = Astro.url.searchParams.get("toast");
 const syncToast: Exclude<IntervalsSyncToast, null> | null =
-  toastParam === "no-session" || toastParam === "no-new-runs" ? toastParam : null;
+  toastParam === "no-session" || toastParam === "no-new-runs" || toastParam === "cooper"
+    ? toastParam
+    : null;
 const syncToastCopy = syncToast ? intervalsSyncToastCopy(syncToast) : "";
 const connection = getIntervalsConnectionView(user.id);
 ---

@@ -3,10 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
+import { addDaysYmd, appTodayYmd } from "./calendar.ts";
 import { loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
 import {
   connectIntervals,
   INTERVALS_CONNECT_ERROR,
+  INTERVALS_COOPER_SYNC_TOAST,
   INTERVALS_NO_NEW_RUNS_TOAST,
   INTERVALS_NO_SESSION_TOAST,
   INTERVALS_SYNC_ERROR,
@@ -268,6 +270,17 @@ describe("Intervals Sync toasts", () => {
     assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 0 }), null);
     assert.equal(intervalsSyncToastRedirect(null), "/settings");
   });
+
+  it("toasts the Cooper result ahead of the no-session / no-new-runs signals", () => {
+    assert.equal(INTERVALS_COOPER_SYNC_TOAST, "Cooper test result synced — plan updated.");
+    assert.equal(intervalsSyncToast({ imported: 0, skippedNoSession: 1, cooperResolved: true }), "cooper");
+    assert.equal(intervalsSyncToast({ imported: 2, skippedNoSession: 0, cooperResolved: true }), "cooper");
+    assert.equal(intervalsSyncToastCopy("cooper"), INTERVALS_COOPER_SYNC_TOAST);
+    assert.equal(intervalsSyncToastRedirect("cooper"), "/settings?toast=cooper");
+    // Without a Cooper result the existing variants behave exactly as before.
+    assert.equal(intervalsSyncToast({ imported: 0, skippedNoSession: 1 }), "no-session");
+    assert.equal(intervalsSyncToast({ imported: 0, skippedNoSession: 0 }), "no-new-runs");
+  });
 });
 
 describe("connect/sync error text", () => {
@@ -396,5 +409,85 @@ describe("Settings Sync path", () => {
     assert.equal(stored.length, 1);
     assert.equal(stored[0]?.sessionId, session.id);
     assert.equal(stored[0]?.source, "intervals");
+  });
+});
+
+describe("Settings Sync with a Cooper-pending plan", () => {
+  afterEach(() => {
+    mock.restoreAll();
+    delete process.env.INTERVALS_ICU_API_KEY;
+  });
+
+  function cooperSeed(userId: string): Plan {
+    const plan: Plan = {
+      id: `${userId}-plan`,
+      userId,
+      version: 1,
+      createdAt: "2026-09-01T12:00:00.000Z",
+      goal: "5k",
+      raceDate: null,
+      level: "beginner",
+      days: ["mon", "wed", "fri"],
+      feedbackCadence: "daily",
+      baseline: { kind: "cooper-pending" },
+    };
+    saveTrainingSnapshot({
+      onboarding: [
+        {
+          userId,
+          goal: "5k",
+          raceDate: null,
+          level: "beginner",
+          days: ["mon", "wed", "fri"],
+          baseline: { kind: "cooper-pending" },
+          feedbackCadence: "daily",
+          updatedAt: "2026-09-01T12:00:00.000Z",
+          completedAt: "2026-09-01T12:00:00.000Z",
+          planId: plan.id,
+        },
+      ],
+      plans: [plan],
+      sessions: [],
+      feedbacks: [],
+      runLogs: [],
+      adaptationEvents: [],
+    });
+    return plan;
+  }
+
+  it("resolves the pending baseline on sync and redirects with the Cooper toast", async () => {
+    const userId = "settings-cooper";
+    cooperSeed(userId);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([activityPayload(addDaysYmd(appTodayYmd(), -2), "act-cooper", 2800, 700)]);
+
+    const result = await postSync(userId);
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=cooper" });
+
+    const snapshot = loadTrainingSnapshot();
+    const plan = snapshot.plans.find((entry) => entry.userId === userId);
+    assert.deepEqual(plan?.baseline, { kind: "cooper", distanceKm: 2.8, durationSec: 720 });
+    assert.deepEqual(
+      snapshot.onboarding.find((entry) => entry.userId === userId)?.baseline,
+      { kind: "cooper", distanceKm: 2.8, durationSec: 720 },
+    );
+    // No planned Sessions means nothing changed, so no AdaptationEvent is written.
+    assert.equal(snapshot.adaptationEvents.length, 0);
+  });
+
+  it("stays silent about Cooper when no Run falls in the 12-minute band", async () => {
+    const userId = "settings-cooper-none";
+    cooperSeed(userId);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([activityPayload(addDaysYmd(appTodayYmd(), -2), "act-long", 5000, 900)]);
+
+    const result = await postSync(userId);
+    // The Run lands on a day with no planned Session, so the existing no-session toast wins.
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=no-session" });
+    assert.deepEqual(loadTrainingSnapshot().plans.find((entry) => entry.userId === userId)?.baseline, {
+      kind: "cooper-pending",
+    });
   });
 });

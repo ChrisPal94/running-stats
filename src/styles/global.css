@@ -6,6 +6,7 @@
   --color-ink: #05090b;
   --color-panel: #0d1415;
   --color-lime: #b8f52c;
+  --color-amber: #f5c542;
   --color-cloud: #f4f7f2;
   --color-mist: #b5beb5;
 }
@@ -15,6 +16,7 @@
   font-family: var(--font-sans);
   background: var(--color-ink);
   color: var(--color-cloud);
+  caret-color: var(--color-lime);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -71,8 +73,78 @@ dialog.app-sheet::backdrop {
   background: rgb(5 9 11 / 0.75);
 }
 
+/* Wizard step arrival: fade + small rise, content stays visible without JS
+   (animation runs from CSS alone; fill mode `both` only covers the first frame). */
+.wizard-arrive {
+  animation: wizard-arrive 350ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.wizard-arrive-2 {
+  animation-delay: 70ms;
+}
+
+.wizard-arrive-3 {
+  animation-delay: 140ms;
+}
+
+/* Progress strip: the active segment's fill grows in from the left. */
+.wizard-progress-fill {
+  transform-origin: left center;
+  animation: wizard-progress-fill 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Baseline panel swap: only the entering panel animates; transform/opacity only,
+   so the `hidden` attribute toggle keeps driving layout. */
+[data-panel]:not([hidden]) {
+  animation: wizard-panel-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Pace preview slot: one reserved line of height so showing/hiding never shifts
+   layout; fades via opacity only, the `hidden` attribute keeps driving display. */
+[data-pace-preview] {
+  min-height: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+[data-pace-preview]:not([hidden]) {
+  opacity: 1;
+}
+
 .saved-toast {
   animation: saved-toast 1.8s ease forwards;
+}
+
+@keyframes wizard-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes wizard-progress-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes wizard-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 @keyframes saved-toast {
