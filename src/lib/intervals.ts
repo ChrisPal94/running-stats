@@ -26,16 +26,21 @@ export const INTERVALS_COOPER_SYNC_TOAST = "Cooper test result synced — plan u
 
 export type IntervalsSyncToast = "no-session" | "no-new-runs" | "cooper" | null;
 
-/** Toast after Sync now when the Which run? picker is not shown. Cooper wins when its result was applied. */
+/**
+ * Toast after Sync now when the Which run? picker is not shown.
+ * Cooper wins when its result was applied. A successful import stays on the
+ * silent success path even if another activity in the batch had no planned
+ * session. No-session only when nothing was imported.
+ */
 export function intervalsSyncToast(input: {
   imported: number;
   skippedNoSession: number;
   cooperResolved?: boolean;
 }): IntervalsSyncToast {
   if (input.cooperResolved) return "cooper";
+  if (input.imported > 0) return null;
   if (input.skippedNoSession > 0) return "no-session";
-  if (input.imported === 0) return "no-new-runs";
-  return null;
+  return "no-new-runs";
 }
 
 export function intervalsSyncToastRedirect(toast: IntervalsSyncToast): string {
@@ -86,6 +91,8 @@ export type IntervalsRunPickerState = {
   choice: IntervalsRunChoice;
   remaining: IntervalsRunChoice[];
   skippedNoSession: boolean;
+  /** Runs already imported in this sync/pick flow, before this sheet. */
+  imported: number;
 };
 
 export type IntervalsConnectionView =
