@@ -9,7 +9,7 @@ interface Props {
 }
 
 const { picker } = Astro.props;
-const { choice, remaining, skippedNoSession } = picker;
+const { choice, remaining, skippedNoSession, imported } = picker;
 const runs = [...choice.runs].sort((a, b) => a.start_date_local.localeCompare(b.start_date_local));
 ---
 
@@ -38,6 +38,7 @@ const runs = [...choice.runs].sort((a, b) => a.start_date_local.localeCompare(b.
       <input type="hidden" name="pickerRuns" value={JSON.stringify(choice.runs)} />
       <input type="hidden" name="pickerRemaining" value={JSON.stringify(remaining)} />
       <input type="hidden" name="skippedNoSession" value={skippedNoSession ? "1" : "0"} />
+      <input type="hidden" name="imported" value={String(imported)} />
 
       <div class="flex items-center justify-between gap-3 px-5 pt-2">
         <h2

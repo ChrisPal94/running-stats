@@ -1916,17 +1916,38 @@ function upsertImportedRunLog(
 function pickerResult(
   pending: IntervalsRunChoice[],
   skippedNoSession: boolean,
+  imported: number,
 ): Extract<SettingsFormResult, { picker: IntervalsRunPickerState }> | null {
   const [choice, ...remaining] = pending;
   if (!choice) return null;
-  return { ok: true, picker: { choice, remaining, skippedNoSession } };
+  return { ok: true, picker: { choice, remaining, skippedNoSession, imported } };
 }
 
-function syncFinishedRedirect(skippedNoSession: boolean): Extract<SettingsFormResult, { redirect: string }> {
+/**
+ * Redirect after the Which run? picker closes.
+ * An import anywhere in this sync/pick flow stays silent. No-session only when
+ * a day was skipped and nothing was imported. Dismissing the picker is not an
+ * empty Intervals fetch, so it does not use the no-new-runs toast.
+ */
+function syncFinishedRedirect(input: {
+  skippedNoSession: boolean;
+  imported: number;
+}): Extract<SettingsFormResult, { redirect: string }> {
+  const toast = intervalsSyncToast({
+    imported: input.imported,
+    skippedNoSession: input.skippedNoSession ? 1 : 0,
+  });
   return {
     ok: true,
-    redirect: intervalsSyncToastRedirect(skippedNoSession ? "no-session" : null),
+    redirect: intervalsSyncToastRedirect(toast === "no-new-runs" ? null : toast),
   };
+}
+
+function postedImportedCount(value: FormDataEntryValue | null): number {
+  const raw = String(value ?? "").trim();
+  if (!/^\d+$/.test(raw)) return 0;
+  const count = Number(raw);
+  return Number.isSafeInteger(count) ? count : 0;
 }
 
 function syncInitialFinishedRedirect(result: {
@@ -2023,7 +2044,7 @@ export async function handleSettingsPost(
       }
       return { ok: true, redirect: "/settings" };
     }
-    const picker = pickerResult(result.pendingChoices, result.skippedNoSession > 0);
+    const picker = pickerResult(result.pendingChoices, result.skippedNoSession > 0, result.imported);
     if (picker) return picker;
     return syncInitialFinishedRedirect(result);
   }
@@ -2031,6 +2052,7 @@ export async function handleSettingsPost(
   if (intent === "intervals-pick-run" || intent === "intervals-skip-pick") {
     const remaining = parseIntervalsRunChoiceList(String(formData.get("pickerRemaining") ?? ""));
     const skippedNoSession = String(formData.get("skippedNoSession") ?? "") === "1";
+    let imported = postedImportedCount(formData.get("imported"));
     if (intent === "intervals-pick-run") {
       let postedRuns: unknown = [];
       try {
@@ -2048,12 +2070,13 @@ export async function handleSettingsPost(
       const selectedId = String(formData.get("activityId") ?? "");
       const selected = current?.runs.find((run) => run.activityId === selectedId);
       if (current && selected) {
-        await applyChosenIntervalsRun(userId, selected, current.sessionId);
+        const wrote = await applyChosenIntervalsRun(userId, selected, current.sessionId);
+        if (wrote) imported += 1;
       }
     }
-    const picker = pickerResult(remaining, skippedNoSession);
+    const picker = pickerResult(remaining, skippedNoSession, imported);
     if (picker) return picker;
-    return syncFinishedRedirect(skippedNoSession);
+    return syncFinishedRedirect({ skippedNoSession, imported });
   }
 
   if (intent === "intervals-disconnect") {
