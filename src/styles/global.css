@@ -171,9 +171,12 @@ dialog.app-sheet::backdrop {
   transform: translateY(14px);
 }
 
-/* Product cards assemble via clip-path reveal, not a generic fade-up. */
+/* Product cards assemble via clip-path reveal, not a generic fade-up.
+   Do not clip the pending box: inset(0 0 100% 0) empties the
+   IntersectionObserver rect, so the cards never receive land-in.
+   The clip lives in @keyframes land-clip; fill-mode both holds it
+   through the stagger delay once land-in starts. */
 .land-pending.land-clip {
-  clip-path: inset(0 0 100% 0);
   transform: none;
 }
 

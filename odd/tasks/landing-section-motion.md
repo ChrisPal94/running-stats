@@ -40,3 +40,8 @@ background, no zoom). No generic fade-up on every heading.
 - Detector on the four landing files: 0 findings.
 - Hero.astro untouched. Copy unchanged. Markup never starts with
   `land-pending`. Reduced-motion block intact.
+- 2026-09-22: a full pending clip-path emptied the IntersectionObserver
+  rect, so Today, Plan, and Progress stayed hidden under the heading.
+  The pending rule no longer clips; `land-pending` is removed when
+  `land-in` starts. Headless Chrome: desktop cards at opacity 1 with
+  readable copy; mobile Progress reveals once scrolled into view.

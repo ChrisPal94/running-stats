@@ -29,6 +29,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         for (const entry of entries) {
           if (!entry.isIntersecting) continue;
           entry.target.classList.add("land-in");
+          entry.target.classList.remove("land-pending");
           landObserver.unobserve(entry.target);
         }
       },
