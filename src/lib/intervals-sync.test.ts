@@ -21,7 +21,14 @@ import {
   parseIntervalsActivity,
   type IntervalsRunStats,
 } from "./intervals.ts";
-import { applyIntervalsRuns, handleSettingsPost, type Plan, type RunLog, type Session } from "./training.ts";
+import {
+  applyIntervalsRuns,
+  handleSettingsPost,
+  type IntervalsRunPickerState,
+  type Plan,
+  type RunLog,
+  type Session,
+} from "./training.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-intervals-"));
 process.env.AUTH_DATA_DIR = dataDir;
@@ -130,6 +137,24 @@ async function postSync(userId: string) {
   const formData = new FormData();
   formData.set("intent", "intervals-sync");
   return handleSettingsPost(userId, formData);
+}
+
+function pickerForm(
+  picker: IntervalsRunPickerState,
+  intent: "intervals-pick-run" | "intervals-skip-pick",
+  activityId?: string,
+): FormData {
+  const formData = new FormData();
+  formData.set("intent", intent);
+  formData.set("pickerDate", picker.choice.date);
+  formData.set("pickerSessionId", picker.choice.sessionId);
+  formData.set("pickerSessionDistanceKm", String(picker.choice.sessionDistanceKm));
+  formData.set("pickerRuns", JSON.stringify(picker.choice.runs));
+  formData.set("pickerRemaining", JSON.stringify(picker.remaining));
+  formData.set("skippedNoSession", picker.skippedNoSession ? "1" : "0");
+  formData.set("imported", String(picker.imported));
+  if (activityId) formData.set("activityId", activityId);
+  return formData;
 }
 
 describe("Intervals activity day", () => {
@@ -259,11 +284,15 @@ describe("Intervals Sync toasts", () => {
     assert.equal(intervalsSyncToastRedirect("no-new-runs"), "/settings?toast=no-new-runs");
   });
 
-  it("keeps No planned session that day when Runs exist without a Session", () => {
+  it("keeps No planned session that day when Runs exist without a Session and nothing was imported", () => {
     assert.equal(intervalsSyncToast({ imported: 0, skippedNoSession: 1 }), "no-session");
-    assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 1 }), "no-session");
     assert.equal(intervalsSyncToastCopy("no-session"), INTERVALS_NO_SESSION_TOAST);
     assert.equal(intervalsSyncToastRedirect("no-session"), "/settings?toast=no-session");
+  });
+
+  it("stays silent when a batch imports a Run and also skips a day with no Session", () => {
+    assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 1 }), null);
+    assert.equal(intervalsSyncToastRedirect(null), "/settings");
   });
 
   it("does not toast after a successful import", () => {
@@ -274,6 +303,7 @@ describe("Intervals Sync toasts", () => {
   it("toasts the Cooper result ahead of the no-session / no-new-runs signals", () => {
     assert.equal(INTERVALS_COOPER_SYNC_TOAST, "Cooper test result synced — plan updated.");
     assert.equal(intervalsSyncToast({ imported: 0, skippedNoSession: 1, cooperResolved: true }), "cooper");
+    assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 1, cooperResolved: true }), "cooper");
     assert.equal(intervalsSyncToast({ imported: 2, skippedNoSession: 0, cooperResolved: true }), "cooper");
     assert.equal(intervalsSyncToastCopy("cooper"), INTERVALS_COOPER_SYNC_TOAST);
     assert.equal(intervalsSyncToastRedirect("cooper"), "/settings?toast=cooper");
@@ -365,6 +395,7 @@ describe("Settings Sync path", () => {
     assert.equal(result.picker.choice.sessionId, session.id);
     assert.equal(result.picker.choice.runs.length, 2);
     assert.equal(result.picker.skippedNoSession, false);
+    assert.equal(result.picker.imported, 0);
     assert.equal(logsFor(userId).length, 0);
   });
 
@@ -409,6 +440,87 @@ describe("Settings Sync path", () => {
     assert.equal(stored.length, 1);
     assert.equal(stored[0]?.sessionId, session.id);
     assert.equal(stored[0]?.source, "intervals");
+  });
+
+  it("does not toast no-session when the batch imports a Run and skips another day", async () => {
+    const userId = "settings-import-and-skip";
+    const { session } = seed(userId);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([
+      activityPayload(SESSION_DAY, "act-match"),
+      activityPayload(OTHER_DAY, "act-orphan"),
+    ]);
+
+    const result = await postSync(userId);
+    assert.deepEqual(result, { ok: true, redirect: "/settings" });
+    const stored = logsFor(userId);
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0]?.sessionId, session.id);
+    assert.equal(stored[0]?.source, "intervals");
+  });
+
+  it("does not toast no-session after a Which run? pick when another activity had no Session", async () => {
+    const userId = "settings-pick-and-skip";
+    const { session } = seed(userId);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([
+      activityPayload(SESSION_DAY, "act-a", 7900, 2400),
+      activityPayload(SESSION_DAY, "act-b", 8100, 2430),
+      activityPayload(OTHER_DAY, "act-orphan"),
+    ]);
+
+    const opened = await postSync(userId);
+    if (!opened.ok || !("picker" in opened)) {
+      throw new Error("expected Which run? picker");
+    }
+    assert.equal(opened.picker.skippedNoSession, true);
+    assert.equal(opened.picker.imported, 0);
+    assert.equal(logsFor(userId).length, 0);
+
+    const result = await handleSettingsPost(userId, pickerForm(opened.picker, "intervals-pick-run", "act-a"));
+    assert.deepEqual(result, { ok: true, redirect: "/settings" });
+    const stored = logsFor(userId);
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0]?.sessionId, session.id);
+    assert.equal(stored[0]?.source, "intervals");
+    assert.equal(stored[0]?.distanceKm, 7.9);
+  });
+
+  it("still toasts no-session when the picker is dismissed and nothing was imported", async () => {
+    const userId = "settings-pick-dismiss";
+    seed(userId);
+    connectUser(userId);
+    process.env.INTERVALS_ICU_API_KEY = API_KEY;
+    mockActivities([
+      activityPayload(SESSION_DAY, "act-a", 7900, 2400),
+      activityPayload(SESSION_DAY, "act-b", 8100, 2430),
+      activityPayload(OTHER_DAY, "act-orphan"),
+    ]);
+
+    const opened = await postSync(userId);
+    if (!opened.ok || !("picker" in opened)) {
+      throw new Error("expected Which run? picker");
+    }
+
+    const result = await handleSettingsPost(userId, pickerForm(opened.picker, "intervals-skip-pick"));
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=no-session" });
+    assert.equal(logsFor(userId).length, 0);
+  });
+
+  it("does not toast no-session when a prior import in the same flow is followed by a dismissed picker", async () => {
+    const userId = "settings-prior-import-dismiss";
+    seed(userId);
+    const formData = new FormData();
+    formData.set("intent", "intervals-skip-pick");
+    formData.set("pickerRemaining", "[]");
+    formData.set("skippedNoSession", "1");
+    formData.set("imported", "1");
+
+    const result = await handleSettingsPost(userId, formData);
+    assert.deepEqual(result, { ok: true, redirect: "/settings" });
+    assert.equal(logsFor(userId).length, 0);
   });
 });
 
