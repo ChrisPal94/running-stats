@@ -69,3 +69,9 @@ starry background. Repo/package name stays `running-stats`.
 - Work-unit commits:
   - `6cad559` feat(brand): show the Stride Lab lockup in chrome
   - `d60357c` feat(brand): rename user-facing Running Stats to Stride Lab
+  - `56e22d3` style(brand): enlarge the Stride Lab lockup
+- Size bump: runner `h-9`→`h-10` (36→40px), wordmark `h-8`→`h-9`
+  (32→36px) in `src/components/BrandLogo.astro`. Both template
+  branches exercised — `/` (anchor branch, 200) and `/onboarding`
+  (div branch, 200) — plus `npm run check` 0 errors / 0 warnings,
+  `npm test` 118/118, and `astro build` complete.
