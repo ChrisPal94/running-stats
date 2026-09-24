@@ -31,10 +31,12 @@ describe("adaptRunLogLine", () => {
       skipped: 2,
       patched: 1,
       llmFailed: 0,
+      uploaded: 1,
+      uploadFailed: 0,
     });
     assert.equal(
       line,
-      "[adapt] run processed=3 written=1 skipped=2 patched=1 llmFailed=0",
+      "[adapt] run processed=3 written=1 skipped=2 patched=1 llmFailed=0 uploaded=1 uploadFailed=0",
     );
     assert.equal(/user-|@|email/i.test(line), false);
   });

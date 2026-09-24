@@ -1,0 +1,39 @@
+---
+import type { ChartGeometry } from "../lib/run-detail";
+
+interface Props {
+  title: string;
+  titleId: string;
+  chart: ChartGeometry | null;
+  top: string;
+  bottom: string;
+  stroke: string;
+  empty: string;
+  label: string;
+}
+
+const { title, titleId, chart, top, bottom, stroke, empty, label } = Astro.props;
+---
+
+<section aria-labelledby={titleId}>
+  <div class="flex items-baseline justify-between gap-3">
+    <h3 id={titleId} class="text-sm font-semibold text-cloud">{title}</h3>
+    {chart ? <p class="text-sm font-semibold text-cloud tabular-nums">{top}</p> : null}
+  </div>
+  {
+    chart ? (
+      <div class="mt-2">
+        <svg class:list={["h-28 w-full", stroke]} viewBox="0 0 320 112" role="img" aria-label={label}>
+          {chart.grids.map((grid) => (
+            <path d={grid} fill="none" stroke="white" stroke-opacity="0.08" stroke-width="1" />
+          ))}
+          <path d={chart.area} fill="currentColor" opacity="0.16" />
+          <path d={chart.line} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <p class="text-right text-[0.62rem] tracking-wider text-mist tabular-nums">{bottom}</p>
+      </div>
+    ) : (
+      <p class="mt-2 text-sm text-mist">{empty}</p>
+    )
+  }
+</section>

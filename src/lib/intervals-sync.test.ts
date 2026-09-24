@@ -13,6 +13,7 @@ import {
   INTERVALS_NO_SESSION_TOAST,
   INTERVALS_SYNC_ERROR,
   intervalsActivityDay,
+  effortForDistance,
   intervalsActivityStats,
   intervalsSyncToast,
   intervalsSyncToastCopy,
@@ -156,6 +157,40 @@ function pickerForm(
   if (activityId) formData.set("activityId", activityId);
   return formData;
 }
+
+describe("effortForDistance", () => {
+  it("keeps heart rate and doubles one-foot cadence for the closest run", () => {
+    const short: IntervalsRunStats = {
+      activityId: "short",
+      date: SESSION_DAY,
+      distanceKm: 0.7,
+      timeSec: 200,
+      paceSecPerKm: 286,
+      start_date_local: `${SESSION_DAY}T07:00:00`,
+      averageHr: 158,
+      cadenceRpm: 80,
+    };
+    const logged: IntervalsRunStats = {
+      activityId: "logged",
+      date: SESSION_DAY,
+      distanceKm: 4.17,
+      timeSec: 1504,
+      paceSecPerKm: 361,
+      start_date_local: `${SESSION_DAY}T08:00:00`,
+      averageHr: 176,
+      maxHr: 188,
+      cadenceRpm: 89.2,
+      lthr: 183,
+      athleteMaxHr: 202,
+      restingHr: 58,
+    };
+    const effort = effortForDistance([short, logged], 4.17);
+    assert.equal(effort?.averageHr, 176);
+    assert.equal(effort?.maxHr, 188);
+    assert.equal(effort?.stepRateSpm, 178);
+    assert.equal(effort?.lthr, 183);
+  });
+});
 
 describe("Intervals activity day", () => {
   it("uses the Guayaquil civil day from start_date_local", () => {

@@ -4,7 +4,15 @@ export const prerender = false;
 import PlanCard from "../components/PlanCard.astro";
 import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession } from "../lib/app-session";
-import { getAppWeek } from "../lib/training";
+import { addDaysYmd, appTodayYmd } from "../lib/calendar";
+import { choosePlanWeek, formatWeekRange } from "../lib/plan-week";
+import {
+  WEEKDAYS,
+  getPlanForUser,
+  getRunLogForSession,
+  getSessionsForPlan,
+  type WeekDayView,
+} from "../lib/training";
 
 const gate = await requireAppSession(Astro.cookies);
 if (!gate.ok) {
@@ -12,7 +20,32 @@ if (!gate.ok) {
 }
 
 const { user } = gate;
-const week = await getAppWeek(user.id);
+const today = appTodayYmd();
+const plan = await getPlanForUser(user.id);
+const sessions = plan ? await getSessionsForPlan(plan.id) : [];
+const choice = choosePlanWeek({
+  today,
+  weekParam: Astro.url.searchParams.get("week"),
+  dayParam: Astro.url.searchParams.get("day"),
+  sessionDates: sessions.map((session) => session.date),
+});
+const shown = sessions.filter((session) => session.date >= choice.weekStart && session.date <= choice.weekEnd);
+const days: WeekDayView[] = WEEKDAYS.map((day, index) => {
+  const ymd = addDaysYmd(choice.weekStart, index);
+  return {
+    id: day.id,
+    abbr: day.abbr,
+    label: day.label,
+    ymd,
+    isToday: ymd === today,
+    hasSession: shown.some((session) => session.date === ymd),
+  };
+});
+const selected = shown.find((session) => session.date === choice.selectedDay) ?? null;
+const runLog = selected ? await getRunLogForSession(user.id, selected.id) : null;
+const laterSessions = choice.isCurrentWeek
+  ? shown.filter((session) => session.date > today && session.date !== choice.selectedDay).slice(0, 3)
+  : [];
 ---
 
 <AppShell
@@ -21,5 +54,18 @@ const week = await getAppWeek(user.id);
   current="plan"
   email={user.email}
 >
-  <PlanCard days={week.days} sessions={week.focusSessions} today={week.today} />
+  <PlanCard
+    days={days}
+    laterSessions={laterSessions}
+    today={today}
+    weekStart={choice.weekStart}
+    weekLabel={formatWeekRange(choice.weekStart, choice.weekEnd)}
+    selectedDay={choice.selectedDay}
+    canPrev={choice.canPrev}
+    canNext={choice.canNext}
+    prevWeek={choice.prevWeek}
+    nextWeek={choice.nextWeek}
+    session={selected}
+    runLog={runLog}
+  />
 </AppShell>

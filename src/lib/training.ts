@@ -8,13 +8,21 @@ import {
   startOfWeekMonday,
 } from "./calendar";
 import { enqueueWrite, loadTrainingSnapshot, saveTrainingSnapshot } from "./db";
+import { effortFromSamples, parseRunSamples, type RunSample } from "./run-detail";
+import {
+  COACH_FEEDBACK_TITLE,
+  COACH_FEEDBACK_UNAVAILABLE,
+  requestCoachFeedback,
+} from "./ollama-feedback";
 import {
   connectIntervals,
+  loadRunEffort,
   disconnectIntervals,
   getIntervalsConnection,
   INTERVALS_SYNC_ERROR,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
+  loadIntervalsRoute,
   loadIntervalsRunsForSync,
   markIntervalsSyncError,
   markIntervalsSyncSuccess,
@@ -24,6 +32,7 @@ import {
   type IntervalsRunChoice,
   type IntervalsRunPickerState,
   type IntervalsRunStats,
+  type IntervalsStreamRoute,
 } from "./intervals";
 
 const PLAN_WEEKS = 4;
@@ -188,8 +197,8 @@ export type GeoPoint = {
 };
 
 export type RunRoute =
-  | { type: "polyline"; coords: GeoPoint[] }
-  | { type: "none" };
+  | { type: "polyline"; coords: GeoPoint[]; samples?: RunSample[] }
+  | { type: "none"; samples?: RunSample[] };
 
 /** Actuals from post-Done “Log this run” or Intervals.icu import. 1:1 with Session. */
 export type RunLogSource = "manual" | "intervals";
@@ -345,7 +354,8 @@ export type OnboardingFormResult =
 
 export type TodayActionResult =
   | { ok: true; redirect: string }
-  | { ok: false; error: string; logOpen: true; draft: RunLogFormDraft };
+  | { ok: false; error: string; logOpen: true; draft: RunLogFormDraft }
+  | { ok: false; error: string; logOpen: false };
 
 export type WeekDayView = {
   id: Weekday;
@@ -507,8 +517,13 @@ export function normalizeRunRoute(value: unknown): RunRoute {
       .map(parseCoord)
       .filter((point): point is GeoPoint => Boolean(point))
       .slice(0, MAX_POLYLINE_POINTS);
-    if (coords.length >= 2) return { type: "polyline", coords };
+    if (coords.length >= 2) {
+      const samples = parseRunSamples((record as { samples?: unknown }).samples);
+      return samples.length >= 2 ? { type: "polyline", coords, samples } : { type: "polyline", coords };
+    }
   }
+  const samples = parseRunSamples((record as { samples?: unknown }).samples);
+  if (samples.length >= 2) return { type: "none", samples };
   return { ...EMPTY_RUN_ROUTE };
 }
 
@@ -1080,6 +1095,40 @@ export async function getRunLogForSession(userId: string, sessionId: string): Pr
   return data.runLogs.find((entry) => entry.userId === userId && entry.sessionId === sessionId) ?? null;
 }
 
+export async function saveCoachFeedback(
+  userId: string,
+  summary: string,
+  reason: string,
+): Promise<void> {
+  await enqueueWrite(async () => {
+    const data = await readTraining();
+    const today = appTodayYmd();
+    const session = data.sessions.find((entry) => entry.userId === userId && entry.date === today);
+    if (!session) return;
+    const existing = data.adaptationEvents.find(
+      (event) => event.userId === userId && event.date === today && event.title === COACH_FEEDBACK_TITLE,
+    );
+    const event: AdaptationEvent = {
+      id: existing?.id ?? newId(),
+      userId,
+      planId: session.planId,
+      sessionId: session.id,
+      date: today,
+      title: COACH_FEEDBACK_TITLE,
+      summary,
+      reason,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    };
+    if (existing) {
+      const index = data.adaptationEvents.findIndex((entry) => entry.id === existing.id);
+      if (index >= 0) data.adaptationEvents[index] = event;
+    } else {
+      data.adaptationEvents.push(event);
+    }
+    await writeTraining(data, "replace");
+  });
+}
+
 export async function getAdaptationEventForToday(userId: string): Promise<AdaptationEvent | null> {
   const today = appTodayYmd();
   const data = await readTraining();
@@ -1268,8 +1317,40 @@ export async function handleTodayPost(userId: string, formData: FormData): Promi
   const intent = String(formData.get("intent") ?? "");
   const sessionId = String(formData.get("sessionId") ?? "");
 
+  if (intent === "generate-feedback") {
+    const session = await getSessionForToday(userId);
+    const runLog = session ? await getRunLogForSession(userId, session.id) : null;
+    if (!session || !runLog) return { ok: false, error: COACH_FEEDBACK_UNAVAILABLE, logOpen: false };
+    const recorded =
+      runLog.route?.type === "polyline" ? effortFromSamples(runLog.route.samples) : null;
+    const effort =
+      runLog.source === "intervals" ? await loadRunEffort(session.date, runLog.distanceKm) : null;
+    const generated = await requestCoachFeedback({
+      plannedTitle: session.title,
+      plannedKm: session.distanceKm,
+      actualKm: runLog.distanceKm,
+      timeSec: runLog.timeSec,
+      paceSecPerKm: runLog.paceSecPerKm,
+      averageHr: effort?.averageHr ?? recorded?.averageHr,
+      maxHr: effort?.maxHr ?? recorded?.maxHr,
+      lthr: effort?.lthr,
+      athleteMaxHr: effort?.athleteMaxHr,
+      restingHr: effort?.restingHr,
+      cadenceRpm: effort?.cadenceRpm ?? recorded?.cadenceRpm,
+      stepRateSpm: effort?.stepRateSpm ?? recorded?.stepRateSpm,
+    });
+    if (!generated.ok) return { ok: false, error: generated.error, logOpen: false };
+    await saveCoachFeedback(userId, generated.feedback.summary, generated.feedback.reason);
+    return { ok: true, redirect: "/today" };
+  }
+
   if (intent === "open-log" && sessionId) {
     const data = await readTraining();
+    const imported = data.runLogs.some(
+      (entry) =>
+        entry.userId === userId && entry.sessionId === sessionId && entry.source === "intervals",
+    );
+    if (imported) return { ok: true, redirect: "/today" };
     const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
     const fallback = emptyRunLogDraft(session?.distanceKm);
     const fromForm = readRunLogDraft(formData);
@@ -1727,9 +1808,17 @@ export async function updateFeedbackCadence(
   });
 }
 
+function runRouteFromStreams(route: IntervalsStreamRoute | undefined): RunRoute {
+  if (!route) return { type: "none" };
+  if (route.coords.length >= 2) return { type: "polyline", coords: route.coords, samples: route.samples };
+  if (route.samples.length >= 2) return { type: "none", samples: route.samples };
+  return { type: "none" };
+}
+
 export async function applyIntervalsRuns(
   userId: string,
   runs: IntervalsRunStats[],
+  routes: ReadonlyMap<string, IntervalsStreamRoute> = new Map(),
 ): Promise<{
   imported: number;
   skippedNoSession: number;
@@ -1792,7 +1881,7 @@ export async function applyIntervalsRuns(
       }
       const run = dayRuns[0];
       if (!run) continue;
-      upsertImportedRunLog(data, userId, session, run, existing, createdAt);
+      upsertImportedRunLog(data, userId, session, run, existing, createdAt, routes.get(run.activityId));
       imported += 1;
     }
 
@@ -1890,7 +1979,9 @@ function upsertImportedRunLog(
   run: IntervalsRunStats,
   existing: RunLog | undefined,
   createdAt: string,
+  streams?: IntervalsStreamRoute,
 ): void {
+  const importedRoute = runRouteFromStreams(streams);
   const log: RunLog = {
     id: existing?.id ?? newId(),
     userId,
@@ -1899,7 +1990,11 @@ function upsertImportedRunLog(
     distanceKm: run.distanceKm,
     timeSec: run.timeSec,
     paceSecPerKm: computePaceSecPerKm(run.distanceKm, run.timeSec),
-    route: existing?.route ?? { type: "none" },
+    route: importedRoute.samples?.length || importedRoute.type === "polyline"
+      ? importedRoute
+      : existing?.route?.samples?.length || existing?.route?.type === "polyline"
+        ? existing.route
+        : { type: "none" },
     createdAt: existing?.createdAt ?? createdAt,
     source: "intervals",
   };
@@ -1972,6 +2067,7 @@ export async function applyChosenIntervalsRun(
   run: IntervalsRunStats,
   sessionId: string,
 ): Promise<boolean> {
+  const streams = await loadIntervalsRoute(run.activityId);
   return enqueueWrite(async () => {
     const data = await readTraining();
     const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
@@ -1981,7 +2077,15 @@ export async function applyChosenIntervalsRun(
     );
     const existing = existingIndex >= 0 ? data.runLogs[existingIndex] : undefined;
     if (existing && isManualRunLog(existing)) return false;
-    upsertImportedRunLog(data, userId, session, run, existing, new Date().toISOString());
+    upsertImportedRunLog(
+      data,
+      userId,
+      session,
+      run,
+      existing,
+      new Date().toISOString(),
+      streams ?? undefined,
+    );
     await writeTraining(data);
     return true;
   });
@@ -2012,7 +2116,14 @@ export async function syncIntervalsForUser(userId: string): Promise<
     await markIntervalsSyncError(userId);
     return { ok: false, error: fetched.error };
   }
-  const result = await applyIntervalsRuns(userId, fetched.runs);
+  const sessionDays = new Set(sessionDates);
+  const routes = new Map<string, IntervalsStreamRoute>();
+  for (const run of fetched.runs) {
+    if (!sessionDays.has(run.date)) continue;
+    const route = await loadIntervalsRoute(run.activityId);
+    if (route) routes.set(run.activityId, route);
+  }
+  const result = await applyIntervalsRuns(userId, fetched.runs, routes);
   await markIntervalsSyncSuccess(userId);
   return {
     ok: true,

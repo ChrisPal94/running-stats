@@ -68,6 +68,12 @@ export type IntervalsActivity = {
   average_speed?: number;
   type?: string;
   sport?: string;
+  average_heartrate?: number;
+  max_heartrate?: number;
+  average_cadence?: number;
+  lthr?: number;
+  athlete_max_hr?: number;
+  icu_resting_hr?: number;
 };
 
 export type IntervalsRunStats = {
@@ -77,6 +83,22 @@ export type IntervalsRunStats = {
   timeSec: number;
   paceSecPerKm: number;
   start_date_local: string;
+  averageHr?: number;
+  maxHr?: number;
+  cadenceRpm?: number;
+  lthr?: number;
+  athleteMaxHr?: number;
+  restingHr?: number;
+};
+
+export type RunEffort = {
+  averageHr: number | null;
+  maxHr: number | null;
+  cadenceRpm: number | null;
+  stepRateSpm: number | null;
+  lthr: number | null;
+  athleteMaxHr: number | null;
+  restingHr: number | null;
 };
 
 export type IntervalsRunChoice = {
@@ -189,6 +211,18 @@ export function parseIntervalsActivity(value: unknown): IntervalsActivity | null
   if (speed !== null) activity.average_speed = speed;
   if (typeof record.type === "string") activity.type = record.type;
   if (typeof record.sport === "string") activity.sport = record.sport;
+  const averageHr = asFiniteNumber(record.average_heartrate) ?? asFiniteNumber(record.averageHeartrate);
+  if (averageHr !== null && averageHr > 0) activity.average_heartrate = averageHr;
+  const maxHr = asFiniteNumber(record.max_heartrate) ?? asFiniteNumber(record.maxHeartrate);
+  if (maxHr !== null && maxHr > 0) activity.max_heartrate = maxHr;
+  const cadence = asFiniteNumber(record.average_cadence) ?? asFiniteNumber(record.averageCadence);
+  if (cadence !== null && cadence > 0) activity.average_cadence = cadence;
+  const lthr = asFiniteNumber(record.lthr);
+  if (lthr !== null && lthr > 0) activity.lthr = lthr;
+  const athleteMax = asFiniteNumber(record.athlete_max_hr) ?? asFiniteNumber(record.athleteMaxHr);
+  if (athleteMax !== null && athleteMax > 0) activity.athlete_max_hr = athleteMax;
+  const resting = asFiniteNumber(record.icu_resting_hr) ?? asFiniteNumber(record.icuRestingHr);
+  if (resting !== null && resting > 0) activity.icu_resting_hr = resting;
   return activity;
 }
 
@@ -220,7 +254,187 @@ export function intervalsActivityStats(activity: IntervalsActivity): IntervalsRu
     timeSec,
     paceSecPerKm,
     start_date_local: activity.start_date_local,
+    averageHr: activity.average_heartrate,
+    maxHr: activity.max_heartrate,
+    cadenceRpm: activity.average_cadence,
+    lthr: activity.lthr,
+    athleteMaxHr: activity.athlete_max_hr,
+    restingHr: activity.icu_resting_hr,
   };
+}
+
+export function effortForDistance(runs: IntervalsRunStats[], distanceKm: number): RunEffort | null {
+  const run = pickClosestRun(runs, distanceKm);
+  if (!run) return null;
+  const cadenceRpm = run.cadenceRpm && run.cadenceRpm > 0 ? run.cadenceRpm : null;
+  return {
+    averageHr: run.averageHr && run.averageHr > 0 ? run.averageHr : null,
+    maxHr: run.maxHr && run.maxHr > 0 ? run.maxHr : null,
+    cadenceRpm,
+    stepRateSpm: cadenceRpm ? Math.round(cadenceRpm * 2) : null,
+    lthr: run.lthr && run.lthr > 0 ? run.lthr : null,
+    athleteMaxHr: run.athleteMaxHr && run.athleteMaxHr > 0 ? run.athleteMaxHr : null,
+    restingHr: run.restingHr && run.restingHr > 0 ? run.restingHr : null,
+  };
+}
+
+export type IntervalsStreamRoute = {
+  coords: { lat: number; lng: number }[];
+  samples: {
+    distanceKm: number;
+    timeSec: number;
+    heartrate?: number;
+    cadenceRpm?: number;
+    altitudeM?: number;
+  }[];
+};
+
+function streamNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371;
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const dLat = lat2 - lat1;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function streamsRecord(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) {
+    const record: Record<string, unknown> = {};
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const entry = item as { type?: unknown; name?: unknown; data?: unknown };
+      const key = typeof entry.type === "string" ? entry.type : typeof entry.name === "string" ? entry.name : "";
+      if (!key) continue;
+      if (Array.isArray(entry.data)) record[key] = entry.data;
+    }
+    return record;
+  }
+  if (value && typeof value === "object") return value as Record<string, unknown>;
+  return {};
+}
+
+/** GPS line plus heart rate and one-foot cadence from an Intervals streams payload. */
+export function routeFromIntervalsStreams(value: unknown): IntervalsStreamRoute | null {
+  const record = streamsRecord(value);
+  const latlng = Array.isArray(record.latlng) ? record.latlng : [];
+  const time = Array.isArray(record.time) ? record.time : [];
+  const heartrate = Array.isArray(record.heartrate) ? record.heartrate : [];
+  const cadence = Array.isArray(record.cadence) ? record.cadence : [];
+  const altitude = Array.isArray(record.altitude) ? record.altitude : [];
+  const distance = Array.isArray(record.distance) ? record.distance : [];
+  if (latlng.length < 2 && time.length < 2 && distance.length < 2) return null;
+
+  const indexes: number[] = [];
+  const step = Math.max(1, Math.ceil(latlng.length / 500));
+  for (let index = 0; index < latlng.length; index += step) indexes.push(index);
+  const last = latlng.length - 1;
+  if (indexes[indexes.length - 1] !== last) indexes.push(last);
+
+  const coords: IntervalsStreamRoute["coords"] = [];
+  const samples: IntervalsStreamRoute["samples"] = [];
+  let tracedKm = 0;
+  let previous: { lat: number; lng: number } | null = null;
+  for (const index of indexes) {
+    const pair = latlng[index];
+    if (!Array.isArray(pair) || pair.length < 2) continue;
+    const lat = streamNumber(pair[0]);
+    const lng = streamNumber(pair[1]);
+    const timeSec = streamNumber(time[index]);
+    if (lat === null || lng === null || timeSec === null || timeSec < 0) continue;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
+    const point = { lat, lng };
+    if (previous) tracedKm += haversineKm(previous, point);
+    previous = point;
+    const distanceM = streamNumber(distance[index]);
+    const sample: IntervalsStreamRoute["samples"][number] = {
+      distanceKm: distanceM !== null && distanceM >= 0 ? Math.round((distanceM / 1000) * 1000) / 1000 : Math.round(tracedKm * 1000) / 1000,
+      timeSec,
+    };
+    const hr = streamNumber(heartrate[index]);
+    if (hr !== null && hr > 0) sample.heartrate = hr;
+    const rpm = streamNumber(cadence[index]);
+    if (rpm !== null && rpm > 0) sample.cadenceRpm = rpm;
+    const alt = streamNumber(altitude[index]);
+    if (alt !== null) sample.altitudeM = alt;
+    coords.push(point);
+    samples.push(sample);
+  }
+  if (coords.length >= 2) return { coords, samples };
+
+  const count = Math.max(time.length, distance.length, heartrate.length, cadence.length);
+  if (count < 2) return null;
+  const seriesStep = Math.max(1, Math.ceil(count / 500));
+  const series: IntervalsStreamRoute["samples"] = [];
+  for (let index = 0; index < count; index += seriesStep) {
+    const timeSec = streamNumber(time[index]);
+    const distanceM = streamNumber(distance[index]);
+    if (timeSec === null || timeSec < 0 || distanceM === null || distanceM < 0) continue;
+    const sample: IntervalsStreamRoute["samples"][number] = {
+      distanceKm: Math.round((distanceM / 1000) * 1000) / 1000,
+      timeSec,
+    };
+    const hr = streamNumber(heartrate[index]);
+    if (hr !== null && hr > 0) sample.heartrate = hr;
+    const rpm = streamNumber(cadence[index]);
+    if (rpm !== null && rpm > 0) sample.cadenceRpm = rpm;
+    const alt = streamNumber(altitude[index]);
+    if (alt !== null) sample.altitudeM = alt;
+    series.push(sample);
+  }
+  const end = count - 1;
+  if (series.length > 0 && streamNumber(time[end]) !== series[series.length - 1]?.timeSec) {
+    const timeSec = streamNumber(time[end]);
+    const distanceM = streamNumber(distance[end]);
+    if (timeSec !== null && distanceM !== null) {
+      const sample: IntervalsStreamRoute["samples"][number] = {
+        distanceKm: Math.round((distanceM / 1000) * 1000) / 1000,
+        timeSec,
+      };
+      const hr = streamNumber(heartrate[end]);
+      if (hr !== null && hr > 0) sample.heartrate = hr;
+      const rpm = streamNumber(cadence[end]);
+      if (rpm !== null && rpm > 0) sample.cadenceRpm = rpm;
+      series.push(sample);
+    }
+  }
+  if (series.length < 2) return null;
+  return { coords: [], samples: series };
+}
+
+export async function loadIntervalsRoute(activityId: string): Promise<IntervalsStreamRoute | null> {
+  const apiKey = intervalsApiKey();
+  if (!apiKey || !activityId.trim()) return null;
+  try {
+    const payload = await intervalsGet(
+      apiKey,
+      `/activity/${encodeURIComponent(activityId)}/streams?types=time,latlng,heartrate,cadence,altitude,distance`,
+    );
+    return routeFromIntervalsStreams(payload);
+  } catch (error) {
+    console.error("[intervals] stream fetch failed", error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+export async function loadRunEffort(date: string, distanceKm: number): Promise<RunEffort | null> {
+  const apiKey = intervalsApiKey();
+  if (!apiKey || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  try {
+    const activities = await fetchIntervalsActivities(apiKey, intervalsAthletePathId(), date, date);
+    const runs = activities
+      .map(intervalsActivityStats)
+      .filter((entry): entry is IntervalsRunStats => Boolean(entry));
+    return effortForDistance(runs, distanceKm);
+  } catch (error) {
+    console.error("[intervals] effort fetch failed", error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 export function pickClosestRun(runs: IntervalsRunStats[], targetKm: number): IntervalsRunStats | null {
@@ -336,6 +550,79 @@ export function getIntervalsConnectionView(userId: string, now = new Date()): In
     lastSyncError: connection.lastSyncError,
     lastSyncLabel,
   };
+}
+
+export type PlannedRunUpload = {
+  externalId: string;
+  date: string;
+  name: string;
+  description: string;
+  distanceKm: number;
+};
+
+/** Plain-text Run workout for bulk upsert. `external_id` is the local session id. */
+export function plannedRunEvent(workout: PlannedRunUpload): Record<string, unknown> | null {
+  const externalId = workout.externalId.trim();
+  if (!externalId || !/^\d{4}-\d{2}-\d{2}$/.test(workout.date)) return null;
+  if (!(workout.distanceKm > 0)) return null;
+  const name = workout.name.replace(/\s+/g, " ").trim() || "Run";
+  const description = workout.description.replace(/\s+/g, " ").trim();
+  return {
+    category: "WORKOUT",
+    external_id: externalId,
+    start_date_local: `${workout.date}T08:00:00`,
+    type: "Run",
+    name,
+    description,
+    distance: Math.round(workout.distanceKm * 1000),
+  };
+}
+
+export async function upsertPlannedRuns(
+  workouts: PlannedRunUpload[],
+  options: {
+    apiKey?: string | null;
+    fetchImpl?: typeof fetch;
+    athletePathId?: string;
+  } = {},
+): Promise<{ uploaded: number; failed: number }> {
+  const events = workouts
+    .map(plannedRunEvent)
+    .filter((event): event is Record<string, unknown> => Boolean(event));
+  if (events.length === 0) return { uploaded: 0, failed: 0 };
+
+  const apiKey = options.apiKey === undefined ? intervalsApiKey() : options.apiKey;
+  if (!apiKey) return { uploaded: 0, failed: 0 };
+
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const athletePathId = options.athletePathId ?? intervalsAthletePathId();
+  try {
+    const response = await fetchImpl(
+      `${INTERVALS_ICU_BASE_URL}/athlete/${athletePathId}/events/bulk?upsert=true`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: intervalsBasicAuthHeader(apiKey),
+          "User-Agent": INTERVALS_USER_AGENT,
+        },
+        body: JSON.stringify(events),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      },
+    );
+    if (!response.ok) {
+      console.error(`[intervals] planned workout upsert HTTP ${response.status}`);
+      return { uploaded: 0, failed: events.length };
+    }
+    return { uploaded: events.length, failed: 0 };
+  } catch (error) {
+    console.error(
+      "[intervals] planned workout upsert failed",
+      error instanceof Error ? error.message : error,
+    );
+    return { uploaded: 0, failed: events.length };
+  }
 }
 
 async function intervalsGet(apiKey: string, path: string): Promise<unknown> {
