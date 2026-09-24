@@ -1,0 +1,52 @@
+---
+import { Image } from "astro:assets";
+import logoRunner from "../assets/brand/logo-runner.png";
+import logoWordmark from "../assets/brand/logo-wordmark.png";
+
+interface Props {
+  href?: string;
+  label?: string;
+  class?: string;
+}
+
+const { href, label = "Stride Lab home", class: className } = Astro.props;
+const classes = ["group flex items-center gap-2", className];
+---
+
+{
+  href ? (
+    <a class:list={classes} href={href} aria-label={label}>
+      <Image
+        src={logoRunner}
+        alt=""
+        aria-hidden="true"
+        loading="eager"
+        class="h-10 w-auto transition-transform duration-300 ease-out group-hover:-rotate-6"
+      />
+      <Image
+        src={logoWordmark}
+        alt=""
+        aria-hidden="true"
+        loading="eager"
+        class="h-9 w-auto"
+      />
+    </a>
+  ) : (
+    <div class:list={classes}>
+      <Image
+        src={logoRunner}
+        alt=""
+        aria-hidden="true"
+        loading="eager"
+        class="h-10 w-auto transition-transform duration-300 ease-out group-hover:-rotate-6"
+      />
+      <Image
+        src={logoWordmark}
+        alt=""
+        aria-hidden="true"
+        loading="eager"
+        class="h-9 w-auto"
+      />
+    </div>
+  )
+}

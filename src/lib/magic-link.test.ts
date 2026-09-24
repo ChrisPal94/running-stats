@@ -254,9 +254,9 @@ describe("magic link request", () => {
     assert.equal(result.ok, true);
     const payload = bodies[0] as { subject?: string; html?: string; to?: string[]; from?: string };
     assert.equal(payload.subject, MAGIC_LINK_SUBJECT);
-    assert.equal(MAGIC_LINK_SUBJECT, "Your Running Stats sign-in link");
+    assert.equal(MAGIC_LINK_SUBJECT, "Your Stride Lab sign-in link");
     assert.equal(payload.to?.[0], email);
-    assert.equal(payload.from, "Running Stats <coach@example.com>");
+    assert.equal(payload.from, "Stride Lab <coach@example.com>");
     assert.match(String(payload.html), />Sign in</);
     assert.match(String(payload.html), /\/auth\/magic\?token=/);
   });
@@ -278,7 +278,7 @@ describe("magic link request", () => {
     );
     assert.equal(result.ok, true);
     const payload = bodies[0] as { from?: string };
-    assert.equal(payload.from, "Running Stats <legacy@example.com>");
+    assert.equal(payload.from, "Stride Lab <legacy@example.com>");
   });
 });
 

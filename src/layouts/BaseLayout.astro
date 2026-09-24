@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import favicon from "../assets/brand/favicon.png";
 
 interface Props {
   title?: string;
@@ -8,7 +9,7 @@ interface Props {
 }
 
 const {
-  title = "Running Stats — Know today's run",
+  title = "Stride Lab — Know today's run",
   description = "A training plan that adapts after every run—so you always know what to run next, and why.",
   noindex = false,
 } = Astro.props;
@@ -23,6 +24,7 @@ const pageUrl = new URL(Astro.url.pathname, Astro.site ?? Astro.url).href;
     <meta name="viewport" content="width=device-width" />
     <meta name="description" content={description} />
     <meta name="theme-color" content="#05090b" />
+    <link rel="icon" type="image/png" href={favicon.src} />
     {noindex && <meta name="robots" content="noindex" />}
     <link rel="canonical" href={pageUrl} />
     <meta property="og:title" content={title} />

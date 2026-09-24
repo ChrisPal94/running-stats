@@ -1,6 +1,6 @@
 # Deploy (Railway)
 
-Production host for Running Stats. Product behavior stays in `PRODUCT.md`; this file is the Railway plan and smoke checklist.
+Production host for Stride Lab. Product behavior stays in `PRODUCT.md`; this file is the Railway plan and smoke checklist.
 
 The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=0.0.0.0` so Railway can reach the process. Railway injects `PORT`.
 
