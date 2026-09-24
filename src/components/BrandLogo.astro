@@ -11,6 +11,9 @@ interface Props {
 
 const { href, label = "Stride Lab home", class: className } = Astro.props;
 const classes = ["group flex items-center gap-2", className];
+const densities = [1, 2, 3];
+const runnerSize = { width: 47, height: 40 };
+const wordmarkSize = { width: 89, height: 36 };
 ---
 
 {
@@ -21,6 +24,9 @@ const classes = ["group flex items-center gap-2", className];
         alt=""
         aria-hidden="true"
         loading="eager"
+        width={runnerSize.width}
+        height={runnerSize.height}
+        densities={densities}
         class="h-10 w-auto transition-transform duration-300 ease-out group-hover:-rotate-6"
       />
       <Image
@@ -28,6 +34,9 @@ const classes = ["group flex items-center gap-2", className];
         alt=""
         aria-hidden="true"
         loading="eager"
+        width={wordmarkSize.width}
+        height={wordmarkSize.height}
+        densities={densities}
         class="h-9 w-auto"
       />
     </a>
@@ -38,6 +47,9 @@ const classes = ["group flex items-center gap-2", className];
         alt=""
         aria-hidden="true"
         loading="eager"
+        width={runnerSize.width}
+        height={runnerSize.height}
+        densities={densities}
         class="h-10 w-auto transition-transform duration-300 ease-out group-hover:-rotate-6"
       />
       <Image
@@ -45,6 +57,9 @@ const classes = ["group flex items-center gap-2", className];
         alt=""
         aria-hidden="true"
         loading="eager"
+        width={wordmarkSize.width}
+        height={wordmarkSize.height}
+        densities={densities}
         class="h-9 w-auto"
       />
     </div>
