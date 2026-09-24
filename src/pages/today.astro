@@ -29,6 +29,7 @@ const { user } = gate;
 let logError = "";
 let logOpen = false;
 let logDraft: RunLogFormDraft | null = null;
+let feedbackError = "";
 
 if (Astro.request.method === "POST") {
   if (isSameOrigin(Astro.request)) {
@@ -36,9 +37,13 @@ if (Astro.request.method === "POST") {
     if (result.ok) {
       return Astro.redirect(result.redirect);
     }
-    logError = result.error;
-    logOpen = result.logOpen;
-    logDraft = result.draft;
+    if (result.logOpen) {
+      logError = result.error;
+      logOpen = true;
+      logDraft = result.draft;
+    } else {
+      feedbackError = result.error;
+    }
   } else {
     return Astro.redirect("/today");
   }
@@ -87,6 +92,7 @@ const readyCopy = planReady ? (nextRunHint ? `Your plan is ready. ${nextRunHint}
     logOpen={logOpen}
     logError={logError}
     logDraft={logDraft}
+    feedbackError={feedbackError}
     savedToast={savedToast}
   />
 </AppShell>
