@@ -1,6 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
 import { adaptRunLogLine, type AdaptRunCounts } from "./adapt-cron";
 import {
+  loadRunEffort,
+  upsertPlannedRuns,
+  type PlannedRunUpload,
+  type RunEffort,
+} from "./intervals";
+import {
   addDaysYmd,
   APP_TIME_ZONE,
   appTodayYmd,
@@ -59,6 +65,14 @@ type LlmActual = {
   timeSec: number;
   paceSecPerKm: number;
   source?: "manual" | "intervals";
+  averageHr?: number;
+  maxHr?: number;
+  lthr?: number;
+  athleteMaxHr?: number;
+  restingHr?: number;
+  /** Intervals running cadence is one foot. */
+  cadenceRpm?: number;
+  stepRateSpm?: number;
 };
 
 function runLogForSession(
@@ -93,7 +107,7 @@ function runLogForSourceDay(
   );
 }
 
-function llmActualFromRunLog(log: RunLog | null): LlmActual | null {
+function llmActualFromRunLog(log: RunLog | null, effort: RunEffort | null = null): LlmActual | null {
   if (!log) return null;
   const actual: LlmActual = {
     distanceKm: log.distanceKm,
@@ -101,6 +115,15 @@ function llmActualFromRunLog(log: RunLog | null): LlmActual | null {
     paceSecPerKm: log.paceSecPerKm,
   };
   if (log.source === "manual" || log.source === "intervals") actual.source = log.source;
+  if (!effort) return actual;
+  if (effort.averageHr) actual.averageHr = effort.averageHr;
+  if (effort.maxHr) actual.maxHr = effort.maxHr;
+  if (effort.lthr) actual.lthr = effort.lthr;
+  if (effort.athleteMaxHr) actual.athleteMaxHr = effort.athleteMaxHr;
+  if (effort.restingHr) actual.restingHr = effort.restingHr;
+  if (effort.cadenceRpm) actual.cadenceRpm = effort.cadenceRpm;
+  const steps = stepRateSpm(effort);
+  if (steps) actual.stepRateSpm = steps;
   return actual;
 }
 
@@ -157,10 +180,17 @@ function weekdayLabel(ymd: string, session?: Session | null): string {
   return WEEKDAYS.find((day) => day.id === ids[utcDay])?.label ?? "today";
 }
 
+const HIGH_HR_OF_LTHR = 0.95;
+const LOAD_HR_OF_LTHR = 0.9;
+const SHORT_RUN_RATIO = 0.85;
+const LOW_STEP_RATE_SPM = 160;
+const EASE_HIGH_HR = 0.9;
+const EASE_SHORT_HARD = 0.85;
+
 function easeFactor(signal: AdaptationSignal): number {
   if (signal === "feeling-off") return 0.75;
   if (signal === "skip") return 0.8;
-  return 0.9;
+  return 1;
 }
 
 function easedKind(signal: AdaptationSignal, kind: SessionKind): SessionKind {
@@ -173,10 +203,11 @@ function oneLine(value: string): string {
 }
 
 function summaryLine(tomorrow: Session | null, patch: AdaptationSessionPatch | null): string {
-  if (!tomorrow) return "No session tomorrow.";
+  if (!tomorrow) return "No upcoming session.";
   if (!patch) {
-    const label = tomorrow.title.split(" · ")[0] ?? "Tomorrow";
-    return `${label} is ${tomorrow.distanceKm} km tomorrow.`;
+    const label = tomorrow.title.split(" · ")[0] ?? "Session";
+    const when = weekdayLabel(tomorrow.date, tomorrow);
+    return `${label} is ${tomorrow.distanceKm} km ${when}.`;
   }
   const label = patch.title.split(" · ")[0] ?? "Tomorrow";
   if (patch.distanceKm < tomorrow.distanceKm) {
@@ -193,7 +224,57 @@ function reasonLine(signal: AdaptationSignal, sourceDate: string, todaySession: 
   if (signal === "feeling-off") {
     return `You were feeling off ${weekdayLabel(sourceDate, todaySession)}.`;
   }
-  return "Higher effort yesterday.";
+  return "Run logged. Tomorrow stays.";
+}
+
+function doneHoldReason(actualKm: number | null, plannedKm: number): string {
+  if (actualKm !== null && plannedKm > 0 && actualKm < plannedKm * SHORT_RUN_RATIO) {
+    return "Shorter than planned, without a hard heart-rate signal. Tomorrow stays.";
+  }
+  return "Run logged. Tomorrow stays.";
+}
+
+function heartRateRatio(effort: RunEffort | null): number | null {
+  if (!effort?.averageHr || !effort.lthr || effort.lthr <= 0) return null;
+  return effort.averageHr / effort.lthr;
+}
+
+function stepRateSpm(effort: RunEffort | null): number | null {
+  if (!effort) return null;
+  if (effort.stepRateSpm && effort.stepRateSpm > 0) return effort.stepRateSpm;
+  if (effort.cadenceRpm && effort.cadenceRpm > 0) return Math.round(effort.cadenceRpm * 2);
+  return null;
+}
+
+type EffortEase = { factor: number; easeKind: boolean; reason: string };
+
+function effortEase(
+  plannedKm: number,
+  actualKm: number | null,
+  effort: RunEffort | null,
+): EffortEase | null {
+  const ratio = heartRateRatio(effort);
+  if (ratio === null) return null;
+  const steps = stepRateSpm(effort);
+  const short = actualKm !== null && plannedKm > 0 && actualKm < plannedKm * SHORT_RUN_RATIO;
+  let factor = 1;
+  let easeKind = false;
+  let reason = "";
+  if (ratio >= HIGH_HR_OF_LTHR) {
+    factor = EASE_HIGH_HR;
+    easeKind = true;
+    reason = "Heart rate was high yesterday.";
+  }
+  if (short && ratio >= LOAD_HR_OF_LTHR && EASE_SHORT_HARD < factor) {
+    factor = EASE_SHORT_HARD;
+    reason = "Heart rate was high on a shorter run.";
+  }
+  if (steps !== null && steps < LOW_STEP_RATE_SPM && ratio >= LOAD_HR_OF_LTHR && EASE_HIGH_HR < factor) {
+    factor = EASE_HIGH_HR;
+    reason = "Heart rate was high and step rate was low.";
+  }
+  if (factor >= 1) return null;
+  return { factor, easeKind, reason };
 }
 
 function llmConfigured(): boolean {
@@ -230,6 +311,75 @@ export function decideHeuristic(input: {
       summary: summaryLine(input.tomorrow, patch),
       reason: reasonLine(input.signal, input.sourceDate, input.todaySession),
       sourceDate: input.sourceDate,
+    },
+  };
+}
+
+export function applyEffortToDecision(
+  decision: AdaptationDecision,
+  tomorrow: Session | null,
+  actualKm: number | null,
+  effort: RunEffort | null,
+): AdaptationDecision {
+  if (decision.signal !== "done" || !tomorrow || tomorrow.outcome) return decision;
+  const ease = effortEase(tomorrow.distanceKm, actualKm, effort);
+  if (!ease) {
+    return {
+      ...decision,
+      patch: null,
+      draft: {
+        ...decision.draft,
+        summary: summaryLine(tomorrow, null),
+        reason: doneHoldReason(actualKm, tomorrow.distanceKm),
+      },
+    };
+  }
+
+  const kind = ease.easeKind && HARD_KINDS.has(tomorrow.kind) ? "easy" : tomorrow.kind;
+  const next = presentSession(kind, tomorrow.distanceKm * ease.factor);
+  const unchanged = next.distanceKm === tomorrow.distanceKm && next.kind === tomorrow.kind;
+  const patch = unchanged ? null : { id: tomorrow.id, ...next };
+  const reason = unchanged ? `${ease.reason} Tomorrow stays at the same distance.` : ease.reason;
+  return {
+    ...decision,
+    patch,
+    draft: {
+      ...decision.draft,
+      summary: summaryLine(tomorrow, patch),
+      reason,
+    },
+  };
+}
+
+/** Skip and Feeling off cannot come back harder than the button ease. */
+export function enforceButtonFloor(
+  heuristic: AdaptationDecision,
+  overlaid: AdaptationDecision,
+  tomorrow: Session | null,
+): AdaptationDecision {
+  if (heuristic.signal === "done") return overlaid;
+  const floor = heuristic.patch;
+  if (!floor || !tomorrow) return overlaid;
+  const patch = overlaid.patch;
+  if (!patch) {
+    return {
+      ...overlaid,
+      patch: floor,
+      draft: { ...overlaid.draft, summary: summaryLine(tomorrow, floor), reason: heuristic.draft.reason },
+    };
+  }
+  const distanceKm = Math.min(patch.distanceKm, floor.distanceKm);
+  const kind = floor.kind === "easy" && patch.kind !== "easy" ? "easy" : patch.kind;
+  if (distanceKm === patch.distanceKm && kind === patch.kind) return overlaid;
+  const next = presentSession(kind, distanceKm);
+  const capped = { id: floor.id, ...next };
+  return {
+    ...overlaid,
+    patch: capped,
+    draft: {
+      ...overlaid.draft,
+      summary: summaryLine(tomorrow, capped),
+      reason: heuristic.draft.reason,
     },
   };
 }
@@ -321,12 +471,15 @@ async function callLlmOnce(
       {
         role: "system",
         content:
-          'Return only JSON: {"title":"Plan adjusted","summary":string,"reason":string,"distanceKm":number,"kind":"easy"|"intervals"|"tempo"|"long"}. title must be Plan adjusted. summary: one line what changes tomorrow (e.g. Easy run shortened to 5 km). reason: one line why (e.g. Higher effort yesterday / You skipped Tuesday). If actual run stats are present, compare them to the planned session (shorter/longer than planned, pace) when writing reason/summary and when choosing tomorrow distanceKm/kind. Clear provisional English. No CTL/ATL/TSB jargon. No coach chat.',
+          'Return only JSON: {"title":"Plan adjusted","summary":string,"reason":string,"distanceKm":number,"kind":"easy"|"intervals"|"tempo"|"long"}. title must be Plan adjusted. summary: one line what changes tomorrow (e.g. Easy run shortened to 5 km). reason: one line why, using the athlete feedback and the numbers, not a coach note. cadenceRpm is one-foot cadence; stepRateSpm is the full step rate. Compare actual distance and pace to the planned session. When averageHr and lthr are present, use that ratio. feedback "done" keeps tomorrow unless heart rate is high, the run was short with a high heart rate, or step rate was low under a high heart rate. feedback "skip" or "feeling-off" must not exceed proposed.distanceKm or leave kind easy when proposed.kind is easy. Do not invent missing numbers. Clear provisional English. No CTL/ATL/TSB jargon. No coach chat.',
       },
       {
         role: "user",
         content: JSON.stringify({
           feedback: decision.signal,
+          proposed: decision.patch
+            ? { distanceKm: decision.patch.distanceKm, kind: decision.patch.kind }
+            : null,
           today: todaySession
             ? {
                 date: todaySession.date,
@@ -398,20 +551,22 @@ async function llmAdjustOrSkip(
   return null;
 }
 
-function tomorrowSession(
+/** Next unfinished session after today. A rest day in between is skipped. */
+function nextPlannedSession(
   snapshot: AdaptationJobSnapshot,
   plan: Plan,
-  tomorrowYmd: string,
+  todayYmd: string,
 ): Session | null {
-  return (
-    snapshot.sessions.find(
+  const upcoming = snapshot.sessions
+    .filter(
       (session) =>
         session.userId === plan.userId &&
         session.planId === plan.id &&
-        session.date === tomorrowYmd &&
+        session.date > todayYmd &&
         !session.outcome,
-    ) ?? null
-  );
+    )
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  return upcoming[0] ?? null;
 }
 
 export function planDecisions(
@@ -419,7 +574,6 @@ export function planDecisions(
   now = new Date(),
 ): AdaptationDecision[] {
   const today = appTodayYmd(now);
-  const tomorrowYmd = addDaysYmd(today, 1);
   const decisions: AdaptationDecision[] = [];
 
   for (const plan of snapshot.plans) {
@@ -450,7 +604,7 @@ export function planDecisions(
           session.userId === plan.userId && session.planId === plan.id && session.date === sourceDate,
       ) ??
       null;
-    const tomorrow = tomorrowSession(snapshot, plan, tomorrowYmd);
+    const tomorrow = nextPlannedSession(snapshot, plan, today);
 
     decisions.push(
       decideHeuristic({
@@ -467,45 +621,80 @@ export function planDecisions(
   return decisions;
 }
 
+function plannedUploads(snapshot: AdaptationJobSnapshot, decisions: AdaptationDecision[]): PlannedRunUpload[] {
+  const uploads: PlannedRunUpload[] = [];
+  for (const decision of decisions) {
+    const patch = decision.patch;
+    if (!patch) continue;
+    const session = snapshot.sessions.find((entry) => entry.id === patch.id);
+    if (!session || session.outcome) continue;
+    uploads.push({
+      externalId: session.id,
+      date: session.date,
+      name: patch.title,
+      description: patch.cue,
+      distanceKm: patch.distanceKm,
+    });
+  }
+  return uploads;
+}
+
+function adaptCounts(
+  processed: number,
+  written: number,
+  skipped: number,
+  patched: number,
+  llmFailed: number,
+  uploaded = 0,
+  uploadFailed = 0,
+): AdaptRunCounts {
+  return { processed, written, skipped, patched, llmFailed, uploaded, uploadFailed };
+}
+
 export async function runNocturnalAdaptation(now = new Date()): Promise<AdaptRunCounts> {
   const snapshot = await getAdaptationJobSnapshot();
   const planned = planDecisions(snapshot, now);
   const decisions: AdaptationDecision[] = [];
   let llmFailed = 0;
 
-  for (const decision of planned) {
-    const tomorrow = decision.draft.sessionId
-      ? (snapshot.sessions.find((session) => session.id === decision.draft.sessionId) ?? null)
+  for (const plannedDecision of planned) {
+    const tomorrow = plannedDecision.draft.sessionId
+      ? (snapshot.sessions.find((session) => session.id === plannedDecision.draft.sessionId) ?? null)
       : null;
     const todaySession =
       snapshot.sessions.find(
         (session) =>
-          session.userId === decision.draft.userId && session.date === decision.draft.sourceDate,
+          session.userId === plannedDecision.draft.userId &&
+          session.date === plannedDecision.draft.sourceDate,
       ) ?? null;
-    const actual = llmActualFromRunLog(
-      runLogForSourceDay(snapshot, decision.draft.userId, decision.draft.sourceDate, todaySession),
+    const log = runLogForSourceDay(
+      snapshot,
+      plannedDecision.draft.userId,
+      plannedDecision.draft.sourceDate,
+      todaySession,
+    );
+    const effort = log ? await loadRunEffort(plannedDecision.draft.sourceDate, log.distanceKm) : null;
+    const actual = llmActualFromRunLog(log, effort);
+    let decision = applyEffortToDecision(
+      plannedDecision,
+      tomorrow,
+      actual?.distanceKm ?? null,
+      effort,
     );
 
     if (llmConfigured()) {
       const llmDecision = await llmAdjustOrSkip(decision, tomorrow, todaySession, actual);
       if (!llmDecision) {
         llmFailed += 1;
-        continue;
+      } else {
+        decision = enforceButtonFloor(decision, llmDecision, tomorrow);
       }
-      decisions.push(llmDecision);
-    } else {
-      decisions.push(decision);
     }
+    decisions.push(decision);
   }
 
   if (decisions.length === 0) {
-    return {
-      processed: snapshot.plans.length,
-      written: 0,
-      skipped: snapshot.plans.length - planned.length + llmFailed,
-      patched: 0,
-      llmFailed,
-    };
+    return adaptCounts(snapshot.plans.length, 0, snapshot.plans.length - planned.length + llmFailed, 0, llmFailed);
   }
 
   const written = await commitAdaptationRun({
@@ -513,13 +702,24 @@ export async function runNocturnalAdaptation(now = new Date()): Promise<AdaptRun
     drafts: decisions.map((decision) => decision.draft),
   });
 
-  return {
-    processed: snapshot.plans.length,
-    written: written.length,
-    skipped: snapshot.plans.length - planned.length + llmFailed,
-    patched: decisions.filter((decision) => decision.patch).length,
+  let uploaded = 0;
+  let uploadFailed = 0;
+  const uploads = written.length > 0 ? plannedUploads(snapshot, decisions) : [];
+  if (uploads.length > 0) {
+    const result = await upsertPlannedRuns(uploads);
+    uploaded = result.uploaded;
+    uploadFailed = result.failed;
+  }
+
+  return adaptCounts(
+    snapshot.plans.length,
+    written.length,
+    snapshot.plans.length - planned.length + llmFailed,
+    decisions.filter((decision) => decision.patch).length,
     llmFailed,
-  };
+    uploaded,
+    uploadFailed,
+  );
 }
 
 export function adaptRequestAuthorized(request: Request): boolean {

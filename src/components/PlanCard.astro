@@ -1,84 +1,195 @@
 ---
-import type { Session, WeekDayView } from "../lib/training";
-import { WEEKDAYS } from "../lib/training";
+import RunDetail from "./RunDetail.astro";
+import RunMap from "./RunMap.astro";
+import { planDayHref, planWeekHref } from "../lib/plan-week";
+import { EMPTY_RUN_ROUTE, WEEKDAYS, formatHms, formatPace, type RunLog, type Session, type WeekDayView } from "../lib/training";
 
 interface Props {
   days: WeekDayView[];
-  sessions: Session[];
+  laterSessions: Session[];
   today: string;
+  weekStart: string;
+  weekLabel: string;
+  selectedDay: string;
+  canPrev: boolean;
+  canNext: boolean;
+  prevWeek: string;
+  nextWeek: string;
+  session: Session | null;
+  runLog: RunLog | null;
 }
 
-const { days, sessions, today } = Astro.props;
+const {
+  days,
+  laterSessions,
+  today,
+  weekStart,
+  weekLabel,
+  selectedDay,
+  canPrev,
+  canNext,
+  prevWeek,
+  nextWeek,
+  session,
+  runLog,
+} = Astro.props;
 
 function dayLabel(weekday: Session["weekday"]): string {
   return WEEKDAYS.find((day) => day.id === weekday)?.label.slice(0, 3) ?? weekday;
 }
+
+const route = runLog?.route ?? EMPTY_RUN_ROUTE;
+const showRun = Boolean(runLog);
+const awaitingRun = Boolean(session && session.date <= today && !runLog);
 ---
 
 <article
   class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
   aria-labelledby="plan-view-title"
 >
-  <h1
-    id="plan-view-title"
-    class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase"
-  >
+  <h1 id="plan-view-title" class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">
     Plan
   </h1>
 
-  <ol class="mt-5 flex items-center justify-between gap-1" aria-label="Week strip">
+  <div class="mt-5 flex items-center justify-between gap-3">
     {
-      days.map((day) => (
-        <li class="flex flex-1 justify-center">
-          <span
-            class:list={[
-              "relative grid h-9 w-9 place-items-center rounded-full text-xs font-semibold",
-              day.isToday ? "bg-lime text-ink" : "border border-white/12 text-mist",
-            ]}
-            aria-current={day.isToday ? "date" : undefined}
-            aria-label={day.isToday ? `${day.label}, today` : day.label}
-          >
-            {day.abbr}
-            {day.hasSession && !day.isToday && (
-              <span class="absolute -bottom-1.5 h-1 w-1 rounded-full bg-lime/80" aria-hidden="true" />
-            )}
-          </span>
-        </li>
-      ))
+      canPrev ? (
+        <a
+          href={planWeekHref(prevWeek)}
+          class="grid h-11 w-11 place-items-center rounded-full border border-white/12 text-cloud transition-colors hover:border-lime/50"
+          aria-label="Previous week"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M10 3.5 5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </a>
+      ) : (
+        <span class="grid h-11 w-11 place-items-center rounded-full border border-white/8 text-mist/40" aria-hidden="true">
+          <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none">
+            <path d="M10 3.5 5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </span>
+      )
+    }
+    <p class="text-sm font-semibold text-cloud tabular-nums">{weekLabel}</p>
+    {
+      canNext ? (
+        <a
+          href={planWeekHref(nextWeek)}
+          class="grid h-11 w-11 place-items-center rounded-full border border-white/12 text-cloud transition-colors hover:border-lime/50"
+          aria-label="Next week"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </a>
+      ) : (
+        <span class="grid h-11 w-11 place-items-center rounded-full border border-white/8 text-mist/40" aria-hidden="true">
+          <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none">
+            <path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </span>
+      )
+    }
+  </div>
+
+  <ol class="mt-4 flex items-center justify-between gap-1" aria-label="Week strip">
+    {
+      days.map((day) => {
+        const selected = day.ymd === selectedDay;
+        return (
+          <li class="flex flex-1 justify-center">
+            <a
+              href={planDayHref(weekStart, day.ymd)}
+              class:list={[
+                "relative grid h-11 w-11 place-items-center rounded-full text-xs font-semibold",
+                day.isToday
+                  ? "bg-lime text-ink"
+                  : selected
+                    ? "border border-lime text-cloud"
+                    : "border border-white/12 text-mist",
+              ]}
+              aria-current={selected ? "date" : undefined}
+              aria-label={day.isToday ? `${day.label}, today` : day.label}
+            >
+              {day.abbr}
+              {day.hasSession && !day.isToday && (
+                <span class="absolute -bottom-1 h-1 w-1 rounded-full bg-lime/80" aria-hidden="true" />
+              )}
+            </a>
+          </li>
+        );
+      })
     }
   </ol>
 
-  {
-    sessions.length > 0 ? (
-      <ul class="mt-5 divide-y divide-white/10 border-y border-white/10">
-        {sessions.map((session) => (
-          <li class="flex items-center justify-between gap-3 py-3">
-            <div class="min-w-0">
-              <p class="text-[0.62rem] font-semibold tracking-wider text-mist uppercase">
-                {dayLabel(session.weekday)}
-              </p>
-              <p class="mt-1 truncate text-sm font-medium text-cloud">{session.title}</p>
+  <section class="mt-5 border-t border-white/10 pt-5" aria-labelledby="plan-day-title">
+    {
+      session ? (
+        <>
+          <p id="plan-day-title" class="text-[0.62rem] font-semibold tracking-wider text-mist uppercase">
+            {dayLabel(session.weekday)}
+            {session.date === today ? " · Today" : ""}
+          </p>
+          <p class="mt-2 text-sm font-medium text-cloud">{session.title}</p>
+          <p class="mt-1 text-sm leading-6 text-[#d6ded6]">{session.cue}</p>
+          {session.date === today ? (
+            <a href="/today" class="mt-3 inline-flex text-[0.62rem] font-semibold tracking-wider text-lime uppercase">
+              Open today
+            </a>
+          ) : null}
+          {showRun && runLog ? (
+            <div class="mt-4">
+              <dl class="grid grid-cols-3 divide-x divide-white/10">
+                <div class="pr-3">
+                  <dt class="text-[0.58rem] tracking-wider text-mist uppercase">Distance</dt>
+                  <dd class="mt-1 text-sm font-semibold text-cloud tabular-nums">{runLog.distanceKm} km</dd>
+                </div>
+                <div class="px-3">
+                  <dt class="text-[0.58rem] tracking-wider text-mist uppercase">Time</dt>
+                  <dd class="mt-1 text-sm font-semibold text-cloud tabular-nums">{formatHms(runLog.timeSec)}</dd>
+                </div>
+                <div class="pl-3">
+                  <dt class="text-[0.58rem] tracking-wider text-mist uppercase">Pace</dt>
+                  <dd class="mt-1 text-sm font-semibold text-cloud tabular-nums">{formatPace(runLog.paceSecPerKm)}</dd>
+                </div>
+              </dl>
+              {route.type === "polyline" || (route.samples?.length ?? 0) >= 2 ? (
+                <div class="mt-4">
+                  {route.type === "polyline" ? <RunMap route={route} /> : null}
+                  <RunDetail runLog={runLog} />
+                </div>
+              ) : null}
             </div>
-            {session.outcome === "done" ? (
-              <span class="shrink-0 text-[0.62rem] font-semibold tracking-wider text-mist uppercase">
-                Done
-              </span>
-            ) : session.outcome === "skipped" ? (
-              <span class="shrink-0 text-[0.62rem] font-semibold tracking-wider text-mist uppercase">
-                Skipped
-              </span>
-            ) : session.date === today ? (
-              <span class="shrink-0 text-[0.62rem] font-semibold tracking-wider text-lime uppercase">
-                Today
-              </span>
-            ) : null}
+          ) : awaitingRun ? (
+            <p class="mt-3 text-sm leading-6 text-[#d6ded6]">No run logged.</p>
+          ) : null}
+        </>
+      ) : (
+        <p id="plan-day-title" class="text-sm leading-6 text-[#d6ded6]">
+          No session.
+        </p>
+      )
+    }
+  </section>
+
+  {
+    laterSessions.length > 0 && (
+      <ul class="mt-5 divide-y divide-white/10 border-y border-white/10">
+        {laterSessions.map((item) => (
+          <li>
+            <a href={planDayHref(weekStart, item.date)} class="flex items-center justify-between gap-3 py-3">
+              <div class="min-w-0">
+                <p class="text-[0.62rem] font-semibold tracking-wider text-mist uppercase">{dayLabel(item.weekday)}</p>
+                <p class="mt-1 truncate text-sm font-medium text-cloud">{item.title}</p>
+              </div>
+              {item.date === today ? (
+                <span class="shrink-0 text-[0.62rem] font-semibold tracking-wider text-lime uppercase">Today</span>
+              ) : null}
+            </a>
           </li>
         ))}
       </ul>
-    ) : (
-      <p class="mt-5 border-y border-white/10 py-4 text-sm leading-6 text-[#d6ded6]">
-        No more sessions this week.
-      </p>
     )
   }
 </article>

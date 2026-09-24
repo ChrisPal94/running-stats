@@ -3,75 +3,29 @@ import type { RunRoute } from "../lib/training";
 
 interface Props {
   route: RunRoute;
+  height?: string;
 }
 
-const { route } = Astro.props;
-const width = 300;
-const height = 140;
-const padding = 18;
+const { route, height = "10.5rem" } = Astro.props;
 const coords = route.type === "polyline" ? route.coords : [];
 const hasPolyline = coords.length >= 2;
-
-const svgPoints = hasPolyline
-  ? (() => {
-      const lats = coords.map((point) => point.lat);
-      const lngs = coords.map((point) => point.lng);
-      const minLat = Math.min(...lats);
-      const maxLat = Math.max(...lats);
-      const minLng = Math.min(...lngs);
-      const maxLng = Math.max(...lngs);
-      const latSpan = Math.max(maxLat - minLat, 0.00001);
-      const lngSpan = Math.max(maxLng - minLng, 0.00001);
-      const innerW = width - padding * 2;
-      const innerH = height - padding * 2;
-      return coords.map((point) => ({
-        x: padding + ((point.lng - minLng) / lngSpan) * innerW,
-        y: padding + ((maxLat - point.lat) / latSpan) * innerH,
-      }));
-    })()
-  : [];
-
-const pathD = svgPoints
-  .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
-  .join(" ");
-const start = svgPoints.at(0);
-const end = svgPoints.at(-1);
+const coordJson = hasPolyline ? JSON.stringify(coords.map((point) => [point.lat, point.lng])) : "[]";
 ---
 
-<div
-  class="relative isolate overflow-hidden rounded-2xl border border-white/12 bg-[#0a1213]"
-  style="height: 10.5rem"
->
-  <svg
-    class="absolute inset-0 h-full w-full text-white/10"
-    viewBox={`0 0 ${width} ${height}`}
-    preserveAspectRatio="none"
-    aria-hidden="true"
-  >
-    <path d="M20 20h260M20 50h260M20 80h260M20 110h260" stroke="currentColor" stroke-width="1" />
-    <path d="M20 10v120M80 10v120M140 10v120M200 10v120M260 10v120" stroke="currentColor" stroke-width="1" />
-  </svg>
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin=""
+/>
 
+<div
+  class="relative isolate shrink-0 overflow-hidden rounded-2xl border border-white/12 bg-[#0a1213]"
+  style={`height: ${height}`}
+>
   {
-    hasPolyline && pathD && start && end ? (
-      <svg
-        class="absolute inset-0 h-full w-full text-lime"
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="xMidYMid meet"
-        role="img"
-        aria-label="Run route"
-      >
-        <path
-          d={pathD}
-          fill="none"
-          stroke="currentColor"
-          stroke-width="3"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-        <circle cx={start.x} cy={start.y} r="5" fill="#05090b" stroke="currentColor" stroke-width="3" />
-        <circle cx={end.x} cy={end.y} r="5" fill="currentColor" />
-      </svg>
+    hasPolyline ? (
+      <div class="run-map absolute inset-0" data-run-map data-coords={coordJson} role="img" aria-label="Run route on the map"></div>
     ) : (
       <div class="relative z-10 flex h-full flex-col items-center justify-center gap-2 px-4">
         <svg class="h-10 w-7 text-lime" viewBox="0 0 24 36" fill="none" aria-hidden="true">
@@ -86,3 +40,78 @@ const end = svgPoints.at(-1);
     )
   }
 </div>
+
+<script is:inline src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script is:inline>
+  (() => {
+    if (window.__rsRunMaps) return;
+    window.__rsRunMaps = true;
+    const maps = new WeakMap();
+
+    const mount = (root) => {
+      if (!window.L) return;
+      root.querySelectorAll("[data-run-map]").forEach((el) => {
+        if (!(el instanceof HTMLElement)) return;
+        if (el.getClientRects().length === 0) return;
+        const existing = maps.get(el);
+        if (existing) {
+          existing.invalidateSize();
+          if (existing._rsBounds) existing.fitBounds(existing._rsBounds, { padding: [18, 18] });
+          return;
+        }
+        let coords = [];
+        try {
+          coords = JSON.parse(el.dataset.coords || "[]");
+        } catch {
+          coords = [];
+        }
+        if (!Array.isArray(coords) || coords.length < 2) return;
+        const map = window.L.map(el, { zoomControl: true, attributionControl: true });
+        window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+          attribution: "&copy; OpenStreetMap",
+        }).addTo(map);
+        const line = window.L.polyline(coords, { color: "#b8f52c", weight: 4, opacity: 0.95 }).addTo(map);
+        const start = coords[0];
+        const end = coords[coords.length - 1];
+        window.L.circleMarker(start, {
+          radius: 6,
+          color: "#b8f52c",
+          weight: 3,
+          fillColor: "#05090b",
+          fillOpacity: 1,
+        }).addTo(map);
+        window.L.circleMarker(end, {
+          radius: 6,
+          color: "#b8f52c",
+          weight: 3,
+          fillColor: "#b8f52c",
+          fillOpacity: 1,
+        }).addTo(map);
+        const bounds = line.getBounds();
+        map._rsBounds = bounds;
+        map.fitBounds(bounds, { padding: [18, 18] });
+        maps.set(el, map);
+        requestAnimationFrame(() => {
+          map.invalidateSize();
+          map.fitBounds(bounds, { padding: [18, 18] });
+        });
+      });
+    };
+
+    const boot = () => mount(document);
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+    else boot();
+
+    document.addEventListener(
+      "toggle",
+      (event) => {
+        const dialog = event.target;
+        if (dialog instanceof HTMLDialogElement && dialog.open) {
+          requestAnimationFrame(() => mount(dialog));
+        }
+      },
+      true,
+    );
+  })();
+</script>
