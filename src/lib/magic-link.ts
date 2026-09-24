@@ -30,7 +30,7 @@ const TOKEN_BYTES = 32;
 
 export const MAGIC_LINK_TTL_MS = 15 * 60 * 1000;
 export const MAGIC_LINK_RESEND_MS = 30 * 1000;
-export const MAGIC_LINK_SUBJECT = "Your Running Stats sign-in link";
+export const MAGIC_LINK_SUBJECT = "Your Stride Lab sign-in link";
 export const MAGIC_SEND_ERROR = "Couldn’t send the link. Try again.";
 export const MAGIC_INVALID_EMAIL = "Enter a valid email";
 export const MAGIC_EXPIRED_TOAST = "That link expired. Request a new one.";
@@ -76,7 +76,7 @@ export function isMagicMailConfigured(): boolean {
 function fromHeader(): string {
   const from = mailFromAddress();
   if (from.includes("<")) return from;
-  return `Running Stats <${from}>`;
+  return `Stride Lab <${from}>`;
 }
 
 export function hashMagicToken(raw: string): string {
@@ -155,7 +155,7 @@ function magicLinkHtml(signInUrl: string): string {
   return `<!doctype html>
 <html>
   <body style="font-family:Arial,sans-serif;background:#05090b;color:#f4f7f2;padding:24px;">
-    <p>Sign in to Running Stats. This link expires in 15 minutes and can only be used once.</p>
+    <p>Sign in to Stride Lab. This link expires in 15 minutes and can only be used once.</p>
     <p>
       <a href="${safeUrl}" style="display:inline-block;background:#b8f52c;color:#05090b;font-weight:700;text-decoration:none;padding:12px 20px;border-radius:999px;">Sign in</a>
     </p>
@@ -165,7 +165,7 @@ function magicLinkHtml(signInUrl: string): string {
 }
 
 function magicLinkText(signInUrl: string): string {
-  return `Sign in to Running Stats:\n${signInUrl}\n\nThis link expires in 15 minutes and can only be used once.`;
+  return `Sign in to Stride Lab:\n${signInUrl}\n\nThis link expires in 15 minutes and can only be used once.`;
 }
 
 function escapeHtml(value: string): string {

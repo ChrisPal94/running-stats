@@ -1,4 +1,4 @@
-# Running Stats
+# Stride Lab
 
 <!-- impeccable:product-schema 1 -->
 
@@ -16,7 +16,7 @@ Primary users are runners who want to know what to run today, see the week at a 
 
 ## Product Purpose
 
-Running Stats is a coach AI for an adaptive training plan. One plan is shown as three views:
+Stride Lab is a coach AI for an adaptive training plan. One plan is shown as three views:
 
 - **Hoy (Today):** the next session to run.
 - **Plan:** the week, with no more than three sessions in focus.
@@ -54,7 +54,7 @@ Users evaluate the product on a marketing landing page, then start or return to 
 
 ## Brand Commitments
 
-- Product name: Running Stats.
+- Product name: Stride Lab.
 - Visual references supplied by the user define the athletic composition, dark palette, lime accent, and supplied background artwork.
 - The supplied background must not use zoom, parallax, or scale animation.
 
