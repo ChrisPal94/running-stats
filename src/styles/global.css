@@ -43,10 +43,14 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
-a {
-  color: inherit;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.3em;
+/* Unlayered `a { color }` beats Tailwind text-* utilities and washed the
+   lime CTAs to cloud. Keep link defaults in base so `text-ink` can win. */
+@layer base {
+  a {
+    color: inherit;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.3em;
+  }
 }
 
 ::selection {
@@ -199,6 +203,125 @@ dialog.app-sheet::backdrop {
   }
   100% {
     opacity: 0;
+  }
+}
+
+/* Landing arrival (index): markup never hides content. The inline index
+   script adds `land-pending` only when IntersectionObserver exists and
+   prefers-reduced-motion is not `reduce`; on first intersect it swaps in
+   `land-in` and unobserves. Animations use `both` fill so the stagger delay
+   is covered by the from-state. Transform, opacity, clip-path only. */
+.land-pending {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+/* Product cards assemble via clip-path reveal, not a generic fade-up.
+   Do not clip the pending box: inset(0 0 100% 0) empties the
+   IntersectionObserver rect, so the cards never receive land-in.
+   The clip lives in @keyframes land-clip; fill-mode both holds it
+   through the stagger delay once land-in starts. */
+.land-pending.land-clip {
+  transform: none;
+}
+
+/* How-it-works hairline: final state is the drawn lime line, so no-JS and
+   reduced-motion visitors see the finished design; only pending starts at 0. */
+.land-hairline {
+  position: relative;
+}
+
+.land-hairline::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--color-lime);
+  transform: scaleX(1);
+  transform-origin: left center;
+}
+
+.land-pending.land-hairline::before {
+  transform: scaleX(0);
+}
+
+.land-in {
+  animation: land-rise 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.land-in.land-clip {
+  animation-name: land-clip;
+  animation-duration: 640ms;
+}
+
+/* Hairline steps fade in place while their lime line draws left-to-right. */
+.land-pending.land-hairline {
+  transform: none;
+}
+
+.land-in.land-hairline {
+  animation-name: land-fade;
+}
+
+.land-in.land-hairline::before {
+  animation: land-hairline 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.land-in[data-land-delay="80"],
+.land-in.land-hairline[data-land-delay="80"]::before {
+  animation-delay: 80ms;
+}
+
+.land-in[data-land-delay="160"],
+.land-in.land-hairline[data-land-delay="160"]::before {
+  animation-delay: 160ms;
+}
+
+.land-in[data-land-delay="240"] {
+  animation-delay: 240ms;
+}
+
+@keyframes land-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes land-clip {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+    transform: none;
+  }
+}
+
+@keyframes land-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes land-hairline {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
   }
 }
 

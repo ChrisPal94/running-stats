@@ -1,6 +1,7 @@
 ---
 import { Image } from "astro:assets";
 import heroBackground from "../assets/hero-background.jpg";
+import heroVideo from "../assets/hero-background.mp4?url";
 import ActivitySummary from "./ActivitySummary.astro";
 import Header from "./Header.astro";
 import RunStatCard from "./RunStatCard.astro";
@@ -19,6 +20,18 @@ import PrimaryCta from "./PrimaryCta.astro";
     fetchpriority="high"
     class="absolute inset-0 -z-30 h-full w-full object-cover object-center"
   />
+  <video
+    class="hero-bg-video absolute inset-0 -z-30 h-full w-full object-cover object-center"
+    autoplay
+    muted
+    loop
+    playsinline
+    preload="auto"
+    disablepictureinpicture
+    aria-hidden="true"
+  >
+    <source src={heroVideo} type="video/mp4" />
+  </video>
   <div
     class="absolute inset-0 -z-20 bg-[linear-gradient(90deg,rgba(5,9,11,0.05)_0%,rgba(5,9,11,0.02)_54%,rgba(5,9,11,0.18)_100%)]"
     aria-hidden="true"
@@ -91,15 +104,27 @@ import PrimaryCta from "./PrimaryCta.astro";
     transform: skewX(-12deg);
   }
 
+  .hero-bg-video {
+    transform: none;
+  }
+
   @media (max-width: 1023px) {
-    .hero-stage :global(img) {
+    .hero-stage :global(img),
+    .hero-bg-video {
       object-position: 58% center;
     }
   }
 
   @media (max-width: 639px) {
-    .hero-stage :global(img) {
+    .hero-stage :global(img),
+    .hero-bg-video {
       object-position: 54% center;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero-bg-video {
+      display: none;
     }
   }
 </style>
