@@ -5,8 +5,8 @@ import IntervalsExpiredNotice from "../components/IntervalsExpiredNotice.astro";
 import TodayCard from "../components/TodayCard.astro";
 import AppShell from "../layouts/AppShell.astro";
 import { refreshIntervalsConnectionView } from "../lib/intervals";
-import { isSameOrigin } from "../lib/public-origin";
 import { requireAppSession } from "../lib/app-session";
+import { applyTodayPost } from "../lib/today-post";
 import {
   getAdaptationEventForToday,
   getFeedbackForDate,
@@ -17,7 +17,6 @@ import {
   getSessionForToday,
   cooperPendingHint,
   formatNextRunHint,
-  handleTodayPost,
   type RunLogFormDraft,
 } from "../lib/training";
 
@@ -34,21 +33,13 @@ let logDraft: RunLogFormDraft | null = null;
 let feedbackError = "";
 
 if (Astro.request.method === "POST") {
-  if (isSameOrigin(Astro.request)) {
-    const result = await handleTodayPost(user.id, await Astro.request.formData());
-    if (result.ok) {
-      return Astro.redirect(result.redirect);
-    }
-    if (result.logOpen) {
-      logError = result.error;
-      logOpen = true;
-      logDraft = result.draft;
-    } else {
-      feedbackError = result.error;
-    }
-  } else {
-    return Astro.redirect("/today");
-  }
+  const outcome = await applyTodayPost(Astro.request, user.id);
+  if (outcome.kind === "response") return outcome.response;
+  if (outcome.kind === "redirect") return Astro.redirect(outcome.location);
+  logError = outcome.logError;
+  logOpen = outcome.logOpen;
+  logDraft = outcome.logDraft;
+  feedbackError = outcome.feedbackError;
 }
 
 const intervalsConnection = await refreshIntervalsConnectionView(user.id);

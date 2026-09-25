@@ -5,10 +5,8 @@ import ConnectedApps from "../components/ConnectedApps.astro";
 import WhichRunSheet from "../components/WhichRunSheet.astro";
 import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession, userInitial } from "../lib/app-session";
-import { isSameOrigin } from "../lib/public-origin";
 import {
   INTERVALS_CONNECTED_TOAST,
-  denyIntervalsPostCsrf,
   intervalsEncryptionReady,
   intervalsOAuthSettingsError,
   intervalsSyncToastCopy,
@@ -17,9 +15,9 @@ import {
   type IntervalsSyncToast,
 } from "../lib/intervals";
 import { isIntervalsOAuthConfigured } from "../lib/intervals-oauth";
+import { applySettingsPost } from "../lib/settings-post";
 import {
   FEEDBACK_CADENCES,
-  handleSettingsPost,
   normalizeFeedbackCadence,
   type FeedbackCadence,
   type IntervalsRunPickerState,
@@ -40,37 +38,14 @@ let runPicker: IntervalsRunPickerState | null = null;
 let selectedCadence: FeedbackCadence = normalizeFeedbackCadence(plan.feedbackCadence);
 
 if (Astro.request.method === "POST") {
-  const formData = await Astro.request.formData();
-  const intent = String(formData.get("intent") ?? "").trim();
-  if (intent === "save-cadence") {
-    selectedCadence = normalizeFeedbackCadence(String(formData.get("feedbackCadence") ?? ""));
-  }
-  const csrfDenied = denyIntervalsPostCsrf(Astro.request, intent);
-  if (csrfDenied) return csrfDenied;
-  if (!isSameOrigin(Astro.request)) {
-    cadenceError = "This request could not be verified. Try again.";
-  } else {
-    if (intent === "intervals-connect") {
-      athleteIdDraft = String(formData.get("intervalsAthleteId") ?? "").trim().slice(0, 16);
-    }
-    const result = await handleSettingsPost(user.id, formData);
-    if (result.ok) {
-      if ("picker" in result) {
-        runPicker = result.picker;
-      } else {
-        return Astro.redirect(result.redirect);
-      }
-    } else if (result.status === 403) {
-      return new Response(result.error, {
-        status: 403,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      });
-    } else if (result.section === "intervals") {
-      intervalsError = result.error;
-    } else {
-      cadenceError = result.error;
-    }
-  }
+  const outcome = await applySettingsPost(Astro.request, user.id, selectedCadence);
+  if (outcome.kind === "response") return outcome.response;
+  if (outcome.kind === "redirect") return Astro.redirect(outcome.location);
+  cadenceError = outcome.cadenceError;
+  intervalsError = outcome.intervalsError;
+  athleteIdDraft = outcome.athleteIdDraft;
+  runPicker = outcome.runPicker;
+  selectedCadence = outcome.selectedCadence;
 }
 
 const saved = Astro.url.searchParams.get("saved") === "1";

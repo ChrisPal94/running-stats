@@ -667,6 +667,7 @@ export async function runNocturnalAdaptation(
   const planned = planDecisions(snapshot, now);
   const decisions: AdaptationDecision[] = [];
   let llmFailed = 0;
+  let accountFailed = 0;
   let noConnection = 0;
   let reconnectNeeded = 0;
   let loggedEncryption = false;
@@ -735,16 +736,19 @@ export async function runNocturnalAdaptation(
       }
       decisions.push(decision);
     } catch (error) {
+      accountFailed += 1;
       const name = error instanceof Error ? error.name : "Error";
       console.error(`[intervals] adapt account failed ${name}`);
     }
   }
 
+  const skipped = snapshot.plans.length - planned.length + llmFailed + accountFailed;
+
   if (decisions.length === 0) {
     return adaptCounts(
       snapshot.plans.length,
       0,
-      snapshot.plans.length - planned.length + llmFailed,
+      skipped,
       0,
       llmFailed,
       0,
@@ -802,7 +806,7 @@ export async function runNocturnalAdaptation(
   return adaptCounts(
     snapshot.plans.length,
     written.length,
-    snapshot.plans.length - planned.length + llmFailed,
+    skipped,
     decisions.filter((decision) => decision.patch).length,
     llmFailed,
     uploaded,

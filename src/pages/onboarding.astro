@@ -6,6 +6,7 @@ import BrandLogo from "../components/BrandLogo.astro";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import { getCurrentUser } from "../lib/auth";
 import { isSameOrigin } from "../lib/public-origin";
+import { invalidFormResponse, readFormData } from "../lib/safe-form-data";
 import {
   getOnboarding,
   getPlanForUser,
@@ -36,7 +37,9 @@ if (Astro.request.method === "POST") {
     const requested = Number(Astro.url.searchParams.get("step"));
     step = onboardingStep(draft, Number.isFinite(requested) ? requested : null);
   } else {
-    const result = await handleOnboardingPost(user.id, await Astro.request.formData());
+    const formData = await readFormData(Astro.request);
+    if (!formData) return invalidFormResponse();
+    const result = await handleOnboardingPost(user.id, formData);
     if (result.ok) {
       return Astro.redirect(result.redirect);
     }
