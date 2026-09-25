@@ -75,7 +75,7 @@ function redirect(path: string): Response {
 }
 
 function postLogout(cookies: AstroCookies): Promise<Response> {
-  return POST({ cookies, redirect } as APIContext);
+  return Promise.resolve(POST({ cookies, redirect } as APIContext));
 }
 
 function signToken(payload: { sub: string; exp: number; epoch: number }): string {
