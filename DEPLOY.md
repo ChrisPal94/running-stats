@@ -47,11 +47,56 @@ Google Cloud Console: add the production authorized redirect URI before testing 
 
 After this deploy, Intervals is unavailable for everyone until the owner signs in once with Google (`email_verified === true` on the userinfo or id token; false or missing does not count) or a magic link. That sign-in sets `emailVerifiedAt`. Password signup and password login do not. If the account was unverified, that first verified sign-in clears the password hash and invalidates every existing session in one database transaction, then issues the new session. A later sign-in on an already-verified account does not clear the password.
 
+If the real training account is not already `crispal94@gmail.com`, follow the owner runbook below before expecting Intervals to work. Do not run the Intervals cleanup until that Google sign-in has set `emailVerifiedAt`.
+
 Do not commit a production `.env`. Railway variables are enough at runtime (`process.env`); no `.env` file is required on the host.
+
+## Owner runbook
+
+Run these on the **web** service (the service that mounts `.data` / `app.db`, workdir `/app`). Do not run them on the cron service; that service has no volume.
+
+1. Set `INTERVALS_OWNER_EMAILS=crispal94@gmail.com` on the web service.
+2. Deploy.
+3. Dry-run the email reassign, share the output, then apply. `<realEmail>` is the account that already holds the plan and run history.
+
+```bash
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --apply
+```
+
+4. Sign in on the site with Google as `crispal94@gmail.com` (`email_verified` must be true). That sets `emailVerifiedAt` on the renamed account.
+5. Dry-run the Intervals cleanup, share the output, then apply.
+
+```bash
+npm run cleanup:intervals-nonowners
+npm run cleanup:intervals-nonowners -- --apply
+```
+
+Do not run step 5 before step 4. Until `emailVerifiedAt` is set, the allowlisted address is still a non-owner, and cleanup `--apply` would delete that account’s Intervals run logs.
+
+## One-off: reassign the owner email
+
+Default is a dry run. Addresses are trim + lowercase. It prints the FROM user (`id`, stored `email`, counts of onboarding, plans, training sessions, feedbacks, run logs, adaptation events, Intervals connection, magic-link tokens), the TO user (`id` or `none`, the same counts, `deletable=yes|no`), and the planned change. It does not write.
+
+```bash
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com
+```
+
+`--apply` deletes the TO user and renames FROM in one transaction:
+
+```bash
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --apply
+```
+
+- FROM must already exist. If it does not, the script exits 1 and changes nothing.
+- TO is deleted only when it has no rows in any table keyed by `userId` (onboarding, plans, training `sessions`, feedbacks, run logs, adaptation events, Intervals connection, plus any later table that adds `userId`). If any of those exist, the script exits 1 and prints the counts. It does not move those rows onto FROM.
+- Deleting TO also deletes magic-link tokens for that email. Auth sessions are stateless HMAC cookies checked against the user row, so removing the user invalidates them. There is no session table.
+- FROM’s email becomes the target address. `emailVerifiedAt` is set to null and is not backfilled. `passwordHash`, `googleId`, and every training row stay on that same user id.
+- Google accounts are stored on `users.googleId` (the provider subject), not on the email. This script does not change `googleId`. The next Google sign-in looks up that subject first, then the normalized email. A sign-in whose email is the new address and whose subject is not already on another user resolves to the renamed row, stores that subject on it, and — because `emailVerifiedAt` is null — marks it verified, clears `passwordHash`, and invalidates older sessions. Plans, sessions, feedback, run logs, adaptation events, onboarding, and the Intervals connection stay on that user id.
 
 ## One-off: remove non-owner Intervals imports
 
-Run this once on the **web** service (the service that mounts `.data` / `app.db`), after `INTERVALS_OWNER_EMAILS` is set to `crispal94@gmail.com`. Do not run it on the cron service; that service has no volume.
+Run this once on the **web** service, after the owner runbook’s Google sign-in. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` and that account’s `emailVerifiedAt` must be set. Do not run it on the cron service; that service has no volume.
 
 Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
 
