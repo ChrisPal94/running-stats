@@ -36,7 +36,7 @@ export type UserRecord = {
   googleId?: string;
   /** Set when Google or a magic link proves the address. Null from `getUserById` means unverified. */
   emailVerifiedAt?: string | null;
-  /** Bumped when an unverified account becomes verified so older session cookies fail. */
+  /** Bumped to reject older session cookies (email verification and logout). */
   sessionEpoch?: number;
 };
 
@@ -974,6 +974,16 @@ export function verifyUserEmail(userId: string, verifiedAt: string, googleId?: s
 
 export function insertUser(user: UserRecord): void {
   withTransaction(() => insertUserRow(user));
+}
+
+/** Invalidate every existing session cookie for this user. */
+export function incrementUserSessionEpoch(userId: string): void {
+  withTransaction(() => {
+    run(
+      "UPDATE users SET sessionEpoch = COALESCE(sessionEpoch, 0) + 1 WHERE id = ?",
+      userId,
+    );
+  });
 }
 
 export function setUserGoogleId(userId: string, googleId: string): void {

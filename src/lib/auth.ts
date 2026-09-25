@@ -6,6 +6,7 @@ import {
   getUserByEmail,
   getUserByGoogleId,
   getUserById,
+  incrementUserSessionEpoch,
   insertUser,
   verifyUserEmail,
   withTransaction,
@@ -31,6 +32,10 @@ const PASSWORD_MAX = 128;
 
 export const GOOGLE_AUTH_ERROR =
   "Couldn’t connect to Google. Try email or try again.";
+
+/** Duplicate password signup. Does not say whether the address is registered. */
+export const SIGNUP_DUPLICATE_ERROR =
+  "Couldn’t create your account. If you already have one, log in or continue with Google.";
 
 /** Shown on /login for Google and magic-link sign-in failures. No account or address details. */
 export const SIGN_IN_ERROR = "Couldn’t sign in. Try again or use another method.";
@@ -202,6 +207,29 @@ export async function getCurrentUser(cookies: AstroCookies): Promise<AuthUser | 
   return publicUser(user);
 }
 
+/**
+ * /login and /signup. A present but rejected `rs_session` (bad signature,
+ * expired, stale epoch, or garbage) is removed so the form can render.
+ * A still-valid session is left in place for the page to redirect.
+ */
+export async function getAuthPageUser(cookies: AstroCookies): Promise<AuthUser | null> {
+  const hadCookie = cookies.get(SESSION_COOKIE)?.value !== undefined;
+  const user = await getCurrentUser(cookies);
+  if (hadCookie && !user) clearSessionCookie(cookies);
+  return user;
+}
+
+/**
+ * End this user's sessions on every device by bumping `sessionEpoch`, then
+ * clear the cookie on this response. POST /logout checks Origin before calling
+ * this. No valid session: clear the cookie and return.
+ */
+export async function logoutSession(cookies: AstroCookies): Promise<void> {
+  const user = await getCurrentUser(cookies);
+  if (user) incrementUserSessionEpoch(user.id);
+  clearSessionCookie(cookies);
+}
+
 export async function signupFromForm(
   request: Request,
   cookies: AstroCookies,
@@ -223,7 +251,7 @@ export async function signupFromForm(
       if (getUserByEmail(email)) {
         return {
           ok: false,
-          error: "An account with this email already exists. Log in to continue.",
+          error: SIGNUP_DUPLICATE_ERROR,
           email,
         };
       }

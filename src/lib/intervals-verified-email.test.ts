@@ -812,7 +812,11 @@ describe("password signup and login edges", () => {
       );
       assert.equal(again.ok, false);
       if (again.ok) continue;
-      assert.equal(again.error, "An account with this email already exists. Log in to continue.");
+      assert.equal(
+        again.error,
+        "Couldn’t create your account. If you already have one, log in or continue with Google.",
+      );
+      assert.equal(again.error.toLowerCase().includes("already exists"), false);
       assert.equal(jar.get("rs_session"), undefined);
       assert.equal(countUsers(email), 1);
       const stored = getUserById(id);
