@@ -25,13 +25,13 @@ afterEach(() => {
 });
 
 describe("readLlmConfig", () => {
-  it("prefers ADAPT_LLM_API_KEY and the shared base URL and model", () => {
+  it("prefers ADAPT_LLM_API_KEY over the Ollama key and OLLAMA_MODEL", () => {
     clearLlmEnv();
     process.env.ADAPT_LLM_API_KEY = "  adapt-key  ";
     process.env.OLLAMA_API_KEY = "ollama-key";
     process.env.ADAPT_LLM_BASE_URL = "  https://llm.example/v1/  ";
     process.env.ADAPT_LLM_MODEL = "  coach-model  ";
-    process.env.OLLAMA_MODEL = "ignored-model";
+    process.env.OLLAMA_MODEL = "gemma4:31b";
     assert.deepEqual(readLlmConfig(), {
       apiKey: "adapt-key",
       baseUrl: "https://llm.example/v1",
@@ -39,13 +39,37 @@ describe("readLlmConfig", () => {
     });
   });
 
-  it("falls back to OLLAMA_API_KEY and the default base URL and model", () => {
+  it("uses the OpenAI defaults when only ADAPT_LLM_API_KEY is set", () => {
     clearLlmEnv();
-    process.env.OLLAMA_API_KEY = " legacy-key ";
+    process.env.ADAPT_LLM_API_KEY = "adapt-key";
+    process.env.OLLAMA_MODEL = "gemma4:31b";
     assert.deepEqual(readLlmConfig(), {
-      apiKey: "legacy-key",
+      apiKey: "adapt-key",
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-4o-mini",
+    });
+  });
+
+  it("uses the ollama base URL and OLLAMA_MODEL when only OLLAMA_API_KEY is set", () => {
+    clearLlmEnv();
+    process.env.OLLAMA_API_KEY = " legacy-key ";
+    process.env.OLLAMA_MODEL = "gemma4:31b";
+    assert.equal(process.env.ADAPT_LLM_BASE_URL, undefined);
+    assert.deepEqual(readLlmConfig(), {
+      apiKey: "legacy-key",
+      baseUrl: "https://ollama.com/v1",
+      model: "gemma4:31b",
+    });
+  });
+
+  it("keeps the prior Ollama model when OLLAMA_MODEL is unset", () => {
+    clearLlmEnv();
+    process.env.OLLAMA_API_KEY = "legacy-key";
+    assert.equal(process.env.ADAPT_LLM_BASE_URL, undefined);
+    assert.deepEqual(readLlmConfig(), {
+      apiKey: "legacy-key",
+      baseUrl: "https://ollama.com/v1",
+      model: "gemma4:31b",
     });
   });
 
@@ -54,6 +78,7 @@ describe("readLlmConfig", () => {
     assert.equal(readLlmConfig(), null);
     process.env.ADAPT_LLM_API_KEY = "   ";
     process.env.OLLAMA_API_KEY = "";
+    process.env.OLLAMA_MODEL = "gemma4:31b";
     assert.equal(readLlmConfig(), null);
   });
 });

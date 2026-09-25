@@ -19,8 +19,11 @@ const ENV_KEYS = [
   "OLLAMA_MODEL",
 ] as const;
 
-const ENV_NAME = /OLLAMA_[A-Z0-9_]*|ADAPT_LLM_[A-Z0-9_]*|API_KEY|BASE_URL|_MODEL/;
-const LEAKED_FEEDBACK_COPY = /Ollama|API key|_API_KEY/;
+function assertNoLeakedFeedbackCopy(copy: string): void {
+  assert.doesNotMatch(copy, /ollama/i);
+  assert.doesNotMatch(copy, /api key/i);
+  assert.doesNotMatch(copy, /[A-Z_]+_API_KEY/);
+}
 
 const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
@@ -71,9 +74,9 @@ describe("parseCoachFeedback", () => {
 });
 
 describe("coach feedback user copy", () => {
-  it("does not mention Ollama, an API key, or an env var name", () => {
+  it("does not mention ollama, an api key, or an env var name", () => {
     for (const copy of COACH_FEEDBACK_USER_COPY) {
-      assert.doesNotMatch(copy, LEAKED_FEEDBACK_COPY);
+      assertNoLeakedFeedbackCopy(copy);
     }
     assert.equal(COACH_FEEDBACK_UNAVAILABLE, "Couldn’t generate feedback. Try again.");
     assert.equal(COACH_FEEDBACK_UNCONFIGURED, "Feedback isn’t available right now. Try again later.");
@@ -84,7 +87,7 @@ describe("ollamaCloudConfig", () => {
   it("returns generic copy when no key is configured", () => {
     clearLlmEnv();
     assert.deepEqual(ollamaCloudConfig(), { error: COACH_FEEDBACK_UNCONFIGURED });
-    assert.doesNotMatch(COACH_FEEDBACK_UNCONFIGURED, ENV_NAME);
+    assertNoLeakedFeedbackCopy(COACH_FEEDBACK_UNCONFIGURED);
   });
 });
 
@@ -132,11 +135,14 @@ describe("requestCoachFeedback", () => {
   it("uses the OLLAMA_API_KEY fallback when the adapt key is unset", async () => {
     clearLlmEnv();
     process.env.OLLAMA_API_KEY = "legacy-key";
-    process.env.ADAPT_LLM_BASE_URL = "https://ollama.com/v1";
-    process.env.ADAPT_LLM_MODEL = "gemma4:31b";
+    process.env.OLLAMA_MODEL = "gemma4:31b";
     let auth = "";
-    const result = await requestCoachFeedback(runContext, async (_input, init) => {
+    let url = "";
+    let model = "";
+    const result = await requestCoachFeedback(runContext, async (input, init) => {
+      url = String(input);
       auth = new Headers(init?.headers).get("authorization") ?? "";
+      model = JSON.parse(String(init?.body)).model;
       return new Response(
         JSON.stringify({
           choices: [{ message: { content: '{"summary":"Hold the easy effort.","reason":"Keep the next run easy."}' } }],
@@ -144,6 +150,9 @@ describe("requestCoachFeedback", () => {
         { status: 200 },
       );
     });
+    assert.equal(process.env.ADAPT_LLM_BASE_URL, undefined);
+    assert.equal(url, "https://ollama.com/v1/chat/completions");
+    assert.equal(model, "gemma4:31b");
     assert.equal(auth, "Bearer legacy-key");
     assert.equal(result.ok, true);
     if (result.ok) assert.equal(JSON.stringify(result).includes("legacy-key"), false);
@@ -168,7 +177,7 @@ describe("requestCoachFeedback", () => {
       if (result.ok) return;
       assert.equal(result.error, COACH_FEEDBACK_UNCONFIGURED);
       assert.match(result.error, /Feedback isn.t available right now\. Try again later\./);
-      assert.doesNotMatch(result.error, ENV_NAME);
+      assertNoLeakedFeedbackCopy(result.error);
       assert.equal(result.error.includes("super-secret"), false);
     } finally {
       console.warn = original;
@@ -206,7 +215,7 @@ describe("requestCoachFeedback", () => {
         assert.equal(result.ok, false);
         if (result.ok) continue;
         assert.equal(result.error, COACH_FEEDBACK_UNAVAILABLE);
-        assert.doesNotMatch(result.error, LEAKED_FEEDBACK_COPY);
+        assertNoLeakedFeedbackCopy(result.error);
         assert.equal(result.error.includes("super-secret-adapt-key"), false);
       }
     } finally {

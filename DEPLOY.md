@@ -37,7 +37,8 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `ADAPT_LLM_API_KEY` | No | Shared by the nightly adapt job and Generate feedback. Unset = adapt heuristic; Generate feedback shows a generic try-later message (no env names in the UI). If set and the adapt LLM fails, the job logs and does not mutate the plan. |
 | `ADAPT_LLM_BASE_URL` | No | Default `https://api.openai.com/v1`. Same variable for adapt and Generate feedback. |
 | `ADAPT_LLM_MODEL` | No | Default `gpt-4o-mini`. Same variable for adapt and Generate feedback. |
-| `OLLAMA_API_KEY` | Fallback | One-release fallback when `ADAPT_LLM_API_KEY` is unset. Prefer `ADAPT_LLM_API_KEY`. |
+| `OLLAMA_API_KEY` | Fallback | One-release fallback when `ADAPT_LLM_API_KEY` is unset. Prefer `ADAPT_LLM_API_KEY`. Base URL is `ADAPT_LLM_BASE_URL` or `https://ollama.com/v1`. Model is `ADAPT_LLM_MODEL`, then `OLLAMA_MODEL`. |
+| `OLLAMA_MODEL` | Fallback | Model for the `OLLAMA_API_KEY` fallback when `ADAPT_LLM_MODEL` is unset. Default `gemma4:31b`. |
 | `INTERVALS_ICU_API_KEY` | For Connect | Intervals.icu personal API key. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`; athlete path `0`. Never stored in SQLite or shown in the UI. |
 | `INTERVALS_ICU_ATHLETE_ID` | No | Display fallback (default `i704884`). HTTP paths use `0`. |
 
