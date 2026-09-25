@@ -46,9 +46,19 @@ export const INTERVALS_KEY_HELP = "Your API key and athlete ID are in Intervals 
 export const INTERVALS_KEY_HELP_URL = "https://intervals.icu/settings";
 export { INTERVALS_ENC_NOT_CONFIGURED, intervalsEncryptionReady };
 export type { IntervalsAuthType };
-/** Settings status line when the caller marks Intervals unavailable. No buttons. */
+/** Settings status line when this account cannot connect or use the env fallback. No buttons. */
 export const INTERVALS_UNAVAILABLE_STATUS = "Not available for your account";
+/** 403 body when an Intervals action is not allowed for this account. No env names. */
+export const INTERVALS_NOT_FOR_ACCOUNT =
+  "Intervals.icu import isn’t available for your account yet.";
 export const INTERVALS_CSRF_ERROR = "This request could not be verified. Try again.";
+
+const GATED_INTERVALS_INTENTS = new Set([
+  "intervals-connect",
+  "intervals-sync",
+  "intervals-pick-run",
+  "intervals-skip-pick",
+]);
 export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
 export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
 export const INTERVALS_COOPER_SYNC_TOAST = "Cooper test result synced — plan updated.";
@@ -185,10 +195,22 @@ export function intervalsOwnerEmailAllowlist(): Set<string> | null {
   return allow;
 }
 
-/** Shared Intervals key is owner-only. Email match is trim + lowercase on both sides. */
-export function canUseIntervals(user: { email?: string | null } | null | undefined): boolean {
+export function hasVerifiedEmail(
+  user: { emailVerifiedAt?: string | null } | null | undefined,
+): boolean {
+  return typeof user?.emailVerifiedAt === "string" && user.emailVerifiedAt.trim().length > 0;
+}
+
+/**
+ * Shared Intervals key is owner-only.
+ * Email match is trim + lowercase, and `emailVerifiedAt` must be set.
+ * Missing verification fails closed (password signup does not set it).
+ */
+export function canUseIntervals(
+  user: { email?: string | null; emailVerifiedAt?: string | null } | null | undefined,
+): boolean {
   const email = user?.email?.trim().toLowerCase() ?? "";
-  if (!email) return false;
+  if (!email || !hasVerifiedEmail(user)) return false;
   const allow = intervalsOwnerEmailAllowlist();
   if (!allow) return false;
   return allow.has(email);
@@ -200,8 +222,8 @@ export function userCanUseIntervals(userId: string): boolean {
 
 /**
  * Shared env key (`INTERVALS_ICU_API_KEY` + `INTERVALS_ICU_ATHLETE_ID`) is off unless
- * `INTERVALS_OWNER_ENV_FALLBACK=true` and `canUseIntervals` allows the account.
- * When `emailVerifiedAt` exists on this database, the account must be verified too.
+ * `INTERVALS_OWNER_ENV_FALLBACK=true` and `canUseIntervals` allows the account
+ * (allowlist and verified email). A stored OAuth token or pasted key does not use this.
  */
 export function ownerEnvFallbackAllowed(userId: string): boolean {
   if (envValue("INTERVALS_OWNER_ENV_FALLBACK").toLowerCase() !== "true") return false;
@@ -257,6 +279,22 @@ export function intervalsSettingsControls(input: {
 /** 403 for a cross-site Intervals settings POST or OAuth state failure. No secrets. */
 export function intervalsCsrfDeniedResponse(): Response {
   return new Response(INTERVALS_CSRF_ERROR, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
+/**
+ * 403 when `canUseIntervals` is false. This describes the shared-key gate only.
+ * Settings still accepts a personal OAuth token or pasted key without it.
+ */
+export function intervalsOwnerDeniedResponse(
+  user: { email?: string | null; emailVerifiedAt?: string | null } | null | undefined,
+  intent: string,
+): Response | null {
+  if (!GATED_INTERVALS_INTENTS.has(intent.trim())) return null;
+  if (canUseIntervals(user)) return null;
+  return new Response(INTERVALS_NOT_FOR_ACCOUNT, {
     status: 403,
     headers: { "content-type": "text/plain; charset=utf-8" },
   });
@@ -661,6 +699,11 @@ export function formatSyncedAgo(iso: string, now = new Date()): string {
 }
 
 /** Stored connection with the ciphertext removed. No writes. */
+/** True when this user stored their own encrypted token or API key. */
+export function userHasOwnIntervalsConnection(userId: string): boolean {
+  return Boolean(getStoredIntervalsConnection(userId)?.apiKeyEnc?.trim());
+}
+
 export function getIntervalsConnection(userId: string): IntervalsConnection | null {
   const stored = getStoredIntervalsConnection(userId);
   if (!stored) return null;

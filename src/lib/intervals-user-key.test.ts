@@ -406,7 +406,12 @@ describe("per-user Intervals key", () => {
   it("uses the env key only for an allowlisted owner when the flag is on", async () => {
     const owner = "fallback-owner";
     const other = "fallback-other";
-    insertUser({ id: owner, email: "Owner@Example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    insertUser({
+      id: owner,
+      email: "Owner@Example.com",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      emailVerifiedAt: "2026-09-01T00:00:00.000Z",
+    });
     insertUser({ id: other, email: "other@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
     process.env.INTERVALS_ICU_API_KEY = ENV_KEY;
     process.env.INTERVALS_ICU_ATHLETE_ID = ATHLETE_ENV;

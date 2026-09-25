@@ -16,7 +16,7 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 
 Nixpacks already runs `npm run build` and `npm start`. Keep the start command as `npm start` (or the `HOST=0.0.0.0 node ./dist/server/entry.mjs` equivalent). Do not use `astro preview` in production.
 
-The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connections, magic link tokens). Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot. Each user’s Intervals access token or API key is stored only as AES-256-GCM ciphertext (`apiKeyEnc`, unique IV, auth tag checked on read). It is never written to HTML, JSON, or logs. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
+The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connections, magic link tokens). `users.emailVerifiedAt` is nullable and is not backfilled: existing accounts stay unverified until a Google sign-in (only when `email_verified === true`; false or missing does not count) or a consumed magic link sets it. Password signup does not. Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot and still start unverified. Each user’s own Intervals access token or API key is stored only as AES-256-GCM ciphertext (`apiKeyEnc`, unique IV, auth tag checked on read). It is never written to HTML, JSON, or logs. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
 
 ## Environment
 
@@ -42,14 +42,14 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `INTERVALS_KEY_ENC_SECRET` | For Connect | 32-byte key that encrypts each user’s Intervals access token or API key at rest (AES-256-GCM). Standard base64 only, from `openssl rand -base64 32` (44 characters, decodes to exactly 32 bytes). Hex and other formats are treated as missing (logged once, no crash). Missing or invalid: the Connect button stays visible but disabled with **Connecting Intervals.icu isn’t available right now. Try again later.** Nothing is stored in plaintext. Existing rows are left in place. The secret is never stored or logged. Set it on the **web** service (the process that writes `app.db` and runs `/api/adapt`). |
 | `INTERVALS_CLIENT_ID` | For OAuth | Intervals.icu OAuth client id from [the app form](https://intervals.icu/oauth/apply). When this and `INTERVALS_CLIENT_SECRET` are both set, Settings uses **Connect Intervals.icu**. Otherwise it shows the API key and athlete ID form. |
 | `INTERVALS_CLIENT_SECRET` | For OAuth | OAuth client secret. Used only on the server when exchanging the code at `https://intervals.icu/api/oauth/token`. Never sent to the browser. |
-| `INTERVALS_ICU_API_KEY` | No | Shared Intervals key. Not used unless `INTERVALS_OWNER_ENV_FALLBACK=true`. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`. |
+| `INTERVALS_ICU_API_KEY` | No | Shared Intervals key. Not used unless `INTERVALS_OWNER_ENV_FALLBACK=true`. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`. Only a verified account listed in `INTERVALS_OWNER_EMAILS` may use it. |
 | `INTERVALS_ICU_ATHLETE_ID` | No | Athlete id for that shared key (for example `i704884`). Used only with the owner env fallback. |
-| `INTERVALS_OWNER_ENV_FALLBACK` | No | Set to `true` to let allowlisted owner accounts use `INTERVALS_ICU_API_KEY` and `INTERVALS_ICU_ATHLETE_ID` when they have no stored personal key. Default off. Anyone else always uses their own key. |
-| `INTERVALS_OWNER_EMAILS` | For owner fallback | Comma-separated emails allowed to use the shared env key. Case-insensitive; whitespace around each address is ignored. Unset or empty: the env fallback matches nobody. If the database has `emailVerifiedAt`, that account must also be verified. The allowlist applies only to that env-key fallback, not to per-user OAuth or pasted keys. |
+| `INTERVALS_OWNER_ENV_FALLBACK` | No | Set to `true` to let a verified allowlisted owner use `INTERVALS_ICU_API_KEY` and `INTERVALS_ICU_ATHLETE_ID` when they have no stored personal key. Default off. Anyone else uses their own OAuth token or pasted key, which does not require the allowlist or a verified email. |
+| `INTERVALS_OWNER_EMAILS` | For owner fallback | Comma-separated emails allowed to use the shared env key. Case-insensitive; whitespace around each address is ignored. Unset or empty: the env fallback matches nobody. The account must also have `emailVerifiedAt` set (Google `email_verified === true`, or a consumed magic link). Password signup does not verify, and existing rows are not backfilled. The allowlist does not gate per-user OAuth or pasted keys. Production must set `crispal94@gmail.com` if the env fallback is on. |
 
 ### Intervals.icu OAuth
 
-Primary connect path when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIENT_SECRET` are set. Pasted API key + athlete ID is the fallback when they are not.
+Primary connect path when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIENT_SECRET` are set. Pasted API key + athlete ID is the fallback when they are not. Either path is available to any signed-in user. The owner allowlist and verified email apply only to the shared env key.
 
 Register and approve the app at https://intervals.icu/oauth/apply. Authorize URL: `https://intervals.icu/oauth/authorize` (`client_id`, `redirect_uri`, `scope`, `state`). Token URL: `https://intervals.icu/api/oauth/token` (form `client_id`, `client_secret`, `code`). The token JSON includes `athlete.id` and `athlete.name`; those are stored from that response.
 
@@ -69,15 +69,66 @@ Local: `http://localhost:4321/auth/intervals/callback`. The app builds it from t
 
 Google Cloud Console: add the production authorized redirect URI before testing Continue with Google.
 
+After this deploy, Intervals is unavailable for everyone until the owner signs in once with Google (`email_verified === true` on the userinfo or id token; false or missing does not count) or a magic link. That sign-in sets `emailVerifiedAt`. Password signup and password login do not. If the account was unverified, that first verified sign-in clears the password hash and invalidates every existing session in one database transaction, then issues the new session. A later sign-in on an already-verified account does not clear the password.
+
+If the real training account is not already `crispal94@gmail.com`, follow the owner runbook below before expecting Intervals to work. Do not run the Intervals cleanup until that Google sign-in has set `emailVerifiedAt`.
+
 Do not commit a production `.env`. Railway variables are enough at runtime (`process.env`); no `.env` file is required on the host.
+
+## Owner runbook
+
+Run these on the **web** service (the service that mounts `.data` / `app.db`, workdir `/app`). Do not run them on the cron service; that service has no volume.
+
+1. Set `INTERVALS_OWNER_EMAILS=crispal94@gmail.com` on the web service.
+2. Deploy.
+3. Reassign **before any Google login**. Do not sign in with Google, and do not send the owner through Google, until `--apply` below has finished. `<realEmail>` is the account that already holds the plan and run history. Dry-run, share the output, then apply.
+
+```bash
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --apply
+```
+
+If the dry run or `--apply` aborts because the target account already has rows (onboarding, plan, training sessions, feedback, run logs, adaptation events, or an Intervals connection), stop and ask the dev team. Do not delete those rows by hand.
+
+4. After deploy and before that Google login, the account is unverified. Running adapt, or opening Settings and submitting an Intervals action, deletes the owner’s Intervals connection row. Run logs are kept. After the verified Google sign-in the owner must Connect again.
+5. Sign in on the site with Google as `crispal94@gmail.com` (`email_verified` must be true). That sets `emailVerifiedAt` on the renamed account. Do this only after step 3 `--apply`.
+6. Dry-run the Intervals cleanup, share the output, then apply.
+
+```bash
+npm run cleanup:intervals-nonowners
+npm run cleanup:intervals-nonowners -- --apply
+```
+
+Do not run step 6 before step 5. Until `emailVerifiedAt` is set, the allowlisted address is still a non-owner, and cleanup `--apply` would delete that account’s Intervals run logs.
+
+## One-off: reassign the owner email
+
+Default is a dry run. Addresses are trim + lowercase. It prints the FROM user (`id`, stored `email`, counts of onboarding, plans, training sessions, feedbacks, run logs, adaptation events, Intervals connection, magic-link tokens), the TO user (`id` or `none`, the same counts, `deletable=yes|no`), and the planned change. It does not write.
+
+```bash
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com
+```
+
+`--apply` deletes the TO user and renames FROM in one transaction:
+
+```bash
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --apply
+```
+
+- FROM must already exist. If it does not, the script exits 1 and changes nothing.
+- TO is deleted only when it has no rows in any table keyed by `userId` (onboarding, plans, training `sessions`, feedbacks, run logs, adaptation events, Intervals connection, plus any later table that adds `userId`). If any of those exist, the script exits 1, prints the counts, and tells you to stop and ask the dev team. Do not delete those rows manually. It does not move those rows onto FROM.
+- A dry run does not rewrite a database whose tables and columns are already present. If tables or columns are missing, opening the database applies that migration and the dry run prints a note.
+- Deleting TO also deletes magic-link tokens for that email. Auth sessions are stateless HMAC cookies checked against the user row, so removing the user invalidates them. There is no session table.
+- FROM’s email becomes the target address. `emailVerifiedAt` is set to null and is not backfilled. `passwordHash`, `googleId`, and every training row stay on that same user id.
+- Google accounts are stored on `users.googleId` (the provider subject), not on the email. This script does not change `googleId`. The next Google sign-in looks up that subject first, then the normalized email. A subject match sets `emailVerifiedAt` only when the Google email equals the stored email. If this row’s subject already matches and the Google email is the new address, that sign-in marks it verified, clears `passwordHash`, and invalidates older sessions. If the subject is new, the email lookup does the same and stores the subject on this row. If the email account is unverified and already has a different `googleId`, that sign-in replaces it and logs a warning with the user id only (no email). If the account is already verified and the `googleId` differs, the sign-in returns the generic Google error and does not overwrite. If the subject matches a user whose stored email is different, that user is signed in and `emailVerifiedAt` is left unchanged; the account that already owns the Google email is not modified. Plans, sessions, feedback, run logs, adaptation events, onboarding, and the Intervals connection stay on the renamed user id.
 
 ## One-off: remove non-owner Intervals imports
 
-Run this once on the **web** service (the service that mounts `.data` / `app.db`), after `INTERVALS_OWNER_EMAILS` is set to `crispal94@gmail.com`. Do not run it on the cron service; that service has no volume.
+Run this once on the **web** service, after the owner runbook’s Google sign-in. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` and that account’s `emailVerifiedAt` must be set. Do not run it on the cron service; that service has no volume.
 
 Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
 
-Default is a dry run. It prints each account (`userId`, `email`) and how many Intervals `RunLog`s it would delete, including owner accounts at `0`, plus a total. It does not delete.
+Default is a dry run. It prints each account (`userId`, `email`, `verified`, `wouldDelete`), including verified owners at `0`, plus a total. `verified=yes` only when `emailVerifiedAt` is set. An allowlisted address that is still unverified is a non-owner. It does not delete.
 
 ```bash
 npm run cleanup:intervals-nonowners
@@ -96,7 +147,7 @@ npm run cleanup:intervals-nonowners -- --before 2026-09-25T00:00:00.000Z
 npm run cleanup:intervals-nonowners -- --apply --before 2026-09-25T00:00:00.000Z
 ```
 
-A row is deleted only when all of these are true: `source = intervals`, the account is not an owner (`canUseIntervals` is false), the account has no encrypted Intervals token or API key of its own, and `createdAt` is strictly before the cutoff. Accounts that connected their own Intervals (OAuth or API key), the owner, logs at or after the cutoff, and every manual `RunLog` stay. The dry run logs `email=` and `wouldDelete=`. `--apply` logs `wouldDelete=` before the delete and `deleted=` after, with `userId` only (no email). If `INTERVALS_OWNER_EMAILS` is unset or empty, or `--before` is not an ISO timestamp, both modes log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
+A row is deleted only when all of these are true: `source = intervals`, the account is not an owner (`canUseIntervals` is false: not on the allowlist, or allowlisted but unverified), the account has no encrypted Intervals token or API key of its own, and `createdAt` is strictly before the cutoff. Verified owners, accounts that connected their own Intervals (OAuth or API key), logs at or after the cutoff, and every manual `RunLog` stay. An allowlisted address that is still unverified is a non-owner. The dry run logs `email=`, `verified=`, and `wouldDelete=`. `--apply` logs `wouldDelete=` before the delete and `deleted=` after, with `userId` only (no email). If `INTERVALS_OWNER_EMAILS` is unset or empty, or `--before` is not an ISO timestamp, both modes log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
 
 ## Reverse proxy / CSRF
 

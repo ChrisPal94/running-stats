@@ -34,6 +34,10 @@ export type UserRecord = {
   createdAt: string;
   passwordHash?: string;
   googleId?: string;
+  /** Set when Google or a magic link proves the address. Null from `getUserById` means unverified. */
+  emailVerifiedAt?: string | null;
+  /** Bumped when an unverified account becomes verified so older session cookies fail. */
+  sessionEpoch?: number;
 };
 
 export type TrainingSnapshot = {
@@ -81,7 +85,11 @@ type UserRow = {
   createdAt: string;
   passwordHash: string | null;
   googleId: string | null;
+  emailVerifiedAt: string | null;
+  sessionEpoch: number | null;
 };
+
+const USER_COLUMNS = "id, email, createdAt, passwordHash, googleId, emailVerifiedAt, sessionEpoch";
 
 type OnboardingRow = {
   userId: string;
@@ -202,15 +210,20 @@ export function enqueueWrite<T>(fn: () => Promise<T> | T): Promise<T> {
   return run;
 }
 
-export function getDb(): DatabaseSync {
-  if (db) return db;
+/**
+ * Open the process-wide database.
+ * `wroteSchema` is true only when this call created tables or columns.
+ * A later call in the same process returns false.
+ */
+export function openAppDatabase(): { database: DatabaseSync; wroteSchema: boolean } {
+  if (db) return { database: db, wroteSchema: false };
 
   mkdirSync(dataDir(), { recursive: true });
   const opened = new DatabaseSync(dbPath());
   opened.exec("PRAGMA journal_mode = WAL");
   opened.exec("PRAGMA busy_timeout = 5000");
   opened.exec("PRAGMA foreign_keys = OFF");
-  applySchema(opened);
+  const wroteSchema = applySchema(opened);
   db = opened;
   try {
     importJsonIfEmpty();
@@ -223,9 +236,18 @@ export function getDb(): DatabaseSync {
     }
     throw error;
   }
-  return opened;
+  return { database: opened, wroteSchema };
 }
 
+export function getDb(): DatabaseSync {
+  return openAppDatabase().database;
+}
+
+/**
+ * Outermost call runs BEGIN IMMEDIATE / COMMIT / ROLLBACK.
+ * Nested calls (verifyUserEmail inside upsertGoogleUser or consumeMagicLink)
+ * join that transaction and do not issue another BEGIN.
+ */
 export function withTransaction<T>(fn: () => T): T {
   const database = getDb();
   const nested = txDepth > 0;
@@ -249,14 +271,61 @@ export function withTransaction<T>(fn: () => T): T {
   }
 }
 
-function applySchema(database: DatabaseSync): void {
+function schemaIsCurrent(database: DatabaseSync): boolean {
+  const rows = database
+    .prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'index')")
+    .all() as { name: string; type: string }[];
+  const tables = new Set(rows.filter((row) => row.type === "table").map((row) => row.name));
+  const indexes = new Set(rows.filter((row) => row.type === "index").map((row) => row.name));
+  const requiredTables = [
+    "users",
+    "onboarding",
+    "plans",
+    "sessions",
+    "feedbacks",
+    "run_logs",
+    "adaptation_events",
+    "intervals_connections",
+    "magic_tokens",
+  ];
+  const requiredIndexes = [
+    "plans_userId",
+    "sessions_planId",
+    "sessions_userId_date",
+    "feedbacks_userId_sessionId",
+    "run_logs_userId_sessionId",
+    "adaptation_events_userId_date",
+    "magic_tokens_email_createdAt",
+  ];
+  if (!requiredTables.every((name) => tables.has(name))) return false;
+  if (!requiredIndexes.every((name) => indexes.has(name))) return false;
+  const requiredColumns: Array<[string, string]> = [
+    ["onboarding", "feedbackCadence"],
+    ["plans", "feedbackCadence"],
+    ["run_logs", "source"],
+    ["users", "emailVerifiedAt"],
+    ["users", "sessionEpoch"],
+    ["intervals_connections", "apiKeyEnc"],
+    ["intervals_connections", "needsReconnect"],
+    ["intervals_connections", "authType"],
+    ["intervals_connections", "scope"],
+    ["intervals_connections", "athleteName"],
+  ];
+  return requiredColumns.every(([table, column]) => tableColumns(database, table).has(column));
+}
+
+/** Returns whether tables or columns were written. A current schema is left untouched. */
+function applySchema(database: DatabaseSync): boolean {
+  if (schemaIsCurrent(database)) return false;
   database.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
       createdAt TEXT NOT NULL,
       passwordHash TEXT,
-      googleId TEXT UNIQUE
+      googleId TEXT UNIQUE,
+      emailVerifiedAt TEXT,
+      sessionEpoch INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS onboarding (
@@ -367,7 +436,10 @@ function applySchema(database: DatabaseSync): void {
   ensureColumn(database, "onboarding", "feedbackCadence", "TEXT");
   ensureColumn(database, "plans", "feedbackCadence", "TEXT NOT NULL DEFAULT 'daily'");
   ensureColumn(database, "run_logs", "source", "TEXT NOT NULL DEFAULT 'manual'");
+  ensureColumn(database, "users", "emailVerifiedAt", "TEXT");
+  ensureColumn(database, "users", "sessionEpoch", "INTEGER NOT NULL DEFAULT 0");
   ensureIntervalsConnectionColumns(database);
+  return true;
 }
 
 /** Idempotent. Safe to call on every open and again after the columns exist. */
@@ -377,6 +449,11 @@ export function ensureIntervalsConnectionColumns(database: DatabaseSync): void {
   ensureColumn(database, "intervals_connections", "authType", "TEXT NOT NULL DEFAULT 'apikey'");
   ensureColumn(database, "intervals_connections", "scope", "TEXT");
   ensureColumn(database, "intervals_connections", "athleteName", "TEXT");
+}
+
+/** Re-run schema creation and column adds. Safe to call more than once. Does not backfill verification. */
+export function migrateAppDatabase(database: DatabaseSync = getDb()): void {
+  applySchema(database);
 }
 
 function tableColumns(database: DatabaseSync, table: string): Set<string> {
@@ -510,6 +587,8 @@ function userFromRow(row: UserRow): UserRecord {
     id: row.id,
     email: row.email,
     createdAt: row.createdAt,
+    sessionEpoch: row.sessionEpoch ?? 0,
+    emailVerifiedAt: row.emailVerifiedAt,
   };
   if (row.passwordHash) user.passwordHash = row.passwordHash;
   if (row.googleId) user.googleId = row.googleId;
@@ -653,12 +732,15 @@ function run(sql: string, ...params: SqlBind[]): void {
 
 function insertUserRow(user: UserRecord): void {
   run(
-    `INSERT INTO users (id, email, createdAt, passwordHash, googleId) VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, email, createdAt, passwordHash, googleId, emailVerifiedAt, sessionEpoch)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     user.id,
     user.email,
     user.createdAt,
     text(user.passwordHash),
     text(user.googleId),
+    text(user.emailVerifiedAt),
+    user.sessionEpoch ?? 0,
   );
 }
 
@@ -796,8 +878,12 @@ function replaceTraining(
   }
 }
 
-export function listUserEmails(): { id: string; email: string }[] {
-  return getDb().prepare("SELECT id, email FROM users").all() as { id: string; email: string }[];
+export function listUserEmails(): { id: string; email: string; emailVerifiedAt: string | null }[] {
+  return getDb().prepare("SELECT id, email, emailVerifiedAt FROM users").all() as {
+    id: string;
+    email: string;
+    emailVerifiedAt: string | null;
+  }[];
 }
 
 export function listIntervalsRunLogs(): { id: string; userId: string; createdAt: string }[] {
@@ -827,23 +913,61 @@ export function deleteIntervalsRunLogsByIds(ids: readonly string[]): void {
 
 export function getUserById(id: string): UserRecord | null {
   const row = getDb()
-    .prepare("SELECT id, email, createdAt, passwordHash, googleId FROM users WHERE id = ?")
+    .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`)
     .get(id) as UserRow | undefined;
   return row ? userFromRow(row) : null;
 }
 
 export function getUserByEmail(email: string): UserRecord | null {
+  const normalized = email.trim().toLowerCase();
   const row = getDb()
-    .prepare("SELECT id, email, createdAt, passwordHash, googleId FROM users WHERE email = ?")
-    .get(email) as UserRow | undefined;
+    .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE email = ?`)
+    .get(normalized) as UserRow | undefined;
   return row ? userFromRow(row) : null;
 }
 
 export function getUserByGoogleId(googleId: string): UserRecord | null {
   const row = getDb()
-    .prepare("SELECT id, email, createdAt, passwordHash, googleId FROM users WHERE googleId = ?")
+    .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE googleId = ?`)
     .get(googleId) as UserRow | undefined;
   return row ? userFromRow(row) : null;
+}
+
+/**
+ * Mark `emailVerifiedAt` when it is still null, clear `passwordHash`, and bump
+ * `sessionEpoch` so every existing session cookie for this user stops matching.
+ * Those three writes are one transaction. The caller issues the new session after commit.
+ * Already-verified accounts keep their password and epoch. Optional `googleId` is linked
+ * in that same transaction.
+ * Returns whether this call performed the first verification.
+ */
+export function verifyUserEmail(userId: string, verifiedAt: string, googleId?: string): boolean {
+  return withTransaction(() => {
+    const row = getDb()
+      .prepare("SELECT emailVerifiedAt FROM users WHERE id = ?")
+      .get(userId) as { emailVerifiedAt: string | null } | undefined;
+    if (!row) return false;
+    if (row.emailVerifiedAt) {
+      if (googleId) run("UPDATE users SET googleId = ? WHERE id = ?", googleId, userId);
+      return false;
+    }
+    const changed = googleId
+      ? getDb()
+          .prepare(
+            `UPDATE users
+             SET emailVerifiedAt = ?, passwordHash = NULL, sessionEpoch = COALESCE(sessionEpoch, 0) + 1, googleId = ?
+             WHERE id = ? AND emailVerifiedAt IS NULL`,
+          )
+          .run(verifiedAt, googleId, userId)
+      : getDb()
+          .prepare(
+            `UPDATE users
+             SET emailVerifiedAt = ?, passwordHash = NULL, sessionEpoch = COALESCE(sessionEpoch, 0) + 1
+             WHERE id = ? AND emailVerifiedAt IS NULL`,
+          )
+          .run(verifiedAt, userId);
+    return changed.changes > 0;
+  });
 }
 
 export function insertUser(user: UserRecord): void {

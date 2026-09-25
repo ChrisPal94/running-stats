@@ -12,6 +12,7 @@ import {
   denyIntervalsPostCsrf,
   intervalsEncryptionReady,
   intervalsSyncToastCopy,
+  ownerEnvFallbackAllowed,
   refreshIntervalsConnectionView,
   type IntervalsSyncToast,
 } from "../lib/intervals";
@@ -90,6 +91,9 @@ if (toastParam === "intervals-error" && !intervalsError) {
 const connection = await refreshIntervalsConnectionView(user.id);
 const oauthConfigured = isIntervalsOAuthConfigured();
 const encryptionReady = intervalsEncryptionReady();
+const fallbackEligible = ownerEnvFallbackAllowed(user.id);
+const intervalsAvailable = oauthConfigured || encryptionReady || fallbackEligible;
+const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionReady;
 ---
 
 <AppShell
@@ -158,7 +162,8 @@ const encryptionReady = intervalsEncryptionReady();
     <ConnectedApps
       connection={connection}
       error={intervalsError}
-      intervalsAvailable={true}
+      intervalsAvailable={intervalsAvailable}
+      envFallbackConnect={envFallbackConnect}
       athleteIdDraft={athleteIdDraft}
       oauthConfigured={oauthConfigured}
       encryptionReady={encryptionReady}

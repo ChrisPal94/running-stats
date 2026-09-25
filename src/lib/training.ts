@@ -20,6 +20,7 @@ import {
   disconnectIntervals,
   getIntervalsConnection,
   INTERVALS_ENC_NOT_CONFIGURED,
+  INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_RECONNECT_ERROR,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
@@ -31,6 +32,9 @@ import {
   parseIntervalsRunChoiceList,
   pickClosestRun,
   openIntervalsCredentials,
+  revokeUnownedIntervals,
+  userCanUseIntervals,
+  userHasOwnIntervalsConnection,
   type IntervalsRunChoice,
   type IntervalsRunPickerState,
   type IntervalsRunStats,
@@ -2139,11 +2143,30 @@ export async function syncIntervalsForUser(userId: string): Promise<
   };
 }
 
+function personalIntervalsConnect(formData: FormData): boolean {
+  return Boolean(
+    String(formData.get("intervalsApiKey") ?? "").trim() &&
+      String(formData.get("intervalsAthleteId") ?? "").trim(),
+  );
+}
+
 export async function handleSettingsPost(
   userId: string,
   formData: FormData,
 ): Promise<SettingsFormResult> {
   const intent = String(formData.get("intent") ?? "").trim();
+  const gated =
+    intent === "intervals-connect" ||
+    intent === "intervals-sync" ||
+    intent === "intervals-pick-run" ||
+    intent === "intervals-skip-pick";
+  const ownConnection = userHasOwnIntervalsConnection(userId);
+  const postingOwnKey = intent === "intervals-connect" && personalIntervalsConnect(formData);
+  if (gated && !ownConnection && !postingOwnKey && !userCanUseIntervals(userId)) {
+    await revokeUnownedIntervals(userId);
+    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
+  }
+
   if (intent === "intervals-connect") {
     const result = await connectIntervals(userId, {
       apiKey: String(formData.get("intervalsApiKey") ?? ""),

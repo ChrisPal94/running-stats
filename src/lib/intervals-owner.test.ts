@@ -7,9 +7,9 @@ import { getDb, getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnaps
 import {
   canUseIntervals,
   getIntervalsConnection,
-  INTERVALS_CONNECT_INPUT,
-  INTERVALS_SYNC_ERROR,
+  INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_UNAVAILABLE_STATUS,
+  intervalsOwnerDeniedResponse,
   intervalsSettingsControls,
   revokeUnownedIntervals,
 } from "./intervals.ts";
@@ -46,12 +46,16 @@ describe("canUseIntervals", () => {
     }
   });
 
-  it("matches allowlisted emails case-insensitively and trims whitespace", () => {
+  it("matches allowlisted emails case-insensitively and trims whitespace when verified", () => {
     process.env.INTERVALS_OWNER_EMAILS = "  CrisPal94@gmail.com , other@example.com  ";
-    assert.equal(canUseIntervals({ email: "crispal94@gmail.com" }), true);
-    assert.equal(canUseIntervals({ email: "  CRISPAL94@gmail.com  " }), true);
-    assert.equal(canUseIntervals({ email: "other@example.com" }), true);
-    assert.equal(canUseIntervals({ email: "nope@example.com" }), false);
+    const verified = "2026-09-25T12:00:00.000Z";
+    assert.equal(canUseIntervals({ email: "crispal94@gmail.com", emailVerifiedAt: verified }), true);
+    assert.equal(canUseIntervals({ email: "  CRISPAL94@gmail.com  ", emailVerifiedAt: verified }), true);
+    assert.equal(canUseIntervals({ email: "other@example.com", emailVerifiedAt: verified }), true);
+    assert.equal(canUseIntervals({ email: "nope@example.com", emailVerifiedAt: verified }), false);
+    assert.equal(canUseIntervals({ email: "crispal94@gmail.com" }), false);
+    assert.equal(canUseIntervals({ email: "crispal94@gmail.com", emailVerifiedAt: null }), false);
+    assert.equal(canUseIntervals({ email: "crispal94@gmail.com", emailVerifiedAt: "  " }), false);
   });
 });
 
@@ -198,15 +202,19 @@ describe("connect/sync route", () => {
       const result = await handleSettingsPost(userId, formData);
       assert.equal(result.ok, false);
       if (result.ok) continue;
-      assert.equal(result.status, undefined);
+      assert.equal(result.status, 403);
+      assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
       assert.equal(result.section, "intervals");
-      if (intent === "intervals-connect") assert.equal(result.error, INTERVALS_CONNECT_INPUT);
-      if (intent === "intervals-sync") assert.equal(result.error, INTERVALS_SYNC_ERROR);
     }
 
     assert.equal(fetched, false);
     assert.equal(canUseIntervals({ email }), false);
-    assert.equal(canUseIntervals({ email: "CrisPal94@gmail.com" }), true);
+    assert.equal(canUseIntervals({ email: "CrisPal94@gmail.com" }), false);
+    const verifiedOwner = { email: "CrisPal94@gmail.com", emailVerifiedAt: "2026-09-25T12:00:00.000Z" };
+    assert.equal(canUseIntervals(verifiedOwner), true);
+    assert.ok(intervalsOwnerDeniedResponse({ email: "CrisPal94@gmail.com" }, "intervals-connect"));
+    assert.equal(intervalsOwnerDeniedResponse(verifiedOwner, "intervals-connect"), null);
+    assert.equal(intervalsOwnerDeniedResponse(verifiedOwner, "intervals-sync"), null);
   });
 
   it("does not import a RunLog from sync or Which run? pick/skip when the connection is stale", async () => {
@@ -303,17 +311,16 @@ describe("connect/sync route", () => {
     const sync = new FormData();
     sync.set("intent", "intervals-sync");
 
-    for (const [intent, formData] of [
+    for (const [, formData] of [
       ["intervals-sync", sync],
       ["intervals-pick-run", pick],
       ["intervals-skip-pick", skip],
     ] as const) {
       const result = await handleSettingsPost(userId, formData);
-      if (intent === "intervals-skip-pick") {
-        assert.equal(result.ok, true);
-      } else {
-        assert.equal(result.ok, false);
-        if (!result.ok) assert.equal(result.status, undefined);
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.status, 403);
+        assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
       }
     }
 

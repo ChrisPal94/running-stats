@@ -6,7 +6,6 @@ import { after, afterEach, describe, it, mock } from "node:test";
 import { adaptRunLogLine } from "./adapt-cron.ts";
 import { runNocturnalAdaptation } from "./adapt.ts";
 import { getDb, getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
-import { encryptIntervalsApiKey } from "./intervals-crypto.ts";
 import type { Feedback, Plan, RunLog, Session } from "./training.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-adapt-gate-"));
@@ -43,12 +42,13 @@ after(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-function installAthlete(userId: string, email: string): void {
+function installAthlete(userId: string, email: string, emailVerifiedAt?: string): void {
   if (!getUserById(userId)) {
     insertUser({
       id: userId,
       email,
       createdAt: "2026-09-01T00:00:00.000Z",
+      emailVerifiedAt,
     });
   }
   upsertIntervalsConnection({
@@ -157,14 +157,9 @@ describe("adapt Intervals gate", () => {
     delete process.env.ADAPT_LLM_API_KEY;
     process.env.INTERVALS_OWNER_EMAILS = `  ${OWNER_EMAIL.toUpperCase()}  `;
     const userId = "adapt-owner";
-    installAthlete(userId, OWNER_EMAIL);
-    upsertIntervalsConnection({
-      userId,
-      athleteId: "i704884",
-      connectedAt: "2026-09-01T00:00:00.000Z",
-      apiKeyEnc: encryptIntervalsApiKey("owner-personal-key"),
-      needsReconnect: false,
-    });
+    process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
+    process.env.INTERVALS_ICU_API_KEY = "owner-env-key";
+    installAthlete(userId, OWNER_EMAIL, "2026-09-01T00:00:00.000Z");
 
     const loadRunEffort = mock.fn(async () => null);
     const upsertPlannedRuns = mock.fn(async () => ({ uploaded: 1, failed: 0 }));
@@ -174,6 +169,24 @@ describe("adapt Intervals gate", () => {
     assert.equal(upsertPlannedRuns.mock.calls.length, 1);
     assert.equal(result.uploaded, 1);
     assert.match(adaptRunLogLine(result), /uploaded=1/);
+    assert.equal(loadTrainingSnapshot().sessions.find((session) => session.id === `${userId}-tomorrow`)?.distanceKm, 8);
+  });
+
+  it("does not call upsertPlannedRuns or loadRunEffort for an unverified allowlisted account", async () => {
+    delete process.env.ADAPT_LLM_API_KEY;
+    process.env.INTERVALS_OWNER_EMAILS = `unverified-owner@example.com, ${OWNER_EMAIL}`;
+    const userId = "adapt-unverified-owner";
+    installAthlete(userId, "unverified-owner@example.com");
+
+    const loadRunEffort = mock.fn(async () => null);
+    const upsertPlannedRuns = mock.fn(async () => ({ uploaded: 1, failed: 0 }));
+    const result = await runNocturnalAdaptation(NOW, { loadRunEffort, upsertPlannedRuns });
+
+    assert.equal(loadRunEffort.mock.calls.length, 0);
+    assert.equal(upsertPlannedRuns.mock.calls.length, 0);
+    assert.equal(result.uploaded, 0);
+    assert.match(adaptRunLogLine(result), /uploaded=0/);
+    assert.equal(loadTrainingSnapshot().adaptationEvents.some((event) => event.userId === userId), true);
     assert.equal(loadTrainingSnapshot().sessions.find((session) => session.id === `${userId}-tomorrow`)?.distanceKm, 8);
   });
 });
