@@ -147,8 +147,11 @@ describe("getIntervalsConnection", () => {
     }
 
     assert.equal(unhandled.length, 0);
-    assert.equal(logged.length, 1);
-    assert.equal(logged[0]?.[0], "[intervals] revoke unowned failed");
+    const revokeLogs = logged.filter(
+      (args) => typeof args[0] === "string" && args[0].startsWith("[intervals] revoke unowned failed"),
+    );
+    assert.equal(revokeLogs.length, 1);
+    assert.equal(revokeLogs[0]?.[0], "[intervals] revoke unowned failed");
     const dumped = JSON.stringify(logged, (_key, value) =>
       value instanceof Error ? { message: value.message } : value,
     );

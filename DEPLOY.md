@@ -47,35 +47,45 @@ Google Cloud Console: add the production authorized redirect URI before testing 
 
 After this deploy, Intervals is unavailable for everyone until the owner signs in once with Google (`email_verified === true` on the userinfo or id token; false or missing does not count) or a magic link. That sign-in sets `emailVerifiedAt`. Password signup and password login do not. If the account was unverified, that first verified sign-in clears the password hash and invalidates every existing session in one database transaction, then issues the new session. A later sign-in on an already-verified account does not clear the password.
 
-If the real training account is not already `crispal94@gmail.com`, follow the owner runbook below before expecting Intervals to work. Do not run the Intervals cleanup until that Google sign-in has set `emailVerifiedAt`.
+If the real training account is not already `crispal94@gmail.com`, follow the owner runbook below before expecting Intervals to work. The cleanup dry run is step 1. Cleanup `--apply` waits until the Google sign-in in step 3 has set `emailVerifiedAt`.
 
 Do not commit a production `.env`. Railway variables are enough at runtime (`process.env`); no `.env` file is required on the host.
 
 ## Owner runbook
 
-Run these on the **web** service (the service that mounts `.data` / `app.db`, workdir `/app`). Do not run them on the cron service; that service has no volume.
+Run these on the **web** service (the service that mounts `.data` / `app.db`, workdir `/app`). Do not run them on the cron service; that service has no volume. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` (see Environment above).
 
-1. Set `INTERVALS_OWNER_EMAILS=crispal94@gmail.com` on the web service.
-2. Deploy.
-3. Reassign **before any Google login**. Do not sign in with Google, and do not send the owner through Google, until `--apply` below has finished. `<realEmail>` is the account that already holds the plan and run history. Dry-run, share the output, then apply.
+0. Set `INTERVALS_KEY_ENC_SECRET` in the Railway web service environment. Generate it with `openssl rand -base64 32`.
 
-```bash
-npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com
-npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --apply
-```
+0b. Register the Intervals.icu OAuth app. Callback URL: `https://running-stats-production.up.railway.app/auth/intervals/callback`. Set `INTERVALS_CLIENT_ID` and `INTERVALS_CLIENT_SECRET` on the web service.
 
-If the dry run or `--apply` aborts because the target account already has rows (onboarding, plan, training sessions, feedback, run logs, adaptation events, or an Intervals connection), stop and ask the dev team. Do not delete those rows by hand.
+Steps 0 and 0b are only needed once the per-user Intervals PR is in production.
 
-4. After deploy and before that Google login, the account is unverified. Running adapt, or opening Settings and submitting an Intervals action, deletes the owner’s Intervals connection row. Run logs are kept. After the verified Google sign-in the owner must Connect again.
-5. Sign in on the site with Google as `crispal94@gmail.com` (`email_verified` must be true). That sets `emailVerifiedAt` on the renamed account. Do this only after step 3 `--apply`.
-6. Dry-run the Intervals cleanup, share the output, then apply.
+1. Dry-run the Intervals cleanup. This prints counts and deletes nothing.
 
 ```bash
 npm run cleanup:intervals-nonowners
-npm run cleanup:intervals-nonowners -- --apply
 ```
 
-Do not run step 6 before step 5. Until `emailVerifiedAt` is set, the allowlisted address is still a non-owner, and cleanup `--apply` would delete that account’s Intervals run logs.
+2. Reassign **before any Google login**. Do not sign in with Google, and do not send the owner through Google, until `--apply` below has finished. Dry-run, then apply:
+
+```bash
+npm run reassign-owner-email -- --from chrispalacios94@gmail.com --to crispal94@gmail.com
+npm run reassign-owner-email -- --from chrispalacios94@gmail.com --to crispal94@gmail.com --apply
+```
+
+If the dry run or `--apply` aborts because the target account already has rows (onboarding, plan, training sessions, feedback, run logs, adaptation events, or an Intervals connection), stop and ask the team. Do not delete those rows by hand.
+
+3. Sign in on the site with Google as `crispal94@gmail.com` (`email_verified` must be true). That sets `emailVerifiedAt` on the renamed account. Do this only after step 2 `--apply`.
+
+4. Connect Intervals in Settings.
+
+5. **Cleanup `--apply` only after the Google login.** Until `emailVerifiedAt` is set, the allowlisted address is still a non-owner, and `--apply` would delete that account’s Intervals run logs. Then dry-run again; it should show 0.
+
+```bash
+npm run cleanup:intervals-nonowners -- --apply
+npm run cleanup:intervals-nonowners
+```
 
 ## One-off: reassign the owner email
 
@@ -100,7 +110,7 @@ npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --ap
 
 ## One-off: remove non-owner Intervals imports
 
-Run this once on the **web** service, after the owner runbook’s Google sign-in. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` and that account’s `emailVerifiedAt` must be set. Do not run it on the cron service; that service has no volume.
+Order is the owner runbook, not dry-run then `--apply` back to back. Dry-run first (step 1), before reassign and before any Google login. `--apply` is step 5, only after that Google login and Connect. Then dry-run again; it should show 0. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` and, before `--apply`, that account’s `emailVerifiedAt` must be set. Do not run it on the cron service; that service has no volume.
 
 Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
 
@@ -110,7 +120,7 @@ Default is a dry run. It prints each account (`userId`, `email`, `verified`, `wo
 npm run cleanup:intervals-nonowners
 ```
 
-Share that output, then delete with:
+`--apply` is owner runbook step 5, only after the Google login. It is not the next command after the step 1 dry run:
 
 ```bash
 npm run cleanup:intervals-nonowners -- --apply

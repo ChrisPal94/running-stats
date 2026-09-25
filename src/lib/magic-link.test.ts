@@ -3,9 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
-import { insertUser, listMagicTokensByEmail, saveTrainingSnapshot } from "./db.ts";
+import { getDb, insertUser, listMagicTokensByEmail, saveTrainingSnapshot } from "./db.ts";
 import {
   consumeMagicLink,
+  finishMagicLink,
   hashMagicToken,
   isMagicLinkIntent,
   issueMagicLinkToken,
@@ -330,6 +331,39 @@ describe("magic link consume", () => {
       assert.equal(result.created, false);
       assert.equal(await magicLinkContinuePath(result.created, result.user.id), "/onboarding");
     }
+  });
+
+  it("logs the error name and not the email when sign-in throws", async () => {
+    const email = uniqueEmail("signin-throw");
+    const issued = issueMagicLinkToken(email);
+    const database = getDb();
+    const originalPrepare = database.prepare.bind(database);
+    mock.method(database, "prepare", (sql: string) => {
+      if (sql.includes("UPDATE magic_tokens SET usedAt")) {
+        const error = new Error(`token for ${email} failed`);
+        error.name = "MagicSignInBoom";
+        throw error;
+      }
+      return originalPrepare(sql);
+    });
+    const logged: unknown[][] = [];
+    mock.method(console, "error", (...args: unknown[]) => {
+      logged.push(args);
+    });
+
+    const result = await finishMagicLink(
+      new Request(`http://localhost/auth/magic?token=${encodeURIComponent(issued.raw)}`),
+      { get() {}, set() {}, delete() {} } as never,
+    );
+
+    assert.equal(result.location, "/login?error=signin");
+    const signInLogs = logged.filter((args) => args[0] === "[auth] magic link sign-in failed");
+    assert.deepEqual(signInLogs, [["[auth] magic link sign-in failed", "MagicSignInBoom"]]);
+    const dumped = JSON.stringify(logged, (_key, value) =>
+      value instanceof Error ? { name: value.name, message: value.message } : value,
+    );
+    assert.equal(dumped.includes(email), false);
+    assert.equal(dumped.includes("@"), false);
   });
 
   it("routes a returning user with a plan to /today", async () => {
