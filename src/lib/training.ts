@@ -32,8 +32,8 @@ import {
   parseIntervalsRunChoiceList,
   pickClosestRun,
   openIntervalsCredentials,
+  ownerEnvFallbackAllowed,
   revokeUnownedIntervals,
-  userCanUseIntervals,
   userHasOwnIntervalsConnection,
   type IntervalsCredentials,
   type IntervalsRunChoice,
@@ -2156,6 +2156,32 @@ export async function handleSettingsPost(
   formData: FormData,
 ): Promise<SettingsFormResult> {
   const intent = String(formData.get("intent") ?? "").trim();
+  if (intent.startsWith("intervals-")) {
+    try {
+      return await postIntervalsSettings(userId, formData, intent);
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "Error";
+      console.error(`[intervals] settings failed ${name}`);
+      return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
+    }
+  }
+
+  const cadenceRaw = String(formData.get("feedbackCadence") ?? "").trim();
+  if (!isFeedbackCadence(cadenceRaw)) {
+    return { ok: false, error: "Pick Daily, Weekly, or Monthly.", section: "cadence" };
+  }
+  const plan = await updateFeedbackCadence(userId, cadenceRaw);
+  if (!plan) {
+    return { ok: false, error: "Couldn't save. Try again.", section: "cadence" };
+  }
+  return { ok: true, redirect: "/settings?saved=1" };
+}
+
+async function postIntervalsSettings(
+  userId: string,
+  formData: FormData,
+  intent: string,
+): Promise<SettingsFormResult> {
   const gated =
     intent === "intervals-connect" ||
     intent === "intervals-sync" ||
@@ -2163,7 +2189,7 @@ export async function handleSettingsPost(
     intent === "intervals-skip-pick";
   const ownConnection = userHasOwnIntervalsConnection(userId);
   const postingOwnKey = intent === "intervals-connect" && personalIntervalsConnect(formData);
-  if (gated && !ownConnection && !postingOwnKey && !userCanUseIntervals(userId)) {
+  if (gated && !ownConnection && !postingOwnKey && !ownerEnvFallbackAllowed(userId)) {
     await revokeUnownedIntervals(userId);
     return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
   }
@@ -2240,13 +2266,5 @@ export async function handleSettingsPost(
     return { ok: true, redirect: "/settings" };
   }
 
-  const cadenceRaw = String(formData.get("feedbackCadence") ?? "").trim();
-  if (!isFeedbackCadence(cadenceRaw)) {
-    return { ok: false, error: "Pick Daily, Weekly, or Monthly.", section: "cadence" };
-  }
-  const plan = await updateFeedbackCadence(userId, cadenceRaw);
-  if (!plan) {
-    return { ok: false, error: "Couldn't save. Try again.", section: "cadence" };
-  }
-  return { ok: true, redirect: "/settings?saved=1" };
+  return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
 }

@@ -576,6 +576,7 @@ describe("Settings Sync path", () => {
   it("does not toast no-session when a prior import in the same flow is followed by a dismissed picker", async () => {
     const userId = "settings-prior-import-dismiss";
     seed(userId);
+    connectUser(userId);
     const formData = new FormData();
     formData.set("intent", "intervals-skip-pick");
     formData.set("pickerRemaining", "[]");

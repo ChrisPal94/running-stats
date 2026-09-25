@@ -869,11 +869,16 @@ describe("Intervals OAuth", () => {
     assert.equal(denied.status, 403);
     assert.equal(await denied.text(), INTERVALS_CSRF_ERROR);
     assert.equal(denyIntervalsPostCsrf(cross, "save-cadence"), null);
+    const disconnectDenied = denyIntervalsPostCsrf(cross, "intervals-disconnect");
+    assert.ok(disconnectDenied);
+    assert.equal(disconnectDenied.status, 403);
+    assert.equal(await disconnectDenied.text(), INTERVALS_CSRF_ERROR);
     const same = new Request("https://running-stats-production.up.railway.app/settings", {
       method: "POST",
       headers: { origin: "https://running-stats-production.up.railway.app" },
     });
     assert.equal(denyIntervalsPostCsrf(same, "intervals-sync"), null);
+    assert.equal(denyIntervalsPostCsrf(same, "intervals-disconnect"), null);
     assert.equal(intervalsCsrfDeniedResponse().status, 403);
 
     const userId = "oauth-bad-athlete";

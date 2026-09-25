@@ -7,8 +7,8 @@ import { after, afterEach, describe, it, mock } from "node:test";
 import { transform } from "@astrojs/compiler-rs";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
 import { appTodayYmd } from "./calendar.ts";
-import { getIntervalsConnection as getStoredConnection, insertUser, loadTrainingSnapshot, saveTrainingSnapshot } from "./db.ts";
-import { decryptIntervalsApiKey } from "./intervals-crypto.ts";
+import { getIntervalsConnection as getStoredConnection, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
+import { decryptIntervalsApiKey, IntervalsDecryptError, IntervalsEncryptionError } from "./intervals-crypto.ts";
 import {
   INTERVALS_CONNECT_INPUT,
   INTERVALS_CONNECT_REJECTED,
@@ -501,6 +501,49 @@ describe("per-user Intervals key", () => {
     assert.equal(fetches, 1);
     assert.equal(JSON.stringify(result).includes(KEY_A), false);
     void today;
+  });
+
+  it("disconnects a stored key without decrypting when the secret is missing or the ciphertext will not open", async () => {
+    const userId = "disconnect-no-decrypt";
+    insertUser({ id: userId, email: "decrypt-disconnect@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    mock.method(globalThis, "fetch", async () => athleteResponse(ATHLETE_A));
+    await connectIntervals(userId, { apiKey: KEY_A, athleteId: ATHLETE_A });
+    const enc = getStoredConnection(userId)?.apiKeyEnc ?? "";
+    assert.ok(enc);
+    upsertIntervalsConnection({
+      userId,
+      athleteId: ATHLETE_A,
+      connectedAt: "2026-09-01T00:00:00.000Z",
+      apiKeyEnc: enc,
+      needsReconnect: true,
+      authType: "apikey",
+    });
+
+    delete process.env.INTERVALS_KEY_ENC_SECRET;
+    assert.throws(() => decryptIntervalsApiKey(enc, userId), IntervalsEncryptionError);
+    const form = new FormData();
+    form.set("intent", "intervals-disconnect");
+    const missingSecret = await handleSettingsPost(userId, form);
+    assert.equal(missingSecret.ok, true);
+    if (missingSecret.ok && "redirect" in missingSecret) assert.equal(missingSecret.redirect, "/settings");
+    assert.equal(getStoredConnection(userId), null);
+    assert.equal(dbContains(KEY_A), false);
+
+    process.env.INTERVALS_KEY_ENC_SECRET = SECRET;
+    const corruptEnc = "v2:not-valid:not-valid:not-valid";
+    assert.throws(() => decryptIntervalsApiKey(corruptEnc, userId), IntervalsDecryptError);
+    upsertIntervalsConnection({
+      userId,
+      athleteId: ATHLETE_A,
+      connectedAt: "2026-09-01T00:00:00.000Z",
+      apiKeyEnc: corruptEnc,
+      needsReconnect: true,
+      authType: "oauth",
+    });
+    assert.equal(getStoredConnection(userId)?.needsReconnect, true);
+    const corrupt = await handleSettingsPost(userId, form);
+    assert.equal(corrupt.ok, true);
+    assert.equal(getStoredConnection(userId), null);
   });
 
   it("upserts planned runs with the caller-supplied athlete, not the env key", async () => {

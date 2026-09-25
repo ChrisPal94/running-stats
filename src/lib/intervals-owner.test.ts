@@ -8,6 +8,7 @@ import {
   canUseIntervals,
   getIntervalsConnection,
   INTERVALS_NOT_FOR_ACCOUNT,
+  intervalsBasicAuthHeader,
   intervalsSettingsControls,
   revokeUnownedIntervals,
 } from "./intervals.ts";
@@ -31,6 +32,8 @@ afterEach(() => {
   else process.env.INTERVALS_OWNER_EMAILS = originalOwners;
   if (originalKey === undefined) delete process.env.INTERVALS_ICU_API_KEY;
   else process.env.INTERVALS_ICU_API_KEY = originalKey;
+  delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
+  delete process.env.INTERVALS_ICU_ATHLETE_ID;
 });
 
 describe("canUseIntervals", () => {
@@ -326,4 +329,84 @@ describe("connect/sync route", () => {
     assert.equal(fetched, false);
     assert.equal(loadTrainingSnapshot().runLogs.filter((entry) => entry.userId === userId).length, 0);
   });
+
+  it("returns 403 and does not use the shared key when the user has no connection of their own", async () => {
+    const envKey = "shared-env-key-do-not-use";
+    process.env.INTERVALS_ICU_API_KEY = envKey;
+    process.env.INTERVALS_ICU_ATHLETE_ID = "i704884";
+    process.env.INTERVALS_OWNER_EMAILS = "owner-gate@example.com";
+    process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
+    const userId = "no-own-connection";
+    if (!getUserById(userId)) {
+      insertUser({ id: userId, email: "no-own@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    }
+    const ownerId = "verified-owner-no-own";
+    if (!getUserById(ownerId)) {
+      insertUser({
+        id: ownerId,
+        email: "owner-gate@example.com",
+        createdAt: "2026-09-01T00:00:00.000Z",
+        emailVerifiedAt: "2026-09-25T00:00:00.000Z",
+      });
+    }
+
+    const auths: string[] = [];
+    mock.method(globalThis, "fetch", async (_input: string | URL, init?: RequestInit) => {
+      auths.push(new Headers(init?.headers).get("authorization") ?? "");
+      return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const forms = intervalsIntentForms();
+    for (const user of [userId]) {
+      for (const formData of forms) {
+        const result = await handleSettingsPost(user, formData);
+        assert.equal(result.ok, false);
+        if (result.ok) continue;
+        assert.equal(result.status, 403);
+        assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
+        assert.equal(result.error.includes("INTERVALS_"), false);
+        assert.equal(result.error.includes(envKey), false);
+      }
+    }
+    assert.equal(auths.length, 0);
+
+    delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
+    for (const formData of intervalsIntentForms()) {
+      const result = await handleSettingsPost(ownerId, formData);
+      assert.equal(result.ok, false);
+      if (result.ok) continue;
+      assert.equal(result.status, 403);
+      assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
+      assert.equal(JSON.stringify(result).includes(envKey), false);
+    }
+    assert.equal(auths.length, 0);
+
+    process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
+    const connect = new FormData();
+    connect.set("intent", "intervals-connect");
+    const allowed = await handleSettingsPost(ownerId, connect);
+    assert.equal(allowed.ok, true);
+    assert.equal(auths.some((header) => header === intervalsBasicAuthHeader(envKey)), true);
+  });
 });
+
+function intervalsIntentForms(): FormData[] {
+  const connect = new FormData();
+  connect.set("intent", "intervals-connect");
+  const sync = new FormData();
+  sync.set("intent", "intervals-sync");
+  const pick = new FormData();
+  pick.set("intent", "intervals-pick-run");
+  pick.set("pickerDate", "2026-09-14");
+  pick.set("pickerSessionId", "no-own-session");
+  pick.set("pickerSessionDistanceKm", "8");
+  pick.set("pickerRuns", "[]");
+  pick.set("pickerRemaining", "[]");
+  pick.set("activityId", "act-stale");
+  const skip = new FormData();
+  skip.set("intent", "intervals-skip-pick");
+  skip.set("pickerRemaining", "[]");
+  skip.set("skippedNoSession", "0");
+  skip.set("imported", "0");
+  return [connect, sync, pick, skip];
+}

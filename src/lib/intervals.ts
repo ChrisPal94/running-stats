@@ -1067,6 +1067,7 @@ export async function connectIntervalsOAuth(
   }
 }
 
+/** Deletes the stored token row. Does not decrypt, even when the secret is missing or the ciphertext will not open. */
 export async function disconnectIntervals(userId: string): Promise<void> {
   await enqueueWrite(() => {
     deleteIntervalsConnection(userId);
