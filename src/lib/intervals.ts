@@ -3,6 +3,7 @@ import {
   deleteIntervalsConnection,
   enqueueWrite,
   getIntervalsConnection as getStoredIntervalsConnection,
+  getUserById,
   upsertIntervalsConnection,
   type IntervalsConnection,
 } from "./db";
@@ -20,6 +21,16 @@ export const INTERVALS_CONNECT_COPY = "API key stays on the server";
 export const INTERVALS_SYNC_ERROR = "Couldn’t sync. Try again.";
 export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
 export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
+/** Shown when this account is not allowed to use the shared Intervals key. No env names. */
+export const INTERVALS_NOT_FOR_ACCOUNT =
+  "Intervals.icu import isn’t available for your account yet.";
+
+const GATED_INTERVALS_INTENTS = new Set([
+  "intervals-connect",
+  "intervals-sync",
+  "intervals-pick-run",
+  "intervals-skip-pick",
+]);
 export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
 export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
 export const INTERVALS_COOPER_SYNC_TOAST = "Cooper test result synced — plan updated.";
@@ -133,6 +144,50 @@ export type IntervalsConnectionView =
 
 function envValue(name: string): string {
   return process.env[name]?.trim() ?? "";
+}
+
+/**
+ * Shared Intervals key is owner-only. Unset or empty `INTERVALS_OWNER_EMAILS`
+ * allows nobody (fail closed). Matching is case-insensitive and trims each address.
+ */
+export function canUseIntervals(user: { email?: string | null } | null | undefined): boolean {
+  const email = user?.email?.trim().toLowerCase() ?? "";
+  if (!email) return false;
+  const raw = process.env.INTERVALS_OWNER_EMAILS;
+  if (!raw?.trim()) return false;
+  const allow = new Set(
+    raw
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0),
+  );
+  return allow.has(email);
+}
+
+export function userCanUseIntervals(userId: string): boolean {
+  return canUseIntervals(getUserById(userId));
+}
+
+/** Drop a stored connection when this account cannot use the shared key. */
+export async function revokeUnownedIntervals(userId: string): Promise<void> {
+  if (userCanUseIntervals(userId)) return;
+  if (!getStoredIntervalsConnection(userId)) return;
+  await enqueueWrite(() => {
+    deleteIntervalsConnection(userId);
+  });
+}
+
+/** 403 for Settings connect/sync (and Which run? follow-ups) when the account is not allowed. */
+export function intervalsOwnerDeniedResponse(
+  user: { email?: string | null } | null | undefined,
+  intent: string,
+): Response | null {
+  if (!GATED_INTERVALS_INTENTS.has(intent.trim())) return null;
+  if (canUseIntervals(user)) return null;
+  return new Response(INTERVALS_NOT_FOR_ACCOUNT, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
 }
 
 export function intervalsApiKey(): string | null {
@@ -529,7 +584,11 @@ export function formatSyncedAgo(iso: string, now = new Date()): string {
 }
 
 export function getIntervalsConnection(userId: string): IntervalsConnection | null {
-  return getStoredIntervalsConnection(userId);
+  const stored = getStoredIntervalsConnection(userId);
+  if (!stored) return null;
+  if (userCanUseIntervals(userId)) return stored;
+  void revokeUnownedIntervals(userId);
+  return null;
 }
 
 export function getIntervalsConnectionView(userId: string, now = new Date()): IntervalsConnectionView {
@@ -690,6 +749,10 @@ export async function fetchIntervalsActivities(
 }
 
 export async function connectIntervals(userId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!userCanUseIntervals(userId)) {
+    await revokeUnownedIntervals(userId);
+    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT };
+  }
   const apiKey = intervalsApiKey();
   if (!apiKey) return { ok: false, error: INTERVALS_API_KEY_NOT_CONFIGURED };
 

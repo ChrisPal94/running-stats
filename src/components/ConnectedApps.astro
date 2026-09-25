@@ -1,15 +1,18 @@
 ---
 import {
   INTERVALS_CONNECT_COPY,
+  INTERVALS_NOT_FOR_ACCOUNT,
   type IntervalsConnectionView,
 } from "../lib/intervals";
 
 interface Props {
   connection: IntervalsConnectionView;
   error?: string;
+  intervalsAvailable?: boolean;
 }
 
-const { connection, error = "" } = Astro.props;
+const { connection, error = "", intervalsAvailable = true } = Astro.props;
+const showConnected = connection.connected && intervalsAvailable;
 const secondaryClass =
   "inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]";
 const primaryClass =
@@ -39,7 +42,7 @@ const primaryClass =
   }
 
   {
-    connection.connected ? (
+    showConnected ? (
       <>
         {connection.lastSyncLabel ? (
           <p
@@ -68,15 +71,19 @@ const primaryClass =
         </div>
       </>
     ) : (
-      <>
-        <p class="mt-4 text-xs leading-5 text-mist">{INTERVALS_CONNECT_COPY}</p>
-        <form method="post" class="mt-5">
-          <input type="hidden" name="intent" value="intervals-connect" />
-          <button type="submit" class={primaryClass}>
-            Connect
-          </button>
-        </form>
-      </>
+      intervalsAvailable ? (
+        <>
+          <p class="mt-4 text-xs leading-5 text-mist">{INTERVALS_CONNECT_COPY}</p>
+          <form method="post" class="mt-5">
+            <input type="hidden" name="intent" value="intervals-connect" />
+            <button type="submit" class={primaryClass}>
+              Connect
+            </button>
+          </form>
+        </>
+      ) : (
+        <p class="mt-4 text-xs leading-5 text-mist">{INTERVALS_NOT_FOR_ACCOUNT}</p>
+      )
     )
   }
 </article>
