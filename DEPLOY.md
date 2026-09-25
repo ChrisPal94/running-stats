@@ -16,7 +16,7 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 
 Nixpacks already runs `npm run build` and `npm start`. Keep the start command as `npm start` (or the `HOST=0.0.0.0 node ./dist/server/entry.mjs` equivalent). Do not use `astro preview` in production.
 
-The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connection status, magic link tokens). Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot. The Intervals API key is env-only and is not stored in `app.db`. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
+The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connection status, magic link tokens). `users.emailVerifiedAt` is nullable and is not backfilled: existing accounts stay unverified until a Google sign-in (when Google reports `email_verified`) or a consumed magic link sets it. Password signup does not. Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot and still start unverified. The Intervals API key is env-only and is not stored in `app.db`. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
 
 ## Environment
 
@@ -39,11 +39,13 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `ADAPT_LLM_MODEL` | No | Default `gpt-4o-mini`. Same variable for adapt and Generate feedback. |
 | `OLLAMA_API_KEY` | Fallback | One-release fallback when `ADAPT_LLM_API_KEY` is unset. Prefer `ADAPT_LLM_API_KEY`. Ignores `ADAPT_LLM_BASE_URL` and `ADAPT_LLM_MODEL`. Host is `https://ollama.com/v1`. |
 | `OLLAMA_MODEL` | Fallback | Model for the `OLLAMA_API_KEY` fallback. Default `gemma4:31b`. |
-| `INTERVALS_ICU_API_KEY` | For Connect | Intervals.icu personal API key. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`; athlete path `0`. Never stored in SQLite or shown in the UI. Only accounts listed in `INTERVALS_OWNER_EMAILS` may use it. |
+| `INTERVALS_ICU_API_KEY` | For Connect | Intervals.icu personal API key. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`; athlete path `0`. Never stored in SQLite or shown in the UI. Only a verified account listed in `INTERVALS_OWNER_EMAILS` may use it. |
 | `INTERVALS_ICU_ATHLETE_ID` | No | Display fallback (default `i704884`). HTTP paths use `0`. |
-| `INTERVALS_OWNER_EMAILS` | For Connect | Comma-separated emails allowed to use the shared Intervals key. Case-insensitive; whitespace around each address is ignored. Unset or empty: nobody can connect, sync, or read Intervals (fail closed). Production must set `crispal94@gmail.com`. |
+| `INTERVALS_OWNER_EMAILS` | For Connect | Comma-separated emails allowed to use the shared Intervals key. Case-insensitive; whitespace around each address is ignored. The account must also have `emailVerifiedAt` set. Unset or empty allowlist: nobody can connect, sync, or read Intervals (fail closed). Production must set `crispal94@gmail.com`. |
 
 Google Cloud Console: add the production authorized redirect URI before testing Continue with Google.
+
+After this deploy, Intervals is unavailable for everyone until the owner signs in once with Google (Google must report the email verified) or a magic link. That sign-in sets `emailVerifiedAt`. Password signup and password login do not. If the account was unverified, that first verified sign-in clears the password hash and signs out other sessions. A later sign-in on an already-verified account does not clear the password.
 
 Do not commit a production `.env`. Railway variables are enough at runtime (`process.env`); no `.env` file is required on the host.
 
@@ -53,7 +55,7 @@ Run this once on the **web** service (the service that mounts `.data` / `app.db`
 
 Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
 
-Default is a dry run. It prints each account (`userId`, `email`) and how many Intervals `RunLog`s it would delete, including owner accounts at `0`, plus a total. It does not delete.
+Default is a dry run. It prints each account (`userId`, `email`, `verified`, `wouldDelete`), including verified owners at `0`, plus a total. `verified=yes` only when `emailVerifiedAt` is set. An allowlisted address that is still unverified is a non-owner. It does not delete.
 
 ```bash
 npm run cleanup:intervals-nonowners
@@ -65,7 +67,7 @@ Share that output, then delete with:
 npm run cleanup:intervals-nonowners -- --apply
 ```
 
-`--apply` deletes `run_logs` with `source = intervals` whose account email is not in `INTERVALS_OWNER_EMAILS` (both sides trimmed and lowercased). The owner’s Intervals imports and every manual `RunLog` stay. If `INTERVALS_OWNER_EMAILS` is unset or empty, both the dry run and `--apply` log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
+`--apply` deletes `run_logs` with `source = intervals` except accounts whose email is in `INTERVALS_OWNER_EMAILS` (both sides trimmed and lowercased) and whose email is verified. Unverified allowlisted accounts are deleted like any other non-owner. Manual `RunLog`s stay. If `INTERVALS_OWNER_EMAILS` is unset or empty, both the dry run and `--apply` log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
 
 ## Reverse proxy / CSRF
 

@@ -34,6 +34,10 @@ export type UserRecord = {
   createdAt: string;
   passwordHash?: string;
   googleId?: string;
+  /** Set when Google or a magic link proves the address. Null means unverified. */
+  emailVerifiedAt?: string;
+  /** Bumped when an unverified account becomes verified so older session cookies fail. */
+  sessionEpoch?: number;
 };
 
 export type TrainingSnapshot = {
@@ -68,7 +72,11 @@ type UserRow = {
   createdAt: string;
   passwordHash: string | null;
   googleId: string | null;
+  emailVerifiedAt: string | null;
+  sessionEpoch: number | null;
 };
+
+const USER_COLUMNS = "id, email, createdAt, passwordHash, googleId, emailVerifiedAt, sessionEpoch";
 
 type OnboardingRow = {
   userId: string;
@@ -238,7 +246,9 @@ function applySchema(database: DatabaseSync): void {
       email TEXT NOT NULL UNIQUE,
       createdAt TEXT NOT NULL,
       passwordHash TEXT,
-      googleId TEXT UNIQUE
+      googleId TEXT UNIQUE,
+      emailVerifiedAt TEXT,
+      sessionEpoch INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS onboarding (
@@ -344,6 +354,13 @@ function applySchema(database: DatabaseSync): void {
   ensureColumn(database, "onboarding", "feedbackCadence", "TEXT");
   ensureColumn(database, "plans", "feedbackCadence", "TEXT NOT NULL DEFAULT 'daily'");
   ensureColumn(database, "run_logs", "source", "TEXT NOT NULL DEFAULT 'manual'");
+  ensureColumn(database, "users", "emailVerifiedAt", "TEXT");
+  ensureColumn(database, "users", "sessionEpoch", "INTEGER NOT NULL DEFAULT 0");
+}
+
+/** Re-run schema creation and column adds. Safe to call more than once. Does not backfill verification. */
+export function migrateAppDatabase(database: DatabaseSync = getDb()): void {
+  applySchema(database);
 }
 
 function tableColumns(database: DatabaseSync, table: string): Set<string> {
@@ -477,9 +494,11 @@ function userFromRow(row: UserRow): UserRecord {
     id: row.id,
     email: row.email,
     createdAt: row.createdAt,
+    sessionEpoch: row.sessionEpoch ?? 0,
   };
   if (row.passwordHash) user.passwordHash = row.passwordHash;
   if (row.googleId) user.googleId = row.googleId;
+  if (row.emailVerifiedAt) user.emailVerifiedAt = row.emailVerifiedAt;
   return user;
 }
 
@@ -615,12 +634,15 @@ function run(sql: string, ...params: SqlBind[]): void {
 
 function insertUserRow(user: UserRecord): void {
   run(
-    `INSERT INTO users (id, email, createdAt, passwordHash, googleId) VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, email, createdAt, passwordHash, googleId, emailVerifiedAt, sessionEpoch)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     user.id,
     user.email,
     user.createdAt,
     text(user.passwordHash),
     text(user.googleId),
+    text(user.emailVerifiedAt),
+    user.sessionEpoch ?? 0,
   );
 }
 
@@ -758,8 +780,12 @@ function replaceTraining(
   }
 }
 
-export function listUserEmails(): { id: string; email: string }[] {
-  return getDb().prepare("SELECT id, email FROM users").all() as { id: string; email: string }[];
+export function listUserEmails(): { id: string; email: string; emailVerifiedAt: string | null }[] {
+  return getDb().prepare("SELECT id, email, emailVerifiedAt FROM users").all() as {
+    id: string;
+    email: string;
+    emailVerifiedAt: string | null;
+  }[];
 }
 
 export function listIntervalsRunLogCounts(): { userId: string; count: number }[] {
@@ -796,23 +822,47 @@ export function deleteIntervalsRunLogsExceptUsers(
 
 export function getUserById(id: string): UserRecord | null {
   const row = getDb()
-    .prepare("SELECT id, email, createdAt, passwordHash, googleId FROM users WHERE id = ?")
+    .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`)
     .get(id) as UserRow | undefined;
   return row ? userFromRow(row) : null;
 }
 
 export function getUserByEmail(email: string): UserRecord | null {
   const row = getDb()
-    .prepare("SELECT id, email, createdAt, passwordHash, googleId FROM users WHERE email = ?")
+    .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE email = ?`)
     .get(email) as UserRow | undefined;
   return row ? userFromRow(row) : null;
 }
 
 export function getUserByGoogleId(googleId: string): UserRecord | null {
   const row = getDb()
-    .prepare("SELECT id, email, createdAt, passwordHash, googleId FROM users WHERE googleId = ?")
+    .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE googleId = ?`)
     .get(googleId) as UserRow | undefined;
   return row ? userFromRow(row) : null;
+}
+
+/**
+ * Mark `emailVerifiedAt` when it is still null.
+ * An account that was unverified loses its password hash and its session epoch
+ * increments, so cookies issued before this call no longer match.
+ * Already-verified accounts are left unchanged, including their password.
+ * Returns whether this call performed that first verification.
+ */
+export function verifyUserEmail(userId: string, verifiedAt: string): boolean {
+  return withTransaction(() => {
+    const row = getDb()
+      .prepare("SELECT emailVerifiedAt FROM users WHERE id = ?")
+      .get(userId) as { emailVerifiedAt: string | null } | undefined;
+    if (!row || row.emailVerifiedAt) return false;
+    const changed = getDb()
+      .prepare(
+        `UPDATE users
+         SET emailVerifiedAt = ?, passwordHash = NULL, sessionEpoch = COALESCE(sessionEpoch, 0) + 1
+         WHERE id = ? AND emailVerifiedAt IS NULL`,
+      )
+      .run(verifiedAt, userId);
+    return changed.changes > 0;
+  });
 }
 
 export function insertUser(user: UserRecord): void {

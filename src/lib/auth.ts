@@ -8,6 +8,7 @@ import {
   getUserById,
   insertUser,
   setUserGoogleId,
+  verifyUserEmail,
 } from "./db";
 import { loadLocalEnv } from "./load-env";
 import { isSameOrigin } from "./public-origin";
@@ -34,6 +35,7 @@ export type AuthUser = {
   id: string;
   email: string;
   createdAt: string;
+  emailVerifiedAt?: string;
 };
 
 type StoredUser = AuthUser & {
@@ -44,6 +46,7 @@ type StoredUser = AuthUser & {
 type SessionPayload = {
   sub: string;
   exp: number;
+  epoch: number;
 };
 
 export type AuthFormResult =
@@ -129,14 +132,17 @@ async function verifyPassword(password: string, stored: string | undefined): Pro
 }
 
 function publicUser(user: StoredUser): AuthUser {
-  return { id: user.id, email: user.email, createdAt: user.createdAt };
+  const auth: AuthUser = { id: user.id, email: user.email, createdAt: user.createdAt };
+  if (user.emailVerifiedAt) auth.emailVerifiedAt = user.emailVerifiedAt;
+  return auth;
 }
 
-function signSession(userId: string): string {
+function signSession(userId: string, epoch: number): string {
   const payload = Buffer.from(
     JSON.stringify({
       sub: userId,
       exp: Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000,
+      epoch,
     } satisfies SessionPayload),
   ).toString("base64url");
   const sig = createHmac("sha256", getAuthSecret()).update(payload).digest("base64url");
@@ -156,16 +162,18 @@ function readSession(token: string | undefined): SessionPayload | null {
   }
 
   try {
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as SessionPayload;
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Partial<SessionPayload>;
     if (!data.sub || typeof data.exp !== "number" || data.exp < Date.now()) return null;
-    return data;
+    const epoch = typeof data.epoch === "number" && Number.isFinite(data.epoch) ? data.epoch : 0;
+    return { sub: data.sub, exp: data.exp, epoch };
   } catch {
     return null;
   }
 }
 
 export function setSessionCookie(cookies: AstroCookies, userId: string): void {
-  cookies.set(SESSION_COOKIE, signSession(userId), {
+  const epoch = getUserById(userId)?.sessionEpoch ?? 0;
+  cookies.set(SESSION_COOKIE, signSession(userId, epoch), {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
@@ -182,7 +190,9 @@ export async function getCurrentUser(cookies: AstroCookies): Promise<AuthUser | 
   const session = readSession(cookies.get(SESSION_COOKIE)?.value);
   if (!session) return null;
   const user = getUserById(session.sub);
-  return user ? publicUser(user) : null;
+  if (!user) return null;
+  if ((user.sessionEpoch ?? 0) !== session.epoch) return null;
+  return publicUser(user);
 }
 
 export async function signupFromForm(
@@ -361,22 +371,31 @@ export async function upsertGoogleUser(
   }
 
   return enqueueWrite(async () => {
+    const verifiedAt = new Date().toISOString();
     const byGoogle = getUserByGoogleId(googleId);
     if (byGoogle) {
-      return { user: publicUser(byGoogle), created: false };
+      verifyUserEmail(byGoogle.id, verifiedAt);
+      const fresh = getUserById(byGoogle.id);
+      if (!fresh) throw new Error("Google account is missing a verified email.");
+      return { user: publicUser(fresh), created: false };
     }
 
     const byEmail = getUserByEmail(normalized);
     if (byEmail) {
       setUserGoogleId(byEmail.id, googleId);
-      return { user: publicUser({ ...byEmail, googleId }), created: false };
+      verifyUserEmail(byEmail.id, verifiedAt);
+      const fresh = getUserById(byEmail.id);
+      if (!fresh) throw new Error("Google account is missing a verified email.");
+      return { user: publicUser(fresh), created: false };
     }
 
     const user: StoredUser = {
       id: randomBytes(16).toString("base64url"),
       email: normalized,
       googleId,
-      createdAt: new Date().toISOString(),
+      createdAt: verifiedAt,
+      emailVerifiedAt: verifiedAt,
+      sessionEpoch: 0,
     };
     insertUser(user);
     return { user: publicUser(user), created: true };
@@ -390,15 +409,21 @@ export function upsertPasswordlessUser(email: string): UpsertGoogleUserResult {
     throw new Error("Magic link is missing a valid email.");
   }
 
+  const verifiedAt = new Date().toISOString();
   const existing = getUserByEmail(normalized);
   if (existing) {
-    return { user: publicUser(existing), created: false };
+    verifyUserEmail(existing.id, verifiedAt);
+    const fresh = getUserById(existing.id);
+    if (!fresh) throw new Error("Magic link is missing a valid email.");
+    return { user: publicUser(fresh), created: false };
   }
 
   const user: StoredUser = {
     id: randomBytes(16).toString("base64url"),
     email: normalized,
-    createdAt: new Date().toISOString(),
+    createdAt: verifiedAt,
+    emailVerifiedAt: verifiedAt,
+    sessionEpoch: 0,
   };
   insertUser(user);
   return { user: publicUser(user), created: true };

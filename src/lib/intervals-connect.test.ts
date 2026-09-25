@@ -26,6 +26,7 @@ function allowOwner(userId: string): void {
       id: userId,
       email: OWNER_EMAIL,
       createdAt: "2026-09-01T00:00:00.000Z",
+      emailVerifiedAt: "2026-09-01T00:00:00.000Z",
     });
   }
 }

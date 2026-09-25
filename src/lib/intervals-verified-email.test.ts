@@ -1,0 +1,384 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { after, afterEach, describe, it, mock } from "node:test";
+import type { AstroCookies } from "astro";
+import { getCurrentUser, loginFromForm, setGoogleOAuthState, signupFromForm } from "./auth.ts";
+import { dbPath, getDb, getUserByEmail, getUserById, migrateAppDatabase } from "./db.ts";
+import { finishGoogleOAuth } from "./google-oauth.ts";
+import {
+  canUseIntervals,
+  INTERVALS_NOT_FOR_ACCOUNT,
+  INTERVALS_UNAVAILABLE_STATUS,
+  intervalsOwnerDeniedResponse,
+  intervalsSettingsControls,
+} from "./intervals.ts";
+import { consumeMagicLink, finishMagicLink, issueMagicLinkToken } from "./magic-link.ts";
+import { handleSettingsPost } from "./training.ts";
+
+const dataDir = mkdtempSync(join(tmpdir(), "rs-verified-email-"));
+process.env.AUTH_DATA_DIR = dataDir;
+process.env.AUTH_SECRET = "test-auth-secret-16chars";
+process.env.AUTH_COOKIE_SECURE = "false";
+process.env.NODE_ENV = "test";
+
+mkdirSync(dataDir, { recursive: true });
+const legacy = new DatabaseSync(dbPath());
+legacy.exec(`
+  CREATE TABLE users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    createdAt TEXT NOT NULL,
+    passwordHash TEXT,
+    googleId TEXT UNIQUE
+  );
+`);
+legacy
+  .prepare("INSERT INTO users (id, email, createdAt, passwordHash) VALUES (?, ?, ?, ?)")
+  .run("legacy-user", "legacy-owner@example.com", "2026-09-01T00:00:00.000Z", "scrypt:legacy");
+legacy.close();
+
+const originalOwners = process.env.INTERVALS_OWNER_EMAILS;
+const originalKey = process.env.INTERVALS_ICU_API_KEY;
+const originalGoogleId = process.env.GOOGLE_CLIENT_ID;
+const originalGoogleSecret = process.env.GOOGLE_CLIENT_SECRET;
+const originalGoogleCallback = process.env.GOOGLE_CALLBACK_URL;
+const originalCookieSecure = process.env.AUTH_COOKIE_SECURE;
+const originalFetch = globalThis.fetch;
+
+const OWNER_EMAIL = "crispal94@gmail.com";
+const PASSWORD = "correct-horse";
+
+after(() => {
+  rmSync(dataDir, { recursive: true, force: true });
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  mock.restoreAll();
+  if (originalOwners === undefined) delete process.env.INTERVALS_OWNER_EMAILS;
+  else process.env.INTERVALS_OWNER_EMAILS = originalOwners;
+  if (originalKey === undefined) delete process.env.INTERVALS_ICU_API_KEY;
+  else process.env.INTERVALS_ICU_API_KEY = originalKey;
+  if (originalGoogleId === undefined) delete process.env.GOOGLE_CLIENT_ID;
+  else process.env.GOOGLE_CLIENT_ID = originalGoogleId;
+  if (originalGoogleSecret === undefined) delete process.env.GOOGLE_CLIENT_SECRET;
+  else process.env.GOOGLE_CLIENT_SECRET = originalGoogleSecret;
+  if (originalGoogleCallback === undefined) delete process.env.GOOGLE_CALLBACK_URL;
+  else process.env.GOOGLE_CALLBACK_URL = originalGoogleCallback;
+  process.env.AUTH_COOKIE_SECURE = originalCookieSecure ?? "false";
+});
+
+function cookieJar(): { cookies: AstroCookies; get(name: string): string | undefined } {
+  const values = new Map<string, string>();
+  const cookies = {
+    get(name: string) {
+      const value = values.get(name);
+      return value === undefined ? undefined : { value };
+    },
+    set(name: string, value: string) {
+      values.set(name, String(value));
+    },
+    delete(name: string) {
+      values.delete(name);
+    },
+  };
+  return {
+    cookies: cookies as unknown as AstroCookies,
+    get(name: string) {
+      return values.get(name);
+    },
+  };
+}
+
+function post(url: string): Request {
+  return new Request(url, { method: "POST" });
+}
+
+function passwordForm(email: string, password = PASSWORD): FormData {
+  const data = new FormData();
+  data.set("email", email);
+  data.set("password", password);
+  return data;
+}
+
+function configureGoogle(): void {
+  process.env.GOOGLE_CLIENT_ID = "test-client-id";
+  process.env.GOOGLE_CLIENT_SECRET = "test-client-secret";
+  process.env.GOOGLE_CALLBACK_URL = "http://localhost:4321/auth/google/callback";
+}
+
+function mockGoogleFetch(options: {
+  email: string;
+  sub: string;
+  emailVerified?: boolean | string;
+  omitUserinfoVerified?: boolean;
+  idTokenClaims?: Record<string, unknown>;
+}): void {
+  const profile: Record<string, unknown> = { sub: options.sub, email: options.email };
+  if (!options.omitUserinfoVerified) profile.email_verified = options.emailVerified ?? true;
+  const idToken = options.idTokenClaims
+    ? `hdr.${Buffer.from(JSON.stringify(options.idTokenClaims)).toString("base64url")}.sig`
+    : undefined;
+  mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes("/token")) {
+      return Response.json({ access_token: "access-token", ...(idToken ? { id_token: idToken } : {}) });
+    }
+    if (url.includes("userinfo")) return Response.json(profile);
+    throw new Error(`unexpected fetch ${url}`);
+  });
+}
+
+async function finishGoogle(options: {
+  email: string;
+  sub: string;
+  emailVerified?: boolean | string;
+  omitUserinfoVerified?: boolean;
+  idTokenClaims?: Record<string, unknown>;
+}): Promise<{ location: string; jar: ReturnType<typeof cookieJar> }> {
+  configureGoogle();
+  const jar = cookieJar();
+  const nonce = setGoogleOAuthState(jar.cookies, "login", "pkce-verifier-value");
+  mockGoogleFetch(options);
+  const request = new Request(
+    `http://localhost:4321/auth/google/callback?code=auth-code&state=${encodeURIComponent(nonce)}`,
+  );
+  const { location } = await finishGoogleOAuth(request, jar.cookies);
+  return { location, jar };
+}
+
+describe("email verification migration", () => {
+  it("adds nullable emailVerifiedAt without backfill and is idempotent", () => {
+    const database = getDb();
+    migrateAppDatabase(database);
+    migrateAppDatabase(database);
+    const columns = database.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+    assert.equal(columns.filter((column) => column.name === "emailVerifiedAt").length, 1);
+    const row = database
+      .prepare("SELECT emailVerifiedAt, passwordHash, sessionEpoch FROM users WHERE id = ?")
+      .get("legacy-user") as { emailVerifiedAt: string | null; passwordHash: string; sessionEpoch: number };
+    assert.equal(row.emailVerifiedAt, null);
+    assert.equal(row.passwordHash, "scrypt:legacy");
+    assert.equal(row.sessionEpoch, 0);
+    assert.equal(getUserById("legacy-user")?.emailVerifiedAt, undefined);
+    assert.equal(canUseIntervals(getUserById("legacy-user")), false);
+  });
+});
+
+describe("password signup does not verify an owner email", () => {
+  it("rejects Intervals for a password account whose email matches the allowlist", async () => {
+    process.env.INTERVALS_OWNER_EMAILS = `  ${OWNER_EMAIL.toUpperCase()}  `;
+    process.env.INTERVALS_ICU_API_KEY = "owner-key-do-not-leak";
+    let fetched = false;
+    mock.method(globalThis, "fetch", async () => {
+      fetched = true;
+      return new Response("[]", { status: 200 });
+    });
+
+    const jar = cookieJar();
+    const signed = await signupFromForm(
+      post("http://localhost/signup"),
+      jar.cookies,
+      passwordForm(`  ${OWNER_EMAIL.toUpperCase()}  `),
+    );
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    assert.equal(signed.user.email, OWNER_EMAIL);
+    assert.equal(signed.user.emailVerifiedAt, undefined);
+
+    const stored = getUserByEmail(OWNER_EMAIL);
+    assert.ok(stored?.passwordHash);
+    assert.equal(stored?.emailVerifiedAt, undefined);
+    assert.equal(canUseIntervals(stored), false);
+    assert.equal(canUseIntervals(signed.user), false);
+
+    const logged = await loginFromForm(
+      post("http://localhost/login"),
+      cookieJar().cookies,
+      passwordForm(`  ${OWNER_EMAIL.toUpperCase()}  `),
+    );
+    assert.equal(logged.ok, true);
+    if (logged.ok) assert.equal(logged.user.emailVerifiedAt, undefined);
+    assert.equal(getUserByEmail(OWNER_EMAIL)?.emailVerifiedAt, undefined);
+
+    const controls = intervalsSettingsControls({
+      available: canUseIntervals(stored),
+      connection: {
+        connected: true,
+        athleteId: "i704884",
+        statusLabel: "Connected · i704884",
+        lastSyncLabel: null,
+      },
+    });
+    assert.equal(controls.statusLabel, "Not available for your account");
+    assert.equal(controls.statusLabel, INTERVALS_UNAVAILABLE_STATUS);
+    assert.equal(controls.showConnect, false);
+    assert.equal(controls.showSync, false);
+
+    for (const intent of ["intervals-connect", "intervals-sync", "intervals-pick-run", "intervals-skip-pick"]) {
+      const denied = intervalsOwnerDeniedResponse(stored, intent);
+      assert.ok(denied);
+      assert.equal(denied.status, 403);
+      assert.equal(await denied.text(), INTERVALS_NOT_FOR_ACCOUNT);
+      const form = new FormData();
+      form.set("intent", intent);
+      const result = await handleSettingsPost(stored!.id, form);
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.status, 403);
+    }
+    assert.equal(fetched, false);
+  });
+});
+
+describe("Google callback verification", () => {
+  it("marks the email verified and allows Intervals when email_verified is true", async () => {
+    const email = "google-verified-owner@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const { location, jar } = await finishGoogle({ email, sub: "google-verified-sub", emailVerified: true });
+    assert.equal(location, "/onboarding");
+    const user = getUserByEmail(email);
+    assert.ok(user?.emailVerifiedAt);
+    assert.equal(canUseIntervals(user), true);
+    assert.equal(intervalsOwnerDeniedResponse(user, "intervals-connect"), null);
+    assert.ok(await getCurrentUser(jar.cookies));
+  });
+
+  it("marks verified from an id token when userinfo omits email_verified", async () => {
+    const email = "id-token-owner@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const { location } = await finishGoogle({
+      email,
+      sub: "id-token-sub",
+      omitUserinfoVerified: true,
+      idTokenClaims: { email_verified: true },
+    });
+    assert.equal(location, "/onboarding");
+    const user = getUserByEmail(email);
+    assert.ok(user?.emailVerifiedAt);
+    assert.equal(canUseIntervals(user), true);
+  });
+
+  it("does not mark verified when Google reports email_verified false", async () => {
+    const email = "google-unverified-owner@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const jar = cookieJar();
+    const signed = await signupFromForm(post("http://localhost/signup"), jar.cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    const hash = getUserByEmail(email)?.passwordHash;
+    assert.ok(hash);
+
+    const { location } = await finishGoogle({
+      email,
+      sub: "google-unverified-sub",
+      emailVerified: false,
+      idTokenClaims: { email_verified: true },
+    });
+    assert.match(location, /error=google/);
+    const user = getUserByEmail(email);
+    assert.equal(user?.emailVerifiedAt, undefined);
+    assert.equal(user?.passwordHash, hash);
+    assert.equal(canUseIntervals(user), false);
+    assert.ok(await getCurrentUser(jar.cookies));
+
+    const missing = "never-google@example.com";
+    const unseen = await finishGoogle({ email: missing, sub: "missing-sub", emailVerified: false });
+    assert.match(unseen.location, /error=google/);
+    assert.equal(getUserByEmail(missing), null);
+  });
+});
+
+describe("magic link consume verifies email", () => {
+  it("marks a new magic-link account verified", async () => {
+    const email = "magic-owner@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const issued = issueMagicLinkToken(email);
+    const result = await consumeMagicLink(issued.raw);
+    assert.equal(result.ok, true);
+    const user = getUserByEmail(email);
+    assert.ok(user?.emailVerifiedAt);
+    assert.equal(user?.passwordHash, undefined);
+    assert.equal(canUseIntervals(user), true);
+  });
+
+  it("clears a password and other sessions when an unverified account consumes a magic link", async () => {
+    const email = "magic-hijack@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const oldJar = cookieJar();
+    const signed = await signupFromForm(post("http://localhost/signup"), oldJar.cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    assert.ok(await getCurrentUser(oldJar.cookies));
+    assert.ok(getUserByEmail(email)?.passwordHash);
+
+    const issued = issueMagicLinkToken(email);
+    const magicJar = cookieJar();
+    const finished = await finishMagicLink(
+      new Request(`http://localhost/auth/magic?token=${encodeURIComponent(issued.raw)}`),
+      magicJar.cookies,
+    );
+    assert.equal(finished.location, "/onboarding");
+    const user = getUserByEmail(email);
+    assert.ok(user?.emailVerifiedAt);
+    assert.equal(user?.passwordHash, undefined);
+    assert.equal(canUseIntervals(user), true);
+    assert.equal(await getCurrentUser(oldJar.cookies), null);
+    assert.ok(await getCurrentUser(magicJar.cookies));
+  });
+});
+
+describe("unverified password account then Google login", () => {
+  it("clears the password hash and invalidates other sessions", async () => {
+    const email = "hijack-owner@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const signupJar = cookieJar();
+    const signed = await signupFromForm(
+      post("http://localhost/signup"),
+      signupJar.cookies,
+      passwordForm(`  ${email.toUpperCase()}  `),
+    );
+    assert.equal(signed.ok, true);
+    const loginJar = cookieJar();
+    const logged = await loginFromForm(post("http://localhost/login"), loginJar.cookies, passwordForm(email));
+    assert.equal(logged.ok, true);
+    assert.ok(getUserByEmail(email)?.passwordHash);
+    assert.ok(await getCurrentUser(signupJar.cookies));
+    assert.ok(await getCurrentUser(loginJar.cookies));
+
+    const { location, jar } = await finishGoogle({ email, sub: "hijack-google-sub", emailVerified: true });
+    assert.equal(location, "/onboarding");
+    const user = getUserByEmail(email);
+    assert.ok(user?.emailVerifiedAt);
+    assert.equal(user?.passwordHash, undefined);
+    assert.equal(canUseIntervals(user), true);
+    assert.equal(await getCurrentUser(signupJar.cookies), null);
+    assert.equal(await getCurrentUser(loginJar.cookies), null);
+    assert.ok(await getCurrentUser(jar.cookies));
+
+    const retry = await loginFromForm(post("http://localhost/login"), cookieJar().cookies, passwordForm(email));
+    assert.equal(retry.ok, false);
+  });
+
+  it("keeps the password and existing sessions when the account is already verified", async () => {
+    const email = "already-verified@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const jar = cookieJar();
+    const signed = await signupFromForm(post("http://localhost/signup"), jar.cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    const verifiedAt = "2026-09-20T00:00:00.000Z";
+    getDb().prepare("UPDATE users SET emailVerifiedAt = ? WHERE id = ?").run(verifiedAt, signed.user.id);
+    const hash = getUserById(signed.user.id)?.passwordHash;
+    assert.ok(hash);
+
+    const { jar: googleJar } = await finishGoogle({ email, sub: "already-sub", emailVerified: true });
+    const user = getUserById(signed.user.id);
+    assert.equal(user?.emailVerifiedAt, verifiedAt);
+    assert.equal(user?.passwordHash, hash);
+    assert.ok(await getCurrentUser(jar.cookies));
+    assert.ok(await getCurrentUser(googleJar.cookies));
+    const retry = await loginFromForm(post("http://localhost/login"), cookieJar().cookies, passwordForm(email));
+    assert.equal(retry.ok, true);
+  });
+});

@@ -12,6 +12,7 @@ process.env.AUTH_DATA_DIR = dataDir;
 
 const OWNER_ID = "cleanup-owner";
 const OTHER_ID = "cleanup-other";
+const UNVERIFIED_ID = "cleanup-unverified";
 const originalOwners = process.env.INTERVALS_OWNER_EMAILS;
 
 function runLog(id: string, userId: string, source: "intervals" | "manual"): RunLog {
@@ -34,12 +35,20 @@ function seedLogs(): void {
       id: OWNER_ID,
       email: "  CrisPal94@gmail.com ",
       createdAt: "2026-09-01T00:00:00.000Z",
+      emailVerifiedAt: "2026-09-02T00:00:00.000Z",
     });
   }
   if (!getUserById(OTHER_ID)) {
     insertUser({
       id: OTHER_ID,
       email: "Runner@Example.com",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+  }
+  if (!getUserById(UNVERIFIED_ID)) {
+    insertUser({
+      id: UNVERIFIED_ID,
+      email: "second-owner@example.com",
       createdAt: "2026-09-01T00:00:00.000Z",
     });
   }
@@ -55,6 +64,7 @@ function seedLogs(): void {
         runLog("other-intervals-a", OTHER_ID, "intervals"),
         runLog("other-intervals-b", OTHER_ID, "intervals"),
         runLog("other-manual", OTHER_ID, "manual"),
+        runLog("unverified-intervals", UNVERIFIED_ID, "intervals"),
       ],
       adaptationEvents: [],
     },
@@ -112,7 +122,7 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
 
   it("dry run reports per-user counts and --apply deletes only non-owner intervals RunLogs", () => {
     seedLogs();
-    process.env.INTERVALS_OWNER_EMAILS = "CRISPAL94@gmail.com";
+    process.env.INTERVALS_OWNER_EMAILS = "CRISPAL94@gmail.com, second-owner@example.com";
     const before = ids();
     const lines = captureLogs();
 
@@ -120,22 +130,29 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
     assert.equal(dry.aborted, false);
     assert.equal(dry.apply, false);
     assert.deepEqual(dry.rows, [
-      { userId: OTHER_ID, email: "Runner@Example.com", wouldDelete: 2 },
-      { userId: OWNER_ID, email: "CrisPal94@gmail.com", wouldDelete: 0 },
+      { userId: OTHER_ID, email: "Runner@Example.com", verified: false, wouldDelete: 2 },
+      { userId: OWNER_ID, email: "CrisPal94@gmail.com", verified: true, wouldDelete: 0 },
+      { userId: UNVERIFIED_ID, email: "second-owner@example.com", verified: false, wouldDelete: 1 },
     ]);
     assert.equal(
       lines.includes(
-        `[cleanup:intervals-nonowners] dry-run userId=${OTHER_ID} email=Runner@Example.com wouldDelete=2`,
+        `[cleanup:intervals-nonowners] dry-run userId=${OTHER_ID} email=Runner@Example.com verified=no wouldDelete=2`,
       ),
       true,
     );
     assert.equal(
       lines.includes(
-        `[cleanup:intervals-nonowners] dry-run userId=${OWNER_ID} email=CrisPal94@gmail.com wouldDelete=0`,
+        `[cleanup:intervals-nonowners] dry-run userId=${OWNER_ID} email=CrisPal94@gmail.com verified=yes wouldDelete=0`,
       ),
       true,
     );
-    assert.equal(lines.includes("[cleanup:intervals-nonowners] dry-run total=2"), true);
+    assert.equal(
+      lines.includes(
+        `[cleanup:intervals-nonowners] dry-run userId=${UNVERIFIED_ID} email=second-owner@example.com verified=no wouldDelete=1`,
+      ),
+      true,
+    );
+    assert.equal(lines.includes("[cleanup:intervals-nonowners] dry-run total=3"), true);
     assert.equal(lines.includes("[cleanup:intervals-nonowners] dry-run: nothing deleted"), true);
     assert.deepEqual(ids(), before);
 
@@ -145,7 +162,8 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
     assert.equal(applied.apply, true);
     assert.equal(applied.rows.find((row) => row.userId === OTHER_ID)?.wouldDelete, 2);
     assert.equal(applied.rows.find((row) => row.userId === OWNER_ID)?.wouldDelete, 0);
-    assert.equal(lines.includes("[cleanup:intervals-nonowners] apply total=2"), true);
+    assert.equal(applied.rows.find((row) => row.userId === UNVERIFIED_ID)?.wouldDelete, 1);
+    assert.equal(lines.includes("[cleanup:intervals-nonowners] apply total=3"), true);
     assert.deepEqual(ids(), ["other-manual", "owner-intervals", "owner-manual"]);
 
     lines.length = 0;
@@ -155,7 +173,7 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
     assert.equal(lines.includes("[cleanup:intervals-nonowners] apply total=0"), true);
     assert.equal(
       lines.includes(
-        `[cleanup:intervals-nonowners] apply userId=${OWNER_ID} email=CrisPal94@gmail.com wouldDelete=0`,
+        `[cleanup:intervals-nonowners] apply userId=${OWNER_ID} email=CrisPal94@gmail.com verified=yes wouldDelete=0`,
       ),
       true,
     );
