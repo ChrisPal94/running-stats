@@ -1,20 +1,22 @@
 ---
 target: PR #47 Settings logout follow-ups, signed-out login, signup duplicate-email alert
-total_score: 27
+total_score: 28
 max_score: 40
 na_heuristics:
 p0_count: 0
-p1_count: 1
+p1_count: 0
 p2_count: 2
-p3_count: 3
+p3_count: 2
 target_path: src/pages/settings.astro
-timestamp: 2026-09-25T19:30:00Z
+timestamp: 2026-09-25T19:45:00Z
 slug: src-pages-settings-astro
-reviewed_head: 32b25cc
+reviewed_head: 32621ca
+prior_head: 32b25cc
 reviewed_base: d87d8e3
 pr: 47
 baseline_pr: 38
 baseline_score: 25
+verdict: PASS
 ---
 
 Method: dual-agent (A: bc-497ee3fc-97f7-5f35-a3dd-56bfb73e6477 · B: bc-bb3eae72-7934-5195-ae80-60c7e31f6016)
@@ -24,6 +26,92 @@ Browser: Puppeteer-core 25.12.0 + headless Chrome 148 against `http://127.0.0.1:
 Mode: Operate. Baseline: PR #38 critique, 25/40, `.impeccable/critique/2026-09-25-pr38-settings-logout.md` on `cursor/impeccable-critique-pr38`. `PRODUCT.md` (accessible, dark ink, lime accent, Settings Account = email and log out). No `ignore.md`. No `DESIGN.md`.
 
 A newer Impeccable (v4.4.0) is available. Update now? It runs `npx impeccable update`.
+
+## Current head `32621ca`
+
+Method: dual-agent (A: bc-65bf0269-d8f6-5351-91a4-ee97798a9e94 · B: bc-7a0fbfd0-2a8e-5ebb-b7d9-fc767c0941f8)
+
+**Verdict: PASS.** No blockers. Design health **28/40** (Good, floor of the band), up from **27/40** at `32b25cc` and **25/40** on PR #38. The previous P1 is closed: the duplicate-signup alert and the sign-in chrome name only methods that are configured.
+
+Browser: headless Chrome at 390×844 against a worktree of `32621ca`. Outbound hosts other than loopback were aborted (128 Google Fonts stylesheet requests). All four env combos were captured on `/login` and `/signup`, plus the duplicate-signup alert, `/login?signedOut=1`, the odd `signedOut` values, and the Settings Account card. CLI `impeccable detect --json` on `AuthForm.astro`, `login.astro`, `signup.astro`, and `settings.astro` returned `[]` (exit 0). In-page `detect.js` painted badges that match the PR #38 false positives: `dark-glow` on the shared lime primary, `undersized-ui-text` on the existing `text-[0.66rem]` eyebrows and `text-[0.62rem]` nav, and `kicker-above-heading` on “Coach AI”. None of those are this delta. No user-visible overlay tab.
+
+### Score
+
+| # | Heuristic | Score | Key Issue |
+|---|-----------|-------|-----------|
+| 1 | Visibility of System Status | 3 | Signed-out status is intact, still under “Welcome back”; Log out still has no pending state |
+| 2 | Match System / Real World | 3 | Method names match the controls that are on the page |
+| 3 | User Control and Freedom | 2 | Log out is still one path |
+| 4 | Consistency and Standards | 3 | Intro, tabs, Google, and the alert now agree; “Welcome back” still fights the status |
+| 5 | Error Prevention | 3 | Unconfigured Google and email link are absent from the form and the alert |
+| 6 | Recognition Rather Than Recall | 3 | The email stays in the field; the login links do not carry it |
+| 7 | Flexibility and Efficiency | 2 | Alternate methods appear only when configured |
+| 8 | Aesthetic and Minimalist Design | 3 | The four configs collapse cleanly; signed-out still stacks three greetings |
+| 9 | Error Recovery | 3 | The four team sentences render, with real links and no dead method |
+| 10 | Help and Documentation | 3 | The logout helper is still `aria-describedby` on Log out |
+| **Total** | | **28/40** | **Good** |
+
+The point that moved is error prevention, 2 → 3. The other nine scores are unchanged from `32b25cc`.
+
+### 1. Four sign-in configs
+
+`src/lib/auth-methods.ts` is the gate. Google is on only when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL` are all non-blank (`isGoogleLoginConfigured`, lines 7–12). Email link is on only when `RESEND_API_KEY` and `MAIL_FROM` (or `MAGIC_LINK_FROM`) are set; production also requires `configuredPublicOrigin()` (`isMagicLinkConfigured`, lines 19–25). `AuthForm.astro` omits hidden methods from the DOM. The parent is `gap-5` (`AuthForm.astro:43`). There is no reserved empty slot.
+
+| Config | Tabs | “or” + Google | What remains at 390px |
+|---|---|---|---|
+| Neither | Absent | Absent | Password form (email, password, Continue) and the footer. A single form. No hole. |
+| Google only | Absent | Present | Password form, hairline “or”, Continue with Google, footer. The divider sits with the button. |
+| Email link only | Password and Email link, never one tab | Absent | Selected form, then the footer. No gap where Google was. `?method=link` shows email + “Email me a link”. |
+| Both | Same two tabs | Present until a magic link is sent | Full stack. After send, the divider and Google leave with the form. |
+
+`linkSelected` requires `magicOn` (`AuthForm.astro:33`), so `?method=link` with email link off shows the password form rather than an empty panel.
+
+Intros use `authOptionsClause()` (`src/lib/auth-methods.ts:28–35`, `src/pages/login.astro:70`, `src/pages/signup.astro:53`):
+
+- Neither: `Sign in with email and password.` / `Start your plan with email and password.`
+- Google only: `…email and password or continue with Google.`
+- Email link only: `…email and password or an email link.`
+- Both: `…email and password, an email link, or continue with Google.`
+
+### 2. Duplicate-signup alert
+
+`signupDuplicateMessage()` (`src/lib/auth-methods.ts:42–51`) is what `signupFromForm` returns (`src/lib/auth.ts:266`) and what the alert matches (`AuthForm.astro:32`). Apostrophe in “Couldn’t” is U+2019. Rendered strings matched the team copy in all four captures. Email stayed in the field. Password was empty. No link rendered for a method that was off.
+
+| Config | Exact string | Links |
+|---|---|---|
+| Neither | Couldn’t create your account. If you already have one, log in. | `log in` → `/login` |
+| Google only | Couldn’t create your account. If you already have one, log in or continue with Google. | `log in` → `/login`; `continue with Google` → `/auth/google?from=signup` |
+| Email link only | Couldn’t create your account. If you already have one, log in or sign in with an email link. | `log in` → `/login`; `sign in with an email link` → `/login?method=link` |
+| Both | Couldn’t create your account. If you already have one, log in, sign in with an email link, or continue with Google. | `/login`, `/login?method=link`, `/auth/google?from=signup` |
+
+Focused first alert link, every combo: `2px solid rgb(184, 245, 44)`, offset `4px` (`src/styles/global.css:61–64`). Link text sampled at about **16.2:1** on the alert fill. Underline sampled at **7.32:1**. Alert body `#ffb4aa` on the composited fill is about **10.8:1**; anti-aliased glyph samples in these shots were **8.64–8.89:1**. All clear 4.5:1.
+
+### 3. Still intact
+
+- `/login?signedOut=1` still shows `You’re signed out on all your devices.` in `<p role="status" class="text-cloud">` under the h1 `Welcome back` (`src/pages/login.astro:54–70`). `signedOut=0` and `signedOut=<script>alert(1)</script>` do not show it and do not inject.
+- Settings helper is still above the button: `id="logout-all-devices"`, class `mt-1 text-xs leading-5 text-mist`, copy `Signs you out on all your devices.` Computed `margin-top` is 4px. Button label `Log out`, `aria-describedby="logout-all-devices"`, height **42px** (`src/pages/settings.astro:180–188`).
+
+### Blockers
+
+None.
+
+### Residual, not blockers
+
+**P2.** `/login?signedOut=1` still leads with `Welcome back`, then the status, then an intro that starts `Welcome back` again (`src/pages/login.astro:61–70`).
+
+**P2.** Log out is still a 42px control with no pending state (`src/pages/settings.astro:183–188`).
+
+### Low nits
+
+- Google-only clause reads `email and password or continue with Google` (`src/lib/auth-methods.ts:33`). The two halves are not parallel.
+- The tablist is named `Sign in method` on signup as well as login (`AuthForm.astro:46`).
+- Footer says `Log in`, the alert says `log in`, and the tabs say `Password` / `Email link` under “Sign in”.
+- `Couldn’t sign in. Try again or use another method.` (`src/lib/auth.ts:41`) is unchanged, so a password-only page can still say “another method”.
+- `?method=link` with email link off silently shows the password form. The panel is not empty. It also does not say the link method is unavailable.
+
+## Prior head `32b25cc`
+
+This section is the earlier review. The current head is `32621ca`, above.
 
 ## Verdict
 
