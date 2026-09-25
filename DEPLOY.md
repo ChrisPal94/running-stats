@@ -16,7 +16,7 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 
 Nixpacks already runs `npm run build` and `npm start`. Keep the start command as `npm start` (or the `HOST=0.0.0.0 node ./dist/server/entry.mjs` equivalent). Do not use `astro preview` in production.
 
-The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connection status, magic link tokens). Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot. Each user’s Intervals API key is stored only as AES-256-GCM ciphertext (`apiKeyEnc`). It is never written to HTML, JSON, or logs. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
+The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connections, magic link tokens). Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot. Each user’s Intervals access token or API key is stored only as AES-256-GCM ciphertext (`apiKeyEnc`, unique IV, auth tag checked on read). It is never written to HTML, JSON, or logs. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
 
 ## Environment
 
@@ -39,11 +39,33 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `ADAPT_LLM_MODEL` | No | Default `gpt-4o-mini`. Same variable for adapt and Generate feedback. |
 | `OLLAMA_API_KEY` | Fallback | One-release fallback when `ADAPT_LLM_API_KEY` is unset. Prefer `ADAPT_LLM_API_KEY`. Ignores `ADAPT_LLM_BASE_URL` and `ADAPT_LLM_MODEL`. Host is `https://ollama.com/v1`. |
 | `OLLAMA_MODEL` | Fallback | Model for the `OLLAMA_API_KEY` fallback. Default `gemma4:31b`. |
-| `INTERVALS_KEY_ENC_SECRET` | For Connect | 32-byte key that encrypts each user’s Intervals API key at rest (AES-256-GCM). Base64 or 64-char hex. Generate with `openssl rand -base64 32`. Missing or wrong length: Connect fails closed with **Intervals encryption is not configured.** The secret is never stored or logged. Set it on the **web** service (the process that writes `app.db` and runs `/api/adapt`). |
+| `INTERVALS_KEY_ENC_SECRET` | For Connect | 32-byte key that encrypts each user’s Intervals access token or API key at rest (AES-256-GCM). Base64 or 64-char hex. Generate with `openssl rand -base64 32`. Missing or wrong length: the Connect button stays visible but disabled with **Connecting Intervals.icu isn’t available right now. Try again later.** Nothing is stored in plaintext. Existing rows are left in place. The secret is never stored or logged. Set it on the **web** service (the process that writes `app.db` and runs `/api/adapt`). |
+| `INTERVALS_CLIENT_ID` | For OAuth | Intervals.icu OAuth client id from [the app form](https://intervals.icu/oauth/apply). When this and `INTERVALS_CLIENT_SECRET` are both set, Settings uses **Connect Intervals.icu**. Otherwise it shows the API key and athlete ID form. |
+| `INTERVALS_CLIENT_SECRET` | For OAuth | OAuth client secret. Used only on the server when exchanging the code at `https://intervals.icu/api/oauth/token`. Never sent to the browser. |
 | `INTERVALS_ICU_API_KEY` | No | Shared Intervals key. Not used unless `INTERVALS_OWNER_ENV_FALLBACK=true`. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`. |
 | `INTERVALS_ICU_ATHLETE_ID` | No | Athlete id for that shared key (for example `i704884`). Used only with the owner env fallback. |
 | `INTERVALS_OWNER_ENV_FALLBACK` | No | Set to `true` to let allowlisted owner accounts use `INTERVALS_ICU_API_KEY` and `INTERVALS_ICU_ATHLETE_ID` when they have no stored personal key. Default off. Anyone else always uses their own key. |
-| `INTERVALS_OWNER_EMAILS` | For owner fallback | Comma-separated emails allowed to use the shared env key. Case-insensitive; whitespace around each address is ignored. Unset or empty: the env fallback matches nobody. If the database has `emailVerifiedAt`, that account must also be verified. |
+| `INTERVALS_OWNER_EMAILS` | For owner fallback | Comma-separated emails allowed to use the shared env key. Case-insensitive; whitespace around each address is ignored. Unset or empty: the env fallback matches nobody. If the database has `emailVerifiedAt`, that account must also be verified. The allowlist applies only to that env-key fallback, not to per-user OAuth or pasted keys. |
+
+### Intervals.icu OAuth
+
+Primary connect path when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIENT_SECRET` are set. Pasted API key + athlete ID is the fallback when they are not.
+
+Register and approve the app at https://intervals.icu/oauth/apply. Authorize URL: `https://intervals.icu/oauth/authorize` (`client_id`, `redirect_uri`, `scope`, `state`). Token URL: `https://intervals.icu/api/oauth/token` (form `client_id`, `client_secret`, `code`). The token JSON includes `athlete.id` and `athlete.name`; those are stored from that response.
+
+Scopes (one per area — `ACTIVITY:READ,ACTIVITY:WRITE` fails with **Duplicate scope**; `WRITE` already implies read):
+
+```
+ACTIVITY:READ,CALENDAR:WRITE
+```
+
+Redirect URI (must match the app settings exactly). Production:
+
+```
+https://running-stats-production.up.railway.app/auth/intervals/callback
+```
+
+Local: `http://localhost:4321/auth/intervals/callback`. The app builds it from the public origin (`X-Forwarded-Proto` / `X-Forwarded-Host` on Railway), not from an extra env var.
 
 Google Cloud Console: add the production authorized redirect URI before testing Continue with Google.
 

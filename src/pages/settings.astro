@@ -7,10 +7,14 @@ import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession, userInitial } from "../lib/app-session";
 import { isSameOrigin } from "../lib/public-origin";
 import {
-  getIntervalsConnectionView,
+  INTERVALS_CONNECTED_TOAST,
+  INTERVALS_OAUTH_CONNECT_ERROR,
+  intervalsEncryptionReady,
   intervalsSyncToastCopy,
+  refreshIntervalsConnectionView,
   type IntervalsSyncToast,
 } from "../lib/intervals";
+import { isIntervalsOAuthConfigured } from "../lib/intervals-oauth";
 import {
   FEEDBACK_CADENCES,
   handleSettingsPost,
@@ -73,8 +77,18 @@ const syncToast: Exclude<IntervalsSyncToast, null> | null =
   toastParam === "no-session" || toastParam === "no-new-runs" || toastParam === "cooper"
     ? toastParam
     : null;
-const syncToastCopy = syncToast ? intervalsSyncToastCopy(syncToast) : "";
-const connection = getIntervalsConnectionView(user.id);
+const intervalsConnected = toastParam === "intervals-connected";
+const syncToastCopy = intervalsConnected
+  ? INTERVALS_CONNECTED_TOAST
+  : syncToast
+    ? intervalsSyncToastCopy(syncToast)
+    : "";
+if (toastParam === "intervals-error" && !intervalsError) {
+  intervalsError = INTERVALS_OAUTH_CONNECT_ERROR;
+}
+const connection = await refreshIntervalsConnectionView(user.id);
+const oauthConfigured = isIntervalsOAuthConfigured();
+const encryptionReady = intervalsEncryptionReady();
 ---
 
 <AppShell
@@ -140,7 +154,13 @@ const connection = getIntervalsConnectionView(user.id);
       </form>
     </article>
 
-    <ConnectedApps connection={connection} error={intervalsError} athleteIdDraft={athleteIdDraft} />
+    <ConnectedApps
+      connection={connection}
+      error={intervalsError}
+      athleteIdDraft={athleteIdDraft}
+      oauthConfigured={oauthConfigured}
+      encryptionReady={encryptionReady}
+    />
 
     <article
       class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
@@ -167,7 +187,7 @@ const connection = getIntervalsConnectionView(user.id);
 {runPicker ? <WhichRunSheet picker={runPicker} /> : null}
 
 {
-  syncToast && syncToastCopy ? (
+  (syncToast || intervalsConnected) && syncToastCopy ? (
     <p
       class="saved-toast pointer-events-none fixed inset-x-0 bottom-24 z-50 mx-auto w-max max-w-[min(100%-2rem,28rem)] rounded-full bg-lime px-4 py-2 text-center text-xs font-bold text-ink shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
       data-sync-toast={syncToast}
@@ -180,7 +200,7 @@ const connection = getIntervalsConnectionView(user.id);
 }
 
 {
-  syncToast ? (
+  syncToast || intervalsConnected || toastParam === "intervals-error" ? (
     <script>
       const toast = document.querySelector("[data-sync-toast]");
       window.setTimeout(() => {

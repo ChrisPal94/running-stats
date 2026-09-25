@@ -5,7 +5,7 @@ import {
   INTERVALS_ENC_NOT_CONFIGURED,
   INTERVALS_RECONNECT_ERROR,
   loadRunEffort,
-  resolveIntervalsCredentials,
+  openIntervalsCredentials,
   upsertPlannedRuns,
   markIntervalsNeedsReconnect,
   type PlannedRunUpload,
@@ -683,44 +683,48 @@ export async function runNocturnalAdaptation(
   };
 
   for (const plannedDecision of planned) {
-    const tomorrow = plannedDecision.draft.sessionId
-      ? (snapshot.sessions.find((session) => session.id === plannedDecision.draft.sessionId) ?? null)
-      : null;
-    const todaySession =
-      snapshot.sessions.find(
-        (session) =>
-          session.userId === plannedDecision.draft.userId &&
-          session.date === plannedDecision.draft.sourceDate,
-      ) ?? null;
-    const log = runLogForSourceDay(
-      snapshot,
-      plannedDecision.draft.userId,
-      plannedDecision.draft.sourceDate,
-      todaySession,
-    );
-    const creds = resolveIntervalsCredentials(plannedDecision.draft.userId);
-    if (!creds.ok) noteCredentialGap(plannedDecision.draft.userId, creds.error);
-    const effort =
-      log && creds.ok
-        ? await readEffort(plannedDecision.draft.userId, plannedDecision.draft.sourceDate, log.distanceKm)
+    try {
+      const tomorrow = plannedDecision.draft.sessionId
+        ? (snapshot.sessions.find((session) => session.id === plannedDecision.draft.sessionId) ?? null)
         : null;
-    const actual = llmActualFromRunLog(log, effort);
-    let decision = applyEffortToDecision(
-      plannedDecision,
-      tomorrow,
-      actual?.distanceKm ?? null,
-      effort,
-    );
+      const todaySession =
+        snapshot.sessions.find(
+          (session) =>
+            session.userId === plannedDecision.draft.userId &&
+            session.date === plannedDecision.draft.sourceDate,
+        ) ?? null;
+      const log = runLogForSourceDay(
+        snapshot,
+        plannedDecision.draft.userId,
+        plannedDecision.draft.sourceDate,
+        todaySession,
+      );
+      const creds = await openIntervalsCredentials(plannedDecision.draft.userId);
+      if (!creds.ok) noteCredentialGap(plannedDecision.draft.userId, creds.error);
+      const effort =
+        log && creds.ok
+          ? await readEffort(plannedDecision.draft.userId, plannedDecision.draft.sourceDate, log.distanceKm)
+          : null;
+      const actual = llmActualFromRunLog(log, effort);
+      let decision = applyEffortToDecision(
+        plannedDecision,
+        tomorrow,
+        actual?.distanceKm ?? null,
+        effort,
+      );
 
-    if (llmConfigured()) {
-      const llmDecision = await llmAdjustOrSkip(decision, tomorrow, todaySession, actual);
-      if (!llmDecision) {
-        llmFailed += 1;
-      } else {
-        decision = enforceButtonFloor(decision, llmDecision, tomorrow);
+      if (llmConfigured()) {
+        const llmDecision = await llmAdjustOrSkip(decision, tomorrow, todaySession, actual);
+        if (!llmDecision) {
+          llmFailed += 1;
+        } else {
+          decision = enforceButtonFloor(decision, llmDecision, tomorrow);
+        }
       }
+      decisions.push(decision);
+    } catch {
+      console.error("[intervals] adapt account failed");
     }
-    decisions.push(decision);
   }
 
   if (decisions.length === 0) {
@@ -753,19 +757,25 @@ export async function runNocturnalAdaptation(
     byUser.set(session.userId, list);
   }
   for (const [userId, userUploads] of byUser) {
-    const creds = resolveIntervalsCredentials(userId);
-    if (!creds.ok) {
-      noteCredentialGap(userId, creds.error);
-      continue;
-    }
-    const result = await uploadRuns(userUploads, {
-      apiKey: creds.apiKey,
-      athletePathId: creds.athleteId,
-    });
-    uploaded += result.uploaded;
-    uploadFailed += result.failed;
-    if (result.status === 401 || result.status === 403) {
-      await markIntervalsNeedsReconnect(userId);
+    try {
+      const creds = await openIntervalsCredentials(userId);
+      if (!creds.ok) {
+        noteCredentialGap(userId, creds.error);
+        continue;
+      }
+      const result = await uploadRuns(userUploads, {
+        apiKey: creds.apiKey,
+        authType: creds.authType,
+        athletePathId: creds.athleteId,
+      });
+      uploaded += result.uploaded;
+      uploadFailed += result.failed;
+      if (result.status === 401 || result.status === 403) {
+        await markIntervalsNeedsReconnect(userId);
+      }
+    } catch {
+      console.error("[intervals] adapt upload failed");
+      uploadFailed += userUploads.length;
     }
   }
 

@@ -1,8 +1,10 @@
 ---
 export const prerender = false;
 
+import IntervalsExpiredNotice from "../components/IntervalsExpiredNotice.astro";
 import TodayCard from "../components/TodayCard.astro";
 import AppShell from "../layouts/AppShell.astro";
+import { refreshIntervalsConnectionView } from "../lib/intervals";
 import { isSameOrigin } from "../lib/public-origin";
 import { requireAppSession } from "../lib/app-session";
 import {
@@ -49,6 +51,7 @@ if (Astro.request.method === "POST") {
   }
 }
 
+const intervalsConnection = await refreshIntervalsConnectionView(user.id);
 const session = await getSessionForToday(user.id);
 const plan = await getPlanForUser(user.id);
 const cooperHint = cooperPendingHint(plan?.baseline);
@@ -76,6 +79,7 @@ const readyCopy = planReady ? (nextRunHint ? `Your plan is ready. ${nextRunHint}
       {readyCopy}
     </p>
   )}
+  <IntervalsExpiredNotice show={intervalsConnection.connected && intervalsConnection.needsReconnect === true} />
   {cooperHint && (
     <p class="mb-4 rounded-2xl border border-lime/30 bg-lime/8 px-4 py-3 text-xs leading-5 text-[#d6ded6]">
       {cooperHint}{" "}

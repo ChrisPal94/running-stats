@@ -16,9 +16,14 @@ legacy.exec(`CREATE TABLE intervals_connections (
   lastSyncAt TEXT,
   lastSyncError TEXT
 )`);
+legacy
+  .prepare(
+    `INSERT INTO intervals_connections (userId, athleteId, connectedAt) VALUES (?, ?, ?)`,
+  )
+  .run("legacy-user", "i704884", "2026-09-01T00:00:00.000Z");
 legacy.close();
 
-const { ensureIntervalsConnectionColumns, getDb } = await import("./db.ts");
+const { ensureIntervalsConnectionColumns, getDb, getIntervalsConnection } = await import("./db.ts");
 
 function columnNames(): Set<string> {
   return new Set(
@@ -33,12 +38,19 @@ after(() => {
 });
 
 describe("intervals connection migration", () => {
-  it("adds apiKeyEnc and needsReconnect idempotently", () => {
+  it("adds oauth columns idempotently and keeps an existing row usable", () => {
     ensureIntervalsConnectionColumns(getDb());
-    assert.equal(columnNames().has("apiKeyEnc"), true);
-    assert.equal(columnNames().has("needsReconnect"), true);
+    for (const name of ["apiKeyEnc", "needsReconnect", "authType", "scope", "athleteName"]) {
+      assert.equal(columnNames().has(name), true);
+    }
     ensureIntervalsConnectionColumns(getDb());
-    assert.equal(columnNames().has("apiKeyEnc"), true);
-    assert.equal(columnNames().has("needsReconnect"), true);
+    for (const name of ["apiKeyEnc", "needsReconnect", "authType", "scope", "athleteName"]) {
+      assert.equal(columnNames().has(name), true);
+    }
+    const stored = getIntervalsConnection("legacy-user");
+    assert.equal(stored?.athleteId, "i704884");
+    assert.equal(stored?.authType, "apikey");
+    assert.equal(stored?.athleteName, undefined);
+    assert.equal(stored?.apiKeyEnc, undefined);
   });
 });

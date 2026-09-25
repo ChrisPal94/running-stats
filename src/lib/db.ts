@@ -45,10 +45,13 @@ export type TrainingSnapshot = {
   adaptationEvents: AdaptationEvent[];
 };
 
+export type IntervalsAuthType = "oauth" | "apikey";
+
 /**
  * Per-user Intervals connection.
- * `apiKeyEnc` is AES-256-GCM ciphertext. Never send it to the browser.
- * Absent when the row is an owner env-fallback connection (no stored key).
+ * `apiKeyEnc` is AES-256-GCM ciphertext of the OAuth access token or API key.
+ * Never send it to the browser. Absent when the row is an owner env-fallback
+ * connection (no stored secret).
  */
 export type IntervalsConnection = {
   userId: string;
@@ -58,6 +61,10 @@ export type IntervalsConnection = {
   lastSyncError?: string;
   apiKeyEnc?: string;
   needsReconnect?: boolean;
+  /** Missing on legacy writes; stored and read as `apikey`. */
+  authType?: IntervalsAuthType;
+  scope?: string;
+  athleteName?: string;
 };
 
 export type MagicTokenRecord = {
@@ -160,6 +167,9 @@ type IntervalsConnectionRow = {
   lastSyncError: string | null;
   apiKeyEnc: string | null;
   needsReconnect: number | null;
+  authType: string | null;
+  scope: string | null;
+  athleteName: string | null;
 };
 
 type MagicTokenRow = {
@@ -332,7 +342,10 @@ function applySchema(database: DatabaseSync): void {
       lastSyncAt TEXT,
       lastSyncError TEXT,
       apiKeyEnc TEXT,
-      needsReconnect INTEGER NOT NULL DEFAULT 0
+      needsReconnect INTEGER NOT NULL DEFAULT 0,
+      authType TEXT NOT NULL DEFAULT 'apikey',
+      scope TEXT,
+      athleteName TEXT
     );
 
     CREATE TABLE IF NOT EXISTS magic_tokens (
@@ -361,6 +374,9 @@ function applySchema(database: DatabaseSync): void {
 export function ensureIntervalsConnectionColumns(database: DatabaseSync): void {
   ensureColumn(database, "intervals_connections", "apiKeyEnc", "TEXT");
   ensureColumn(database, "intervals_connections", "needsReconnect", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(database, "intervals_connections", "authType", "TEXT NOT NULL DEFAULT 'apikey'");
+  ensureColumn(database, "intervals_connections", "scope", "TEXT");
+  ensureColumn(database, "intervals_connections", "athleteName", "TEXT");
 }
 
 function tableColumns(database: DatabaseSync, table: string): Set<string> {
@@ -605,10 +621,13 @@ function intervalsConnectionFromRow(row: IntervalsConnectionRow): IntervalsConne
     athleteId: row.athleteId,
     connectedAt: row.connectedAt,
     needsReconnect: Number(row.needsReconnect) === 1,
+    authType: row.authType === "oauth" ? "oauth" : "apikey",
   };
   if (row.lastSyncAt) connection.lastSyncAt = row.lastSyncAt;
   if (row.lastSyncError) connection.lastSyncError = row.lastSyncError;
   if (row.apiKeyEnc) connection.apiKeyEnc = row.apiKeyEnc;
+  if (row.scope) connection.scope = row.scope;
+  if (row.athleteName) connection.athleteName = row.athleteName;
   return connection;
 }
 
@@ -901,7 +920,8 @@ export function saveTrainingSnapshot(
 export function getIntervalsConnection(userId: string): IntervalsConnection | null {
   const row = getDb()
     .prepare(
-      `SELECT userId, athleteId, connectedAt, lastSyncAt, lastSyncError, apiKeyEnc, needsReconnect
+      `SELECT userId, athleteId, connectedAt, lastSyncAt, lastSyncError, apiKeyEnc, needsReconnect,
+              authType, scope, athleteName
        FROM intervals_connections WHERE userId = ?`,
     )
     .get(userId) as IntervalsConnectionRow | undefined;
@@ -928,15 +948,19 @@ export function upsertIntervalsConnection(connection: IntervalsConnection): void
   withTransaction(() => {
     run(
       `INSERT INTO intervals_connections (
-         userId, athleteId, connectedAt, lastSyncAt, lastSyncError, apiKeyEnc, needsReconnect
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         userId, athleteId, connectedAt, lastSyncAt, lastSyncError, apiKeyEnc, needsReconnect,
+         authType, scope, athleteName
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(userId) DO UPDATE SET
          athleteId = excluded.athleteId,
          connectedAt = excluded.connectedAt,
          lastSyncAt = excluded.lastSyncAt,
          lastSyncError = excluded.lastSyncError,
          apiKeyEnc = excluded.apiKeyEnc,
-         needsReconnect = excluded.needsReconnect`,
+         needsReconnect = excluded.needsReconnect,
+         authType = excluded.authType,
+         scope = excluded.scope,
+         athleteName = excluded.athleteName`,
       connection.userId,
       connection.athleteId,
       connection.connectedAt,
@@ -944,6 +968,9 @@ export function upsertIntervalsConnection(connection: IntervalsConnection): void
       text(connection.lastSyncError),
       text(connection.apiKeyEnc),
       connection.needsReconnect ? 1 : 0,
+      connection.authType === "oauth" ? "oauth" : "apikey",
+      text(connection.scope),
+      text(connection.athleteName),
     );
   });
 }

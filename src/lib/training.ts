@@ -30,7 +30,7 @@ import {
   parseIntervalsRunChoice,
   parseIntervalsRunChoiceList,
   pickClosestRun,
-  resolveIntervalsCredentials,
+  openIntervalsCredentials,
   type IntervalsRunChoice,
   type IntervalsRunPickerState,
   type IntervalsRunStats,
@@ -1325,10 +1325,10 @@ export async function handleTodayPost(userId: string, formData: FormData): Promi
     if (!session || !runLog) return { ok: false, error: COACH_FEEDBACK_UNAVAILABLE, logOpen: false };
     const recorded =
       runLog.route?.type === "polyline" ? effortFromSamples(runLog.route.samples) : null;
+    const intervalsAccess =
+      runLog.source === "intervals" ? await openIntervalsCredentials(userId) : null;
     const effort =
-      runLog.source === "intervals" && resolveIntervalsCredentials(userId).ok
-        ? await loadRunEffort(userId, session.date, runLog.distanceKm)
-        : null;
+      intervalsAccess?.ok ? await loadRunEffort(userId, session.date, runLog.distanceKm) : null;
     const generated = await requestCoachFeedback({
       plannedTitle: session.title,
       plannedKm: session.distanceKm,
@@ -2071,7 +2071,7 @@ export async function applyChosenIntervalsRun(
   run: IntervalsRunStats,
   sessionId: string,
 ): Promise<boolean> {
-  if (!resolveIntervalsCredentials(userId).ok) return false;
+  if (!(await openIntervalsCredentials(userId)).ok) return false;
   const streams = await loadIntervalsRoute(userId, run.activityId);
   return enqueueWrite(async () => {
     const data = await readTraining();
@@ -2175,7 +2175,7 @@ export async function handleSettingsPost(
     const skippedNoSession = String(formData.get("skippedNoSession") ?? "") === "1";
     let imported = postedImportedCount(formData.get("imported"));
     if (intent === "intervals-pick-run") {
-      const creds = resolveIntervalsCredentials(userId);
+      const creds = await openIntervalsCredentials(userId);
       if (!creds.ok) {
         return {
           ok: false,

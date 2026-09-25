@@ -1,6 +1,12 @@
 ---
 import {
+  INTERVALS_ACCESS_EXPIRED,
   INTERVALS_CONNECT_COPY,
+  INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_KEY_HELP,
+  INTERVALS_KEY_HELP_URL,
+  INTERVALS_OAUTH_CONNECT_BUTTON,
+  INTERVALS_OAUTH_CONNECT_LINE,
   intervalsSettingsControls,
   type IntervalsConnectionView,
 } from "../lib/intervals";
@@ -11,17 +17,31 @@ interface Props {
   intervalsAvailable?: boolean;
   /** Athlete id to refill after a failed connect. Never the API key. */
   athleteIdDraft?: string;
+  /** True when INTERVALS_CLIENT_ID and INTERVALS_CLIENT_SECRET are set. */
+  oauthConfigured?: boolean;
+  /** False when INTERVALS_KEY_ENC_SECRET is missing or the wrong length. */
+  encryptionReady?: boolean;
 }
 
-const { connection, error = "", intervalsAvailable = true, athleteIdDraft = "" } = Astro.props;
+const {
+  connection,
+  error = "",
+  intervalsAvailable = true,
+  athleteIdDraft = "",
+  oauthConfigured = false,
+  encryptionReady = true,
+} = Astro.props;
 const controls = intervalsSettingsControls({ available: intervalsAvailable, connection });
 const reconnecting = connection.connected && connection.needsReconnect === true;
 const showSync = controls.showSync && !reconnecting;
-const showForm = controls.showConnect || reconnecting;
+const showConnectUi = controls.showConnect || reconnecting;
+const connectLabel = reconnecting ? "Reconnect" : oauthConfigured ? INTERVALS_OAUTH_CONNECT_BUTTON : "Connect";
 const secondaryClass =
   "inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]";
 const primaryClass =
   "inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]";
+const disabledClass =
+  "inline-flex w-full cursor-not-allowed items-center justify-center rounded-full bg-lime/40 px-5 py-3 text-xs font-bold text-ink/70 uppercase";
 ---
 
 <article
@@ -31,7 +51,7 @@ const primaryClass =
   <div class="mt-6 flex items-start justify-between gap-4">
     <div class="min-w-0">
       <p class="text-sm font-semibold text-cloud">Intervals.icu</p>
-      <p class="mt-1 text-xs leading-5 text-mist">{controls.statusLabel}</p>
+      <p class="mt-1 text-xs leading-5 text-mist">{reconnecting ? INTERVALS_ACCESS_EXPIRED : controls.statusLabel}</p>
     </div>
   </div>
 
@@ -67,7 +87,7 @@ const primaryClass =
               Sync now
             </button>
           </form>
-          <form method="post" class="sm:flex-1">
+          <form method="post" class="sm:flex-1" data-confirm="Disconnect Intervals.icu?">
             <input type="hidden" name="intent" value="intervals-disconnect" />
             <button type="submit" class={secondaryClass}>
               Disconnect
@@ -75,48 +95,98 @@ const primaryClass =
           </form>
         </div>
       </>
-    ) : showForm ? (
+    ) : showConnectUi ? (
       <>
-        {connection.connected && connection.lastSyncLabel ? (
-          <p class="mt-4 text-xs leading-5 text-[#ffb4aa]" role="status">
-            {connection.lastSyncLabel}
-          </p>
-        ) : null}
-        <p class="mt-4 text-xs leading-5 text-mist">{INTERVALS_CONNECT_COPY}</p>
-        <form method="post" class="mt-5 flex flex-col gap-3">
-          <input type="hidden" name="intent" value="intervals-connect" />
-          <label class="flex flex-col gap-2">
-            <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">API key</span>
-            <input
-              type="password"
-              name="intervalsApiKey"
-              autocomplete="off"
-              spellcheck="false"
-              maxlength="256"
-              class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
-            />
-          </label>
-          <label class="flex flex-col gap-2">
-            <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Athlete ID</span>
-            <input
-              type="text"
-              name="intervalsAthleteId"
-              value={athleteIdDraft}
-              placeholder="i704884"
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
-              maxlength="16"
-              class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
-            />
-          </label>
-          <button type="submit" class={primaryClass}>
-            {reconnecting ? "Reconnect" : "Connect"}
-          </button>
-        </form>
+        {
+          oauthConfigured ? (
+            <>
+              {
+                encryptionReady ? (
+                  <a href="/auth/intervals/start" class:list={["mt-5", primaryClass]}>
+                    {connectLabel}
+                  </a>
+                ) : (
+                  <button type="button" class:list={["mt-5", disabledClass]} disabled>
+                    {connectLabel}
+                  </button>
+                )
+              }
+              {
+                encryptionReady ? (
+                  reconnecting ? null : (
+                    <p class="mt-4 text-xs leading-5 text-mist">{INTERVALS_OAUTH_CONNECT_LINE}</p>
+                  )
+                ) : (
+                  <p class="mt-4 text-xs leading-5 text-mist" role="status">
+                    {INTERVALS_CONNECT_UNAVAILABLE}
+                  </p>
+                )
+              }
+            </>
+          ) : (
+            <>
+              {connection.connected && connection.lastSyncLabel ? (
+                <p class="mt-4 text-xs leading-5 text-[#ffb4aa]" role="status">
+                  {connection.lastSyncLabel}
+                </p>
+              ) : null}
+              <p class="mt-4 text-xs leading-5 text-mist">{INTERVALS_CONNECT_COPY}</p>
+              {
+                encryptionReady ? null : (
+                  <p class="mt-4 text-xs leading-5 text-mist" role="status">
+                    {INTERVALS_CONNECT_UNAVAILABLE}
+                  </p>
+                )
+              }
+              <form method="post" class="mt-5 flex flex-col gap-3">
+                <input type="hidden" name="intent" value="intervals-connect" />
+                <label class="flex flex-col gap-2">
+                  <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">API key</span>
+                  <input
+                    type="password"
+                    name="intervalsApiKey"
+                    autocomplete="off"
+                    spellcheck="false"
+                    maxlength="256"
+                    disabled={!encryptionReady}
+                    class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime disabled:opacity-50"
+                  />
+                </label>
+                <label class="flex flex-col gap-2">
+                  <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Athlete ID</span>
+                  <input
+                    type="text"
+                    name="intervalsAthleteId"
+                    value={athleteIdDraft}
+                    placeholder="i704884"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    maxlength="16"
+                    disabled={!encryptionReady}
+                    class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime disabled:opacity-50"
+                  />
+                </label>
+                <button type="submit" class={encryptionReady ? primaryClass : disabledClass} disabled={!encryptionReady}>
+                  {connectLabel}
+                </button>
+              </form>
+              <p class="mt-3 text-xs leading-5 text-mist">
+                <a
+                  href={INTERVALS_KEY_HELP_URL}
+                  class="underline underline-offset-2 hover:text-cloud"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {INTERVALS_KEY_HELP}
+                </a>
+              </p>
+            </>
+          )
+        }
         {
           reconnecting ? (
-            <form method="post" class="mt-2">
+            <form method="post" class="mt-2" data-confirm="Disconnect Intervals.icu?">
               <input type="hidden" name="intent" value="intervals-disconnect" />
               <button type="submit" class={secondaryClass}>
                 Disconnect
@@ -128,3 +198,11 @@ const primaryClass =
     ) : null
   }
 </article>
+<script>
+  for (const form of document.querySelectorAll("form[data-confirm]")) {
+    form.addEventListener("submit", (event) => {
+      const message = form.getAttribute("data-confirm");
+      if (message && !window.confirm(message)) event.preventDefault();
+    });
+  }
+</script>

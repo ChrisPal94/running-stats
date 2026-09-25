@@ -1,0 +1,18 @@
+---
+interface Props {
+  show: boolean;
+}
+
+const { show } = Astro.props;
+---
+
+{
+  show ? (
+    <p class="mb-4 rounded-2xl border border-white/12 bg-white/[0.03] px-4 py-3 text-xs leading-5 text-mist">
+      Intervals access expired.{" "}
+      <a href="/settings" class="font-semibold text-lime underline underline-offset-2">
+        Settings
+      </a>
+    </p>
+  ) : null
+}
