@@ -821,7 +821,7 @@ describe("password signup and login edges", () => {
       if (again.ok) continue;
       assert.equal(
         again.error,
-        "Couldn’t create your account. If you already have one, log in or continue with Google.",
+        "Couldn’t create your account. If you already have one, log in, sign in with an email link, or continue with Google.",
       );
       assert.equal(again.error.toLowerCase().includes("already exists"), false);
       assert.equal(jar.get("rs_session"), undefined);

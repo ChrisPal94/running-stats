@@ -1,4 +1,6 @@
 ---
+import { SIGNUP_DUPLICATE_ERROR } from "../lib/auth";
+
 interface Props {
   email?: string;
   error?: string;
@@ -23,6 +25,8 @@ const {
   resendWaitMs = 0,
 } = Astro.props;
 
+const alertLinkClass =
+  "font-semibold text-cloud underline decoration-lime/70 underline-offset-[3px] hover:decoration-lime focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime";
 const linkSelected = method === "link";
 const passwordHref = googleFrom === "login" ? "/login" : "/signup";
 const linkHref = `${passwordHref}?method=link`;
@@ -61,7 +65,36 @@ const tabClass = (active: boolean) =>
             class="rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
             role="alert"
           >
-            {error}
+            {
+              error === SIGNUP_DUPLICATE_ERROR ? (
+                <>
+                  Couldn’t create your account. If you already have one,{" "}
+                  <a
+                    href="/login"
+                    class={alertLinkClass}
+                  >
+                    log in
+                  </a>
+                  ,{" "}
+                  <a
+                    href="/login?method=link"
+                    class={alertLinkClass}
+                  >
+                    sign in with an email link
+                  </a>
+                  , or{" "}
+                  <a
+                    href={`/auth/google?from=${googleFrom}`}
+                    class={alertLinkClass}
+                  >
+                    continue with Google
+                  </a>
+                  .
+                </>
+              ) : (
+                error
+              )
+            }
           </p>
         )}
 

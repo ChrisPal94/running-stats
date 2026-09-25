@@ -22,6 +22,8 @@ The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, session
 
 Set these on the **web** service. Names match `.env.example`. Intervals OAuth `redirect_uri` and magic-link sign-in URLs are built from `PUBLIC_ORIGIN`, not from `Host` or `X-Forwarded-Host`. Google still uses `GOOGLE_CALLBACK_URL`.
 
+Never set `NODE_ENV=development` on Railway. With `PUBLIC_ORIGIN` unset, that makes OAuth and magic link fall back to `X-Forwarded-Host`.
+
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `AUTH_SECRET` | Yes | Session HMAC. Random, 16+ characters (`openssl rand -base64 32`). |
@@ -34,11 +36,11 @@ Set these on the **web** service. Names match `.env.example`. Intervals OAuth `r
 | `MAIL_FROM` | For magic link mail | From address (verified in Resend). Prefer this name. |
 | `MAGIC_LINK_FROM` | Fallback | One-release fallback if `MAIL_FROM` is unset. |
 | `ADAPT_CRON_SECRET` | For `/api/adapt` | Bearer secret for the nightly job. 16+ characters. |
-| `ADAPT_LLM_API_KEY` | No | Shared by the nightly adapt job and Generate feedback. Unset = adapt heuristic; Generate feedback shows a generic try-later message (no env names in the UI). If set and the adapt LLM fails, the job logs and does not mutate the plan. |
-| `ADAPT_LLM_BASE_URL` | No | Default `https://api.openai.com/v1`. Same variable for adapt and Generate feedback. |
-| `ADAPT_LLM_MODEL` | No | Default `gpt-4o-mini`. Same variable for adapt and Generate feedback. |
-| `OLLAMA_API_KEY` | Fallback | One-release fallback when `ADAPT_LLM_API_KEY` is unset. Prefer `ADAPT_LLM_API_KEY`. Ignores `ADAPT_LLM_BASE_URL` and `ADAPT_LLM_MODEL`. Host is `https://ollama.com/v1`. |
-| `OLLAMA_MODEL` | Fallback | Model for the `OLLAMA_API_KEY` fallback. Default `gemma4:31b`. |
+| `OLLAMA_API_KEY` | For the LLM | Production LLM on the **web** service for the nightly adapt job and Generate feedback. Host is `https://ollama.com/v1`. Unset, and `ADAPT_LLM_API_KEY` absent or empty, keeps adapt on the heuristic; Generate feedback shows a generic try-later message (no env names in the UI). If the call fails, the job logs and does not mutate the plan. |
+| `OLLAMA_MODEL` | No | Optional model for `OLLAMA_API_KEY`. Default `gemma4:31b`. |
+| `ADAPT_LLM_API_KEY` | Must be absent or empty | If set, it overrides Ollama and the job uses `ADAPT_LLM_BASE_URL` / `ADAPT_LLM_MODEL` instead. Leave it unset or empty on the web service. |
+| `ADAPT_LLM_BASE_URL` | No | Applies only when `ADAPT_LLM_API_KEY` is set. Default `https://api.openai.com/v1`. |
+| `ADAPT_LLM_MODEL` | No | Applies only when `ADAPT_LLM_API_KEY` is set. Default `gpt-4o-mini`. |
 | `INTERVALS_KEY_ENC_SECRET` | For Connect | 32-byte key that encrypts each user’s Intervals access token or API key at rest (AES-256-GCM). Standard base64 only, from `openssl rand -base64 32` (44 characters, decodes to exactly 32 bytes). Hex and other formats are treated as missing (logged once, no crash). Missing or invalid: the Connect button stays visible but disabled with **Connecting Intervals.icu isn’t available right now. Try again later.** Nothing is stored in plaintext. Existing rows are left in place. The secret is never stored or logged. Set it on the **web** service (the process that writes `app.db` and runs `/api/adapt`). |
 | `PUBLIC_ORIGIN` | For Intervals OAuth and magic links | Public site origin with no path, for example `https://running-stats-production.up.railway.app`. The OAuth `redirect_uri` is this origin plus `/auth/intervals/callback`. Magic-link emails use this origin plus `/auth/magic`. Neither uses `Host` or `X-Forwarded-Host`. In production, if this is unset, Intervals OAuth is treated as not configured, and magic link send fails with **Couldn’t send the link. Try again.** (a config error name is logged; the link is not sent). Local dev without it falls back to the request origin (localhost). |
 | `INTERVALS_CLIENT_ID` | For OAuth | Intervals.icu OAuth client id from [the app form](https://intervals.icu/oauth/apply). When this and `INTERVALS_CLIENT_SECRET` are both set, and `PUBLIC_ORIGIN` is set in production, Settings uses **Connect Intervals.icu**. Otherwise it shows the API key and athlete ID form. |
