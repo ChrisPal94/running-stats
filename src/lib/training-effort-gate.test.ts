@@ -108,7 +108,7 @@ describe("training effort gate", () => {
       userId,
       athleteId: ATHLETE_A,
       connectedAt: "2026-09-01T00:00:00.000Z",
-      apiKeyEnc: encryptIntervalsApiKey(KEY_A),
+      apiKeyEnc: encryptIntervalsApiKey(KEY_A, userId),
       needsReconnect: false,
     });
 
@@ -147,7 +147,7 @@ describe("training effort gate", () => {
       userId: manualId,
       athleteId: ATHLETE_B,
       connectedAt: "2026-09-01T00:00:00.000Z",
-      apiKeyEnc: encryptIntervalsApiKey("effort-gate-key-user-b"),
+      apiKeyEnc: encryptIntervalsApiKey("effort-gate-key-user-b", manualId),
       needsReconnect: false,
     });
     const manualForm = new FormData();

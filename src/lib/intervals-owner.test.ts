@@ -9,7 +9,6 @@ import {
   getIntervalsConnection,
   INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_UNAVAILABLE_STATUS,
-  intervalsOwnerDeniedResponse,
   intervalsSettingsControls,
   revokeUnownedIntervals,
 } from "./intervals.ts";
@@ -135,7 +134,7 @@ describe("getIntervalsConnection", () => {
       .prepare("SELECT athleteId FROM intervals_connections WHERE userId = ?")
       .get(userId) as { athleteId: string };
     assert.equal(still.athleteId, "i704884");
-    assert.equal(logged.length, 0);
+    assert.equal(logged.filter((args) => String(args[0] ?? "").startsWith("[intervals]")).length, 0);
   });
 
   it("logs a revoke failure without throwing when revoke is called explicitly", async () => {
@@ -165,9 +164,10 @@ describe("getIntervalsConnection", () => {
     });
     await revokeUnownedIntervals(userId);
     assert.equal(getIntervalsConnection(userId)?.athleteId, "i704884");
-    assert.equal(logged.length, 1);
-    assert.equal(logged[0]?.[0], "[intervals] revoke unowned failed");
-    const dumped = JSON.stringify(logged, (_key, value) =>
+    const intervalsLogs = logged.filter((args) => String(args[0] ?? "").startsWith("[intervals]"));
+    assert.equal(intervalsLogs.length, 1);
+    assert.equal(intervalsLogs[0]?.[0], "[intervals] revoke unowned failed");
+    const dumped = JSON.stringify(intervalsLogs, (_key, value) =>
       value instanceof Error ? { message: value.message } : value,
     );
     assert.equal(dumped.includes("owner-key-do-not-leak"), false);
@@ -212,9 +212,6 @@ describe("connect/sync route", () => {
     assert.equal(canUseIntervals({ email: "CrisPal94@gmail.com" }), false);
     const verifiedOwner = { email: "CrisPal94@gmail.com", emailVerifiedAt: "2026-09-25T12:00:00.000Z" };
     assert.equal(canUseIntervals(verifiedOwner), true);
-    assert.ok(intervalsOwnerDeniedResponse({ email: "CrisPal94@gmail.com" }, "intervals-connect"));
-    assert.equal(intervalsOwnerDeniedResponse(verifiedOwner, "intervals-connect"), null);
-    assert.equal(intervalsOwnerDeniedResponse(verifiedOwner, "intervals-sync"), null);
   });
 
   it("does not import a RunLog from sync or Which run? pick/skip when the connection is stale", async () => {

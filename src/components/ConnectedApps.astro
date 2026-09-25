@@ -28,7 +28,7 @@ interface Props {
 const {
   connection,
   error = "",
-  intervalsAvailable = false,
+  intervalsAvailable = true,
   athleteIdDraft = "",
   oauthConfigured = false,
   encryptionReady = true,
@@ -36,6 +36,7 @@ const {
 } = Astro.props;
 const controls = intervalsSettingsControls({ available: intervalsAvailable, connection });
 const reconnecting = intervalsAvailable && connection.connected && connection.needsReconnect === true;
+const nothingConfigured = !oauthConfigured && !encryptionReady && !envFallbackConnect;
 const showSync = controls.showSync && !reconnecting;
 const showConnectUi = controls.showConnect || reconnecting;
 const statusLabel = reconnecting ? INTERVALS_ACCESS_EXPIRED : controls.statusLabel;
@@ -102,10 +103,19 @@ const disabledClass =
     ) : showConnectUi ? (
       <>
         {
-          envFallbackConnect ? (
+          nothingConfigured ? (
+            <>
+              <button type="button" class:list={["mt-5", disabledClass]} disabled>
+                {connectLabel}
+              </button>
+              <p class="mt-4 text-xs leading-5 text-mist" role="status">
+                {INTERVALS_CONNECT_UNAVAILABLE}
+              </p>
+            </>
+          ) : envFallbackConnect ? (
             <form method="post" class="mt-5">
               <input type="hidden" name="intent" value="intervals-connect" />
-              <button type="submit" class={primaryClass}>Connect</button>
+              <button type="submit" class={primaryClass}>{connectLabel}</button>
             </form>
           ) : oauthConfigured ? (
             <>

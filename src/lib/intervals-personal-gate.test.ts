@@ -160,7 +160,7 @@ describe("personal Intervals connection without the owner allowlist", () => {
       userId: USER_ID,
       athleteId: ATHLETE,
       connectedAt: "2026-09-01T00:00:00.000Z",
-      apiKeyEnc: encryptIntervalsApiKey(PERSONAL_KEY),
+      apiKeyEnc: encryptIntervalsApiKey(PERSONAL_KEY, USER_ID),
       authType: "apikey",
       needsReconnect: false,
     });

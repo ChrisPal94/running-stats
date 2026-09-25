@@ -127,7 +127,7 @@ describe("per-user Intervals key", () => {
       return athleteResponse(ATHLETE_A);
     });
 
-    const result = await connectIntervals(userId, { apiKey: KEY_A, athleteId: "I111111" });
+    const result = await connectIntervals(userId, { apiKey: KEY_A, athleteId: "i111111" });
     assert.deepEqual(result, { ok: true });
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.method, "GET");
@@ -139,7 +139,7 @@ describe("per-user Intervals key", () => {
     assert.ok(stored?.apiKeyEnc);
     assert.notEqual(stored?.apiKeyEnc, KEY_A);
     assert.equal(stored?.apiKeyEnc.includes(KEY_A), false);
-    assert.equal(decryptIntervalsApiKey(stored?.apiKeyEnc ?? ""), KEY_A);
+    assert.equal(decryptIntervalsApiKey(stored?.apiKeyEnc ?? "", userId), KEY_A);
     assert.equal(stored?.athleteId, ATHLETE_A);
     assert.equal(dbContains(KEY_A), false);
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createCipheriv, randomBytes } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +18,7 @@ const CLIENT_SECRET = "intervals-client-secret-do-not-leak";
 const TOKEN_A = "oauth-token-user-a-do-not-leak";
 const TOKEN_B = "oauth-token-user-b-do-not-leak";
 const KEY_B = "user-b-intervals-key-do-not-leak";
-const ATHLETE_A = "2049151";
+const ATHLETE_A = "i2049151";
 const ATHLETE_B = "i222222";
 const NAME_A = "Ada Runner";
 
@@ -32,10 +33,15 @@ delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
 delete process.env.INTERVALS_OWNER_EMAILS;
 delete process.env.ADAPT_LLM_API_KEY;
 
-const { getIntervalsConnection: getStoredConnection, insertUser, saveTrainingSnapshot } = await import("./db.ts");
-const { decryptIntervalsApiKey, encryptIntervalsApiKey, IntervalsDecryptError, intervalsEncryptionReady } = await import(
-  "./intervals-crypto.ts"
-);
+const { getIntervalsConnection: getStoredConnection, insertUser, saveTrainingSnapshot, upsertIntervalsConnection } =
+  await import("./db.ts");
+const {
+  decryptIntervalsApiKey,
+  encryptIntervalsApiKey,
+  IntervalsDecryptError,
+  intervalsEncryptionKey,
+  intervalsEncryptionReady,
+} = await import("./intervals-crypto.ts");
 const {
   INTERVALS_ACCESS_EXPIRED,
   INTERVALS_CONNECT_REJECTED,
@@ -75,6 +81,7 @@ const { runNocturnalAdaptation } = await import("./adapt.ts");
 const { adaptRunLogLine } = await import("./adapt-cron.ts");
 
 const originalFetch = globalThis.fetch;
+const originalNodeEnv = process.env.NODE_ENV;
 
 type CookieCall = { name: string; value: string; options?: { httpOnly?: boolean; sameSite?: string; secure?: boolean; maxAge?: number; path?: string } };
 
@@ -259,6 +266,9 @@ afterEach(() => {
   delete process.env.ADAPT_LLM_API_KEY;
   delete process.env.INTERVALS_ICU_API_KEY;
   delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
+  delete process.env.PUBLIC_ORIGIN;
+  if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = originalNodeEnv;
 });
 
 after(() => {
@@ -415,15 +425,16 @@ describe("Intervals OAuth", () => {
     assert.ok(stored?.apiKeyEnc);
     assert.notEqual(stored?.apiKeyEnc, TOKEN_A);
     assert.equal(stored?.apiKeyEnc.includes(TOKEN_A), false);
-    assert.equal(decryptIntervalsApiKey(stored?.apiKeyEnc ?? ""), TOKEN_A);
+    assert.equal(decryptIntervalsApiKey(stored?.apiKeyEnc ?? "", userId), TOKEN_A);
     assert.equal(dbContains(TOKEN_A), false);
     assert.equal(dbContains(CLIENT_SECRET), false);
 
-    const again = encryptIntervalsApiKey(TOKEN_A);
+    const again = encryptIntervalsApiKey(TOKEN_A, userId);
+    assert.equal(again.startsWith("v2:"), true);
     assert.notEqual(again.split(":")[1], stored?.apiKeyEnc.split(":")[1]);
     const tampered = stored?.apiKeyEnc.split(":") ?? [];
     tampered[2] = Buffer.alloc(16, 9).toString("base64");
-    assert.throws(() => decryptIntervalsApiKey(tampered.join(":")), IntervalsDecryptError);
+    assert.throws(() => decryptIntervalsApiKey(tampered.join(":"), userId), IntervalsDecryptError);
 
     const view = getIntervalsConnectionView(userId);
     assert.equal(view.connected && view.statusLabel, `Connected as ${NAME_A}`);
@@ -548,8 +559,9 @@ describe("Intervals OAuth", () => {
       oauthConfigured: true,
       encryptionReady: false,
     });
-    assert.equal(hidden.includes(INTERVALS_OAUTH_CONNECT_BUTTON), false);
-    assert.equal(hidden.includes("Not available for your account"), true);
+    assert.equal(hidden.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
+    assert.equal(hidden.includes("Not available for your account"), false);
+    assert.match(hidden, /disabled/);
     const keyDisabled = await renderConnectedApps({
       connection: { connected: false, statusLabel: "Not connected" },
       intervalsAvailable: true,
@@ -557,8 +569,9 @@ describe("Intervals OAuth", () => {
       encryptionReady: false,
     });
     assert.equal(keyDisabled.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
-    assert.equal(keyDisabled.includes('name="intervalsApiKey"'), true);
-    assert.match(keyDisabled, /disabled/);
+    assert.equal(keyDisabled.includes('name="intervalsApiKey"'), false);
+    assert.equal(keyDisabled.includes("Not available for your account"), false);
+    assert.match(keyDisabled, /<button[^>]*disabled[^>]*>[\s\S]*Connect[\s\S]*<\/button>/);
     assert.equal(html.includes(CLIENT_SECRET), false);
     assert.equal(html.includes(TOKEN_A), false);
   });
@@ -654,7 +667,7 @@ describe("Intervals OAuth", () => {
     });
     await runNocturnalAdaptation(new Date("2026-09-24T17:00:00.000Z"));
     assert.equal(getStoredConnection(userA)?.needsReconnect, true);
-    assert.equal(calls.some((call) => call.authorization === `Bearer ${TOKEN_B}` && call.url.includes("/athlete/3091002/")), true);
+    assert.equal(calls.some((call) => call.authorization === `Bearer ${TOKEN_B}` && call.url.includes("/athlete/i3091002/")), true);
     assert.equal(calls.some((call) => call.authorization === `Bearer ${TOKEN_B}` && call.url.includes(ATHLETE_A)), false);
   });
 
@@ -750,6 +763,7 @@ describe("Intervals OAuth", () => {
     const notice = await renderNotice({ show: true });
     assert.equal(notice.includes("Intervals access expired"), true);
     assert.equal(notice.includes('href="/settings"'), true);
+    assert.equal(notice.includes("Reconnect"), true);
     const hidden = await renderNotice({ show: false });
     assert.equal(hidden.includes("Intervals access expired"), false);
     assert.equal(INTERVALS_CONNECTED_TOAST, "Intervals connected");
@@ -897,5 +911,183 @@ describe("Intervals OAuth", () => {
     assert.deepEqual(seen.sort(), [userA, userB].sort());
     assert.equal(result.processed >= 1, true);
     assert.equal(result.written >= 1, true);
+  });
+
+  it("keeps redirect_uri on PUBLIC_ORIGIN when Host is spoofed", () => {
+    process.env.PUBLIC_ORIGIN = "https://running-stats-production.up.railway.app/";
+    const userId = "oauth-origin";
+    insertUser({ id: userId, email: "origin@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    const request = new Request("http://127.0.0.1:4321/auth/intervals/start", {
+      headers: {
+        host: "evil.example",
+        "x-forwarded-host": "evil.example",
+        "x-forwarded-proto": "https",
+      },
+    });
+    const started = startIntervalsOAuth(request, cookieJar().cookies, userId);
+    const redirect = new URL(started.location).searchParams.get("redirect_uri");
+    assert.equal(redirect, "https://running-stats-production.up.railway.app/auth/intervals/callback");
+    assert.equal(started.location.includes("evil.example"), false);
+  });
+
+  it("treats OAuth as unconfigured in production when PUBLIC_ORIGIN is unset", () => {
+    process.env.NODE_ENV = "production";
+    delete process.env.PUBLIC_ORIGIN;
+    const logged: string[] = [];
+    mock.method(console, "error", (line: unknown) => {
+      logged.push(String(line));
+    });
+    assert.equal(isIntervalsOAuthConfigured(), false);
+    assert.equal(isIntervalsOAuthConfigured(), false);
+    assert.equal(logged.filter((line) => line === "[intervals] PUBLIC_ORIGIN is not configured").length, 1);
+    const userId = "oauth-no-origin";
+    insertUser({ id: userId, email: "no-origin@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    const started = startIntervalsOAuth(
+      new Request("https://evil.example/auth/intervals/start", { headers: { host: "evil.example" } }),
+      cookieJar().cookies,
+      userId,
+    );
+    assert.equal(started.location, "/settings");
+    assert.equal(started.location.includes("evil.example"), false);
+  });
+
+  it("prefixes a numeric OAuth athlete id and rejects anything else", async () => {
+    const userId = "oauth-numeric-athlete";
+    insertUser({ id: userId, email: "numeric@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    const jar = cookieJar();
+    const started = startIntervalsOAuth(prodRequest("/auth/intervals/start"), jar.cookies, userId);
+    const state = new URL(started.location).searchParams.get("state") ?? "";
+    mock.method(globalThis, "fetch", async () => {
+      return new Response(
+        JSON.stringify({ access_token: TOKEN_A, athlete: { id: 2049151, name: NAME_A } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const result = await finishIntervalsOAuth(
+      prodRequest(`/auth/intervals/callback?code=numeric&state=${state}`),
+      jar.cookies,
+      userId,
+    );
+    assert.equal(result.kind, "connected");
+    assert.equal(getStoredConnection(userId)?.athleteId, "i2049151");
+    mock.restoreAll();
+
+    const jarBad = cookieJar();
+    const startedBad = startIntervalsOAuth(prodRequest("/auth/intervals/start"), jarBad.cookies, userId);
+    const badState = new URL(startedBad.location).searchParams.get("state") ?? "";
+    mock.method(globalThis, "fetch", async () => tokenResponse(TOKEN_B, "not-an-athlete", NAME_A));
+    const rejected = await finishIntervalsOAuth(
+      prodRequest(`/auth/intervals/callback?code=bad-athlete&state=${badState}`),
+      jarBad.cookies,
+      userId,
+    );
+    assert.equal(rejected.kind, "error");
+    if (rejected.kind === "error") assert.equal(rejected.message, INTERVALS_OAUTH_CONNECT_ERROR);
+    assert.equal(getStoredConnection(userId)?.athleteId, "i2049151");
+  });
+
+  it("refuses a token whose granted scope omits a required scope and stores nothing new", async () => {
+    const userId = "oauth-scope";
+    insertUser({ id: userId, email: "scope@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    const jar = cookieJar();
+    const started = startIntervalsOAuth(prodRequest("/auth/intervals/start"), jar.cookies, userId);
+    const state = new URL(started.location).searchParams.get("state") ?? "";
+    mock.method(globalThis, "fetch", async () => {
+      return new Response(
+        JSON.stringify({
+          access_token: TOKEN_A,
+          scope: "ACTIVITY:READ",
+          athlete: { id: ATHLETE_A, name: NAME_A },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const result = await finishIntervalsOAuth(
+      prodRequest(`/auth/intervals/callback?code=narrow&state=${state}`),
+      jar.cookies,
+      userId,
+    );
+    assert.equal(result.kind, "error");
+    if (result.kind === "error") assert.equal(result.message, INTERVALS_OAUTH_CONNECT_ERROR);
+    assert.equal(getStoredConnection(userId), null);
+  });
+
+  it("marks reconnect when one user's ciphertext is copied onto another user", async () => {
+    const userA = "oauth-aad-a";
+    const userB = "oauth-aad-b";
+    insertUser({ id: userA, email: "aad-a@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    insertUser({ id: userB, email: "aad-b@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    await connectOAuth(userA, TOKEN_A, ATHLETE_A, NAME_A);
+    const enc = getStoredConnection(userA)?.apiKeyEnc ?? "";
+    assert.equal(enc.startsWith("v2:"), true);
+    assert.equal(decryptIntervalsApiKey(enc, userA), TOKEN_A);
+    assert.throws(() => decryptIntervalsApiKey(enc, userB), IntervalsDecryptError);
+    upsertIntervalsConnection({
+      userId: userB,
+      athleteId: ATHLETE_B,
+      connectedAt: "2026-09-01T00:00:00.000Z",
+      apiKeyEnc: enc,
+      authType: "oauth",
+      needsReconnect: false,
+    });
+    const view = await refreshIntervalsConnectionView(userB);
+    assert.equal(view.needsReconnect, true);
+    assert.equal(view.statusLabel, INTERVALS_ACCESS_EXPIRED);
+
+    const key = intervalsEncryptionKey();
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const ciphertext = Buffer.concat([cipher.update("legacy-token", "utf8"), cipher.final()]);
+    const v1 = `v1:${iv.toString("base64")}:${cipher.getAuthTag().toString("base64")}:${ciphertext.toString("base64")}`;
+    assert.equal(decryptIntervalsApiKey(v1, userB), "legacy-token");
+  });
+
+  it("shows a disabled Connect or Reconnect when nothing is configured, and keeps Disconnect", async () => {
+    const unavailable = await renderConnectedApps({
+      connection: { connected: false, statusLabel: "Not connected" },
+      intervalsAvailable: true,
+      oauthConfigured: false,
+      encryptionReady: false,
+      envFallbackConnect: false,
+    });
+    assert.equal(unavailable.includes("Not available for your account"), false);
+    assert.equal(unavailable.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
+    assert.match(unavailable, /<button[^>]*disabled[^>]*>[\s\S]*Connect[\s\S]*<\/button>/);
+    assert.equal(unavailable.includes('name="intervalsApiKey"'), false);
+
+    const connected = await renderConnectedApps({
+      connection: {
+        connected: true,
+        athleteId: ATHLETE_A,
+        statusLabel: `Connected as ${ATHLETE_A}`,
+        lastSyncLabel: null,
+      },
+      intervalsAvailable: true,
+      oauthConfigured: false,
+      encryptionReady: false,
+      envFallbackConnect: false,
+    });
+    assert.equal(connected.includes("Disconnect"), true);
+    assert.equal(connected.includes("Sync now"), true);
+    assert.equal(connected.includes("Not available for your account"), false);
+
+    const expired = await renderConnectedApps({
+      connection: {
+        connected: true,
+        athleteId: ATHLETE_A,
+        needsReconnect: true,
+        statusLabel: INTERVALS_ACCESS_EXPIRED,
+        lastSyncLabel: null,
+      },
+      intervalsAvailable: true,
+      oauthConfigured: false,
+      encryptionReady: false,
+      envFallbackConnect: false,
+    });
+    assert.equal(expired.includes("Reconnect"), true);
+    assert.equal(expired.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
+    assert.equal(expired.includes("Disconnect"), true);
+    assert.match(expired, /disabled/);
+    assert.equal(expired.includes('href="/auth/intervals/start"'), false);
   });
 });

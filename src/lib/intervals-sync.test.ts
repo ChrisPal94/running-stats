@@ -130,7 +130,7 @@ function connectUser(userId: string): void {
     userId,
     athleteId: "i704884",
     connectedAt: "2026-09-14T12:00:00.000Z",
-    apiKeyEnc: encryptIntervalsApiKey(API_KEY),
+    apiKeyEnc: encryptIntervalsApiKey(API_KEY, userId),
     needsReconnect: false,
   });
 }

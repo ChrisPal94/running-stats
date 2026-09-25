@@ -35,6 +35,7 @@ import {
   revokeUnownedIntervals,
   userCanUseIntervals,
   userHasOwnIntervalsConnection,
+  type IntervalsCredentials,
   type IntervalsRunChoice,
   type IntervalsRunPickerState,
   type IntervalsRunStats,
@@ -1329,10 +1330,8 @@ export async function handleTodayPost(userId: string, formData: FormData): Promi
     if (!session || !runLog) return { ok: false, error: COACH_FEEDBACK_UNAVAILABLE, logOpen: false };
     const recorded =
       runLog.route?.type === "polyline" ? effortFromSamples(runLog.route.samples) : null;
-    const intervalsAccess =
-      runLog.source === "intervals" ? await openIntervalsCredentials(userId) : null;
     const effort =
-      intervalsAccess?.ok ? await loadRunEffort(userId, session.date, runLog.distanceKm) : null;
+      runLog.source === "intervals" ? await loadRunEffort(userId, session.date, runLog.distanceKm) : null;
     const generated = await requestCoachFeedback({
       plannedTitle: session.title,
       plannedKm: session.distanceKm,
@@ -2074,9 +2073,11 @@ export async function applyChosenIntervalsRun(
   userId: string,
   run: IntervalsRunStats,
   sessionId: string,
+  opened?: IntervalsCredentials,
 ): Promise<boolean> {
-  if (!(await openIntervalsCredentials(userId)).ok) return false;
-  const streams = await loadIntervalsRoute(userId, run.activityId);
+  const creds = opened ?? (await openIntervalsCredentials(userId));
+  if (!creds.ok) return false;
+  const streams = await loadIntervalsRoute(userId, run.activityId, creds);
   return enqueueWrite(async () => {
     const data = await readTraining();
     const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
@@ -2222,7 +2223,7 @@ export async function handleSettingsPost(
       const selectedId = String(formData.get("activityId") ?? "");
       const selected = current?.runs.find((run) => run.activityId === selectedId);
       if (current && selected) {
-        const wrote = await applyChosenIntervalsRun(userId, selected, current.sessionId);
+        const wrote = await applyChosenIntervalsRun(userId, selected, current.sessionId, creds);
         if (wrote) imported += 1;
         if (getIntervalsConnection(userId)?.needsReconnect) {
           return { ok: false, error: INTERVALS_RECONNECT_ERROR, section: "intervals" };

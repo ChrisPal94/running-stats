@@ -56,20 +56,25 @@ export function intervalsEncryptionKey(): Buffer {
   return key;
 }
 
-/** AES-256-GCM payload `v1:iv:tag:ciphertext` (base64). Ciphertext does not contain the plaintext. */
-export function encryptIntervalsApiKey(plaintext: string): string {
+function intervalsAad(userId: string): Buffer {
+  return Buffer.from(`intervals:${userId}`, "utf8");
+}
+
+/** AES-256-GCM payload `v2:iv:tag:ciphertext` (base64), AAD bound to the user. `v1` rows are still readable. */
+export function encryptIntervalsApiKey(plaintext: string, userId: string): string {
   const key = intervalsEncryptionKey();
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
+  cipher.setAAD(intervalsAad(userId));
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return `v1:${iv.toString("base64")}:${tag.toString("base64")}:${ciphertext.toString("base64")}`;
+  return `v2:${iv.toString("base64")}:${tag.toString("base64")}:${ciphertext.toString("base64")}`;
 }
 
-export function decryptIntervalsApiKey(payload: string): string {
+export function decryptIntervalsApiKey(payload: string, userId?: string): string {
   const key = intervalsEncryptionKey();
   const parts = payload.split(":");
-  if (parts.length !== 4 || parts[0] !== "v1") throw new IntervalsDecryptError();
+  if (parts.length !== 4 || (parts[0] !== "v1" && parts[0] !== "v2")) throw new IntervalsDecryptError();
   const iv = Buffer.from(parts[1] ?? "", "base64");
   const tag = Buffer.from(parts[2] ?? "", "base64");
   const data = Buffer.from(parts[3] ?? "", "base64");
@@ -77,8 +82,13 @@ export function decryptIntervalsApiKey(payload: string): string {
   try {
     const decipher = createDecipheriv("aes-256-gcm", key, iv);
     decipher.setAuthTag(tag);
+    if (parts[0] === "v2") {
+      if (!userId) throw new IntervalsDecryptError();
+      decipher.setAAD(intervalsAad(userId));
+    }
     return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
-  } catch {
+  } catch (error) {
+    if (error instanceof IntervalsDecryptError) throw error;
     throw new IntervalsDecryptError();
   }
 }

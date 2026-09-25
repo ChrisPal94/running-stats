@@ -20,7 +20,7 @@ The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, session
 
 ## Environment
 
-Set these on the **web** service. Names match `.env.example`. The app does not read a separate `SITE` / `APP_URL`; the public origin is the Railway URL (and `GOOGLE_CALLBACK_URL` for OAuth).
+Set these on the **web** service. Names match `.env.example`. Intervals OAuth `redirect_uri` is built from `PUBLIC_ORIGIN`, not from `Host` or `X-Forwarded-Host`. Google still uses `GOOGLE_CALLBACK_URL`.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
@@ -40,7 +40,8 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `OLLAMA_API_KEY` | Fallback | One-release fallback when `ADAPT_LLM_API_KEY` is unset. Prefer `ADAPT_LLM_API_KEY`. Ignores `ADAPT_LLM_BASE_URL` and `ADAPT_LLM_MODEL`. Host is `https://ollama.com/v1`. |
 | `OLLAMA_MODEL` | Fallback | Model for the `OLLAMA_API_KEY` fallback. Default `gemma4:31b`. |
 | `INTERVALS_KEY_ENC_SECRET` | For Connect | 32-byte key that encrypts each user’s Intervals access token or API key at rest (AES-256-GCM). Standard base64 only, from `openssl rand -base64 32` (44 characters, decodes to exactly 32 bytes). Hex and other formats are treated as missing (logged once, no crash). Missing or invalid: the Connect button stays visible but disabled with **Connecting Intervals.icu isn’t available right now. Try again later.** Nothing is stored in plaintext. Existing rows are left in place. The secret is never stored or logged. Set it on the **web** service (the process that writes `app.db` and runs `/api/adapt`). |
-| `INTERVALS_CLIENT_ID` | For OAuth | Intervals.icu OAuth client id from [the app form](https://intervals.icu/oauth/apply). When this and `INTERVALS_CLIENT_SECRET` are both set, Settings uses **Connect Intervals.icu**. Otherwise it shows the API key and athlete ID form. |
+| `PUBLIC_ORIGIN` | For Intervals OAuth | Public site origin with no path, for example `https://running-stats-production.up.railway.app`. The OAuth `redirect_uri` is this origin plus `/auth/intervals/callback`. It does not use `Host` or `X-Forwarded-Host`. In production, if this is unset, Intervals OAuth is treated as not configured. Local dev without it falls back to the request origin. |
+| `INTERVALS_CLIENT_ID` | For OAuth | Intervals.icu OAuth client id from [the app form](https://intervals.icu/oauth/apply). When this and `INTERVALS_CLIENT_SECRET` are both set, and `PUBLIC_ORIGIN` is set in production, Settings uses **Connect Intervals.icu**. Otherwise it shows the API key and athlete ID form. |
 | `INTERVALS_CLIENT_SECRET` | For OAuth | OAuth client secret. Used only on the server when exchanging the code at `https://intervals.icu/api/oauth/token`. Never sent to the browser. |
 | `INTERVALS_ICU_API_KEY` | No | Shared Intervals key. Not used unless `INTERVALS_OWNER_ENV_FALLBACK=true`. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`. Only a verified account listed in `INTERVALS_OWNER_EMAILS` may use it. |
 | `INTERVALS_ICU_ATHLETE_ID` | No | Athlete id for that shared key (for example `i704884`). Used only with the owner env fallback. |
@@ -65,7 +66,7 @@ Redirect URI (must match the app settings exactly). Production:
 https://running-stats-production.up.railway.app/auth/intervals/callback
 ```
 
-Local: `http://localhost:4321/auth/intervals/callback`. The app builds it from the public origin (`X-Forwarded-Proto` / `X-Forwarded-Host` on Railway), not from an extra env var.
+Local: `http://localhost:4321/auth/intervals/callback`. Production builds it from `PUBLIC_ORIGIN` (`https://running-stats-production.up.railway.app/auth/intervals/callback`), not from `Host` or `X-Forwarded-Host`. If `PUBLIC_ORIGIN` is unset in production, OAuth is not configured.
 
 Google Cloud Console: add the production authorized redirect URI before testing Continue with Google.
 
@@ -90,7 +91,7 @@ npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --ap
 
 If the dry run or `--apply` aborts because the target account already has rows (onboarding, plan, training sessions, feedback, run logs, adaptation events, or an Intervals connection), stop and ask the dev team. Do not delete those rows by hand.
 
-4. After deploy and before that Google login, the account is unverified. Running adapt, or opening Settings and submitting an Intervals action, deletes the owner’s Intervals connection row. Run logs are kept. After the verified Google sign-in the owner must Connect again.
+4. After deploy and before that Google login, the account is unverified. The owner’s legacy Intervals connection row (no stored personal key) disappears after deploy unless `INTERVALS_OWNER_ENV_FALLBACK=true`. Running adapt, or opening Settings and submitting an Intervals action, deletes that row. Run logs are kept. After the verified Google sign-in the owner must Connect again in Settings.
 5. Sign in on the site with Google as `crispal94@gmail.com` (`email_verified` must be true). That sets `emailVerifiedAt` on the renamed account. Do this only after step 3 `--apply`.
 6. Dry-run the Intervals cleanup, share the output, then apply.
 

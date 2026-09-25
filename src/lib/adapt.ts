@@ -733,8 +733,9 @@ export async function runNocturnalAdaptation(
         }
       }
       decisions.push(decision);
-    } catch {
-      console.error("[intervals] adapt account failed");
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "Error";
+      console.error(`[intervals] adapt account failed ${name}`);
     }
   }
 
@@ -786,8 +787,9 @@ export async function runNocturnalAdaptation(
         countReconnect(userId);
         try {
           await markIntervalsNeedsReconnect(userId);
-        } catch {
-          console.error("[intervals] adapt account failed");
+        } catch (error) {
+          const name = error instanceof Error ? error.name : "Error";
+          console.error(`[intervals] adapt account failed ${name}`);
         }
       }
     } catch {

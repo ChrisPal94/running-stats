@@ -92,7 +92,7 @@ const connection = await refreshIntervalsConnectionView(user.id);
 const oauthConfigured = isIntervalsOAuthConfigured();
 const encryptionReady = intervalsEncryptionReady();
 const fallbackEligible = ownerEnvFallbackAllowed(user.id);
-const intervalsAvailable = oauthConfigured || encryptionReady || fallbackEligible;
+const intervalsAvailable = true;
 const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionReady;
 ---
 

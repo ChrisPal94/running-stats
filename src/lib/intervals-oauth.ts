@@ -30,6 +30,8 @@ export const INTERVALS_OAUTH_STATE_TTL_SEC = 10 * 60;
 
 const OAUTH_COOKIE = "rs_intervals_oauth";
 const FETCH_TIMEOUT_MS = 15_000;
+const OAUTH_ATHLETE_ID = /^i\d{1,12}$/;
+let loggedMissingPublicOrigin = false;
 
 type OAuthStatePayload = {
   state: string;
@@ -47,11 +49,38 @@ function envValue(name: string): string {
   return process.env[name]?.trim() ?? "";
 }
 
+function configuredIntervalsOrigin(): string | null {
+  const site = (import.meta.env as { SITE?: unknown } | undefined)?.SITE;
+  const candidates = [envValue("PUBLIC_ORIGIN"), site];
+  for (const raw of candidates) {
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    try {
+      const url = new URL(raw.trim());
+      if (url.protocol === "http:" || url.protocol === "https:") return url.origin;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 export function isIntervalsOAuthConfigured(): boolean {
-  return Boolean(envValue("INTERVALS_CLIENT_ID") && envValue("INTERVALS_CLIENT_SECRET"));
+  if (!envValue("INTERVALS_CLIENT_ID") || !envValue("INTERVALS_CLIENT_SECRET")) return false;
+  if (configuredIntervalsOrigin()) return true;
+  if (process.env.NODE_ENV === "production") {
+    if (!loggedMissingPublicOrigin) {
+      loggedMissingPublicOrigin = true;
+      console.error("[intervals] PUBLIC_ORIGIN is not configured");
+    }
+    return false;
+  }
+  return true;
 }
 
 export function intervalsOAuthCallbackUrl(request: Request): string {
+  const origin = configuredIntervalsOrigin();
+  if (origin) return `${origin}${INTERVALS_OAUTH_CALLBACK_PATH}`;
+  if (process.env.NODE_ENV === "production") return INTERVALS_OAUTH_CALLBACK_PATH;
   return `${publicOrigin(request)}${INTERVALS_OAUTH_CALLBACK_PATH}`;
 }
 
@@ -143,14 +172,22 @@ export function startIntervalsOAuth(
 }
 
 function athleteIdFrom(value: unknown): string | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const id = String(Math.trunc(value));
-    return /^[A-Za-z0-9]+$/.test(id) ? id : null;
-  }
-  if (typeof value !== "string") return null;
-  const id = value.trim();
-  if (!id || id.length > 32 || !/^[A-Za-z0-9]+$/.test(id)) return null;
-  return id;
+  let raw = "";
+  if (typeof value === "number" && Number.isFinite(value)) raw = String(Math.trunc(value));
+  else if (typeof value === "string") raw = value.trim();
+  else return null;
+  if (/^\d{1,12}$/.test(raw)) raw = `i${raw}`;
+  if (!OAUTH_ATHLETE_ID.test(raw)) return null;
+  return raw;
+}
+
+function grantedScope(record: Record<string, unknown>): string | null {
+  if (!("scope" in record) || typeof record.scope !== "string") return INTERVALS_OAUTH_SCOPE;
+  const scopeRaw = record.scope.trim().slice(0, 200);
+  if (!scopeRaw) return INTERVALS_OAUTH_SCOPE;
+  const granted = new Set(scopeRaw.split(/[\s,]+/).filter((part) => part.length > 0));
+  if (!granted.has("ACTIVITY:READ") || !granted.has("CALENDAR:WRITE")) return null;
+  return scopeRaw;
 }
 
 function parseTokenPayload(value: unknown): {
@@ -169,12 +206,13 @@ function parseTokenPayload(value: unknown): {
   if (!athleteId) return null;
   const nameRaw = (athlete as Record<string, unknown>).name;
   const athleteName = typeof nameRaw === "string" ? nameRaw.trim().slice(0, 120) : "";
-  const scopeRaw = typeof record.scope === "string" ? record.scope.trim().slice(0, 200) : "";
+  const scope = grantedScope(record);
+  if (!scope) return null;
   return {
     accessToken,
     athleteId,
     athleteName: athleteName || undefined,
-    scope: scopeRaw || INTERVALS_OAUTH_SCOPE,
+    scope,
   };
 }
 
