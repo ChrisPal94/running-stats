@@ -12,8 +12,9 @@ import {
 } from "../lib/magic-link";
 
 const existing = await getCurrentUser(Astro.cookies);
-if (existing) {
-  return Astro.redirect(await postAuthPath(existing.id));
+const signedInPath = existing ? await postAuthPath(existing.id) : undefined;
+if (signedInPath) {
+  return Astro.redirect(signedInPath);
 }
 
 let formError = "";
@@ -36,11 +37,14 @@ if (Astro.request.method === "POST") {
     }
   } else {
     const result = await loginFromForm(Astro.request, Astro.cookies, formData);
-    if (result.ok) {
-      return Astro.redirect(await postAuthPath(result.user.id));
+    const destination = result.ok ? await postAuthPath(result.user.id) : undefined;
+    if (destination) {
+      return Astro.redirect(destination);
     }
-    formError = result.error;
-    email = result.email;
+    if (!result.ok) {
+      formError = result.error;
+      email = result.email;
+    }
   }
 }
 

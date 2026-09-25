@@ -253,6 +253,19 @@ export function withTransaction<T>(fn: () => T): T {
   }
 }
 
+/**
+ * Columns added onto databases created before that column existed.
+ * `schemaIsCurrent` and `applySchema` both walk this list, so a new column
+ * cannot be ensured without the current-schema check (or the reverse).
+ */
+const ENSURED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
+  ["onboarding", "feedbackCadence", "TEXT"],
+  ["plans", "feedbackCadence", "TEXT NOT NULL DEFAULT 'daily'"],
+  ["run_logs", "source", "TEXT NOT NULL DEFAULT 'manual'"],
+  ["users", "emailVerifiedAt", "TEXT"],
+  ["users", "sessionEpoch", "INTEGER NOT NULL DEFAULT 0"],
+];
+
 function schemaIsCurrent(database: DatabaseSync): boolean {
   const rows = database
     .prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'index')")
@@ -281,14 +294,7 @@ function schemaIsCurrent(database: DatabaseSync): boolean {
   ];
   if (!requiredTables.every((name) => tables.has(name))) return false;
   if (!requiredIndexes.every((name) => indexes.has(name))) return false;
-  const requiredColumns: Array<[string, string]> = [
-    ["onboarding", "feedbackCadence"],
-    ["plans", "feedbackCadence"],
-    ["run_logs", "source"],
-    ["users", "emailVerifiedAt"],
-    ["users", "sessionEpoch"],
-  ];
-  return requiredColumns.every(([table, column]) => tableColumns(database, table).has(column));
+  return ENSURED_COLUMNS.every(([table, column]) => tableColumns(database, table).has(column));
 }
 
 /** Returns whether tables or columns were written. A current schema is left untouched. */
@@ -405,11 +411,9 @@ function applySchema(database: DatabaseSync): boolean {
     CREATE INDEX IF NOT EXISTS adaptation_events_userId_date ON adaptation_events(userId, date);
     CREATE INDEX IF NOT EXISTS magic_tokens_email_createdAt ON magic_tokens(email, createdAt);
   `);
-  ensureColumn(database, "onboarding", "feedbackCadence", "TEXT");
-  ensureColumn(database, "plans", "feedbackCadence", "TEXT NOT NULL DEFAULT 'daily'");
-  ensureColumn(database, "run_logs", "source", "TEXT NOT NULL DEFAULT 'manual'");
-  ensureColumn(database, "users", "emailVerifiedAt", "TEXT");
-  ensureColumn(database, "users", "sessionEpoch", "INTEGER NOT NULL DEFAULT 0");
+  for (const [table, column, ddl] of ENSURED_COLUMNS) {
+    ensureColumn(database, table, column, ddl);
+  }
   return true;
 }
 

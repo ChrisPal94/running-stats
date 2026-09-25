@@ -182,6 +182,7 @@ export async function finishGoogleOAuth(
     return { location: result.created ? "/onboarding" : await postAuthPath(result.user.id) };
   } catch (error) {
     if (error instanceof GoogleAccountLinkError) {
+      console.error("[auth] Google account link rejected", error.userId);
       return { location: errorLocation };
     }
     console.error("[auth] Google OAuth callback failed", error);
