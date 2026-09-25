@@ -403,7 +403,11 @@ function clampDistance(original: number, next: number): number {
 function parseLlmAdjustment(raw: string, tomorrow: Session | null): LlmAdjustment | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    // Providers that ignore `response_format: json_object` wrap the payload in a
+    // markdown fence (measured: `gemma4:31b`). `parseCoachFeedback` already
+    // tolerates this; without the same handling here every such adjustment was
+    // discarded and the run silently fell back to the heuristic.
+    parsed = JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
   } catch {
     return null;
   }
