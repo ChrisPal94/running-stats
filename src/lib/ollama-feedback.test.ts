@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
   COACH_FEEDBACK_INSTRUCTIONS,
+  COACH_FEEDBACK_UNAVAILABLE,
   COACH_FEEDBACK_UNCONFIGURED,
+  COACH_FEEDBACK_USER_COPY,
   ollamaCloudConfig,
   parseCoachFeedback,
   requestCoachFeedback,
@@ -18,6 +20,7 @@ const ENV_KEYS = [
 ] as const;
 
 const ENV_NAME = /OLLAMA_[A-Z0-9_]*|ADAPT_LLM_[A-Z0-9_]*|API_KEY|BASE_URL|_MODEL/;
+const LEAKED_FEEDBACK_COPY = /Ollama|API key|_API_KEY/;
 
 const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
@@ -64,6 +67,16 @@ describe("parseCoachFeedback", () => {
   it("rejects jargon and empty fields", () => {
     assert.equal(parseCoachFeedback('{"summary":"CTL dropped.","reason":"Because."}'), null);
     assert.equal(parseCoachFeedback('{"summary":"","reason":"Because."}'), null);
+  });
+});
+
+describe("coach feedback user copy", () => {
+  it("does not mention Ollama, an API key, or an env var name", () => {
+    for (const copy of COACH_FEEDBACK_USER_COPY) {
+      assert.doesNotMatch(copy, LEAKED_FEEDBACK_COPY);
+    }
+    assert.equal(COACH_FEEDBACK_UNAVAILABLE, "Couldn’t generate feedback. Try again.");
+    assert.equal(COACH_FEEDBACK_UNCONFIGURED, "Feedback isn’t available right now. Try again later.");
   });
 });
 
@@ -164,5 +177,46 @@ describe("requestCoachFeedback", () => {
     assert.match(logged, /ADAPT_LLM_API_KEY/);
     assert.match(logged, /OLLAMA_API_KEY/);
     assert.equal(logged.includes("super-secret"), false);
+  });
+
+  it("shows the generic retry copy for auth, HTTP, and LLM failures and logs the reason", async () => {
+    clearLlmEnv();
+    process.env.ADAPT_LLM_API_KEY = "super-secret-adapt-key";
+    process.env.ADAPT_LLM_BASE_URL = "https://llm.example/v1";
+    process.env.ADAPT_LLM_MODEL = "coach-model";
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      const denied = await requestCoachFeedback(runContext, async () => {
+        return new Response("unauthorized super-secret-adapt-key", { status: 401 });
+      });
+      const failed = await requestCoachFeedback(runContext, async () => {
+        return new Response("unavailable", { status: 503 });
+      });
+      const offline = await requestCoachFeedback(runContext, async () => {
+        throw new Error("connect failed super-secret-adapt-key");
+      });
+      const unusable = await requestCoachFeedback(runContext, async () => {
+        return new Response("not-json", { status: 200 });
+      });
+      for (const result of [denied, failed, offline, unusable]) {
+        assert.equal(result.ok, false);
+        if (result.ok) continue;
+        assert.equal(result.error, COACH_FEEDBACK_UNAVAILABLE);
+        assert.doesNotMatch(result.error, LEAKED_FEEDBACK_COPY);
+        assert.equal(result.error.includes("super-secret-adapt-key"), false);
+      }
+    } finally {
+      console.warn = original;
+    }
+    const logged = warnings.join("\n");
+    assert.match(logged, /401 from provider/);
+    assert.match(logged, /503 from provider/);
+    assert.match(logged, /connect failed \[redacted\]/);
+    assert.match(logged, /not usable feedback/);
+    assert.equal(logged.includes("super-secret-adapt-key"), false);
   });
 });
