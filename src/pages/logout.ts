@@ -1,10 +1,10 @@
 import type { APIRoute } from "astro";
-import { clearSessionCookie } from "../lib/auth";
+import { logoutSession } from "../lib/auth";
 
 export const prerender = false;
 
-export const POST: APIRoute = ({ cookies, redirect }) => {
-  clearSessionCookie(cookies);
+export const POST: APIRoute = async ({ cookies, redirect }) => {
+  await logoutSession(cookies);
   return redirect("/login");
 };
 
