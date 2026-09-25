@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
+import * as coachFeedback from "./ollama-feedback.ts";
 import {
   COACH_FEEDBACK_INSTRUCTIONS,
   COACH_FEEDBACK_UNAVAILABLE,
   COACH_FEEDBACK_UNCONFIGURED,
-  COACH_FEEDBACK_USER_COPY,
   ollamaCloudConfig,
   parseCoachFeedback,
   requestCoachFeedback,
@@ -19,10 +19,33 @@ const ENV_KEYS = [
   "OLLAMA_MODEL",
 ] as const;
 
+const LEAKED_FEEDBACK_COPY = [
+  /ollama/i,
+  /api key/i,
+  /_api_key/i,
+  /adapt_llm_/i,
+  /_base_url/i,
+  /_model\b/i,
+];
+
+function exportedCoachFeedbackCopy(): string[] {
+  const copies: string[] = [];
+  for (const [name, value] of Object.entries(coachFeedback)) {
+    if (!name.startsWith("COACH_FEEDBACK_")) continue;
+    if (typeof value === "string") copies.push(value);
+    else if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === "string") copies.push(item);
+      }
+    }
+  }
+  return copies;
+}
+
 function assertNoLeakedFeedbackCopy(copy: string): void {
-  assert.doesNotMatch(copy, /ollama/i);
-  assert.doesNotMatch(copy, /api key/i);
-  assert.doesNotMatch(copy, /[A-Z_]+_API_KEY/);
+  for (const pattern of LEAKED_FEEDBACK_COPY) {
+    assert.doesNotMatch(copy, pattern);
+  }
 }
 
 const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -75,9 +98,11 @@ describe("parseCoachFeedback", () => {
 
 describe("coach feedback user copy", () => {
   it("does not mention ollama, an api key, or an env var name", () => {
-    for (const copy of COACH_FEEDBACK_USER_COPY) {
-      assertNoLeakedFeedbackCopy(copy);
-    }
+    const copies = exportedCoachFeedbackCopy();
+    assert.ok(copies.includes(COACH_FEEDBACK_UNAVAILABLE));
+    assert.ok(copies.includes(COACH_FEEDBACK_UNCONFIGURED));
+    assert.ok(copies.includes(COACH_FEEDBACK_INSTRUCTIONS));
+    for (const copy of copies) assertNoLeakedFeedbackCopy(copy);
     assert.equal(COACH_FEEDBACK_UNAVAILABLE, "Couldn’t generate feedback. Try again.");
     assert.equal(COACH_FEEDBACK_UNCONFIGURED, "Feedback isn’t available right now. Try again later.");
   });

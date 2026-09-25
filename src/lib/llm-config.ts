@@ -21,8 +21,8 @@ function withoutTrailingSlash(url: string): string {
 
 /** OpenAI-compatible chat config for the adapt job and Generate feedback.
  *  `ADAPT_LLM_API_KEY` uses `ADAPT_LLM_BASE_URL` / `ADAPT_LLM_MODEL`.
- *  `OLLAMA_API_KEY` is a one-release fallback and keeps the Ollama host and model
- *  unless those adapt vars are set.
+ *  `OLLAMA_API_KEY` is a one-release fallback and ignores those adapt vars,
+ *  because `.env.example` ships the OpenAI host and model.
  */
 export function readLlmConfig(): LlmConfig | null {
   const adaptKey = trimmedEnv("ADAPT_LLM_API_KEY");
@@ -38,7 +38,7 @@ export function readLlmConfig(): LlmConfig | null {
   if (!ollamaKey) return null;
   return {
     apiKey: ollamaKey,
-    baseUrl: withoutTrailingSlash(trimmedEnv("ADAPT_LLM_BASE_URL") || OLLAMA_CLOUD_BASE_URL),
-    model: trimmedEnv("ADAPT_LLM_MODEL") || trimmedEnv("OLLAMA_MODEL") || DEFAULT_OLLAMA_MODEL,
+    baseUrl: OLLAMA_CLOUD_BASE_URL,
+    model: trimmedEnv("OLLAMA_MODEL") || DEFAULT_OLLAMA_MODEL,
   };
 }

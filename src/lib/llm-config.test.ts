@@ -62,10 +62,25 @@ describe("readLlmConfig", () => {
     });
   });
 
-  it("keeps the prior Ollama model when OLLAMA_MODEL is unset", () => {
+  it("ignores adapt URL and model when the key is only OLLAMA_API_KEY", () => {
     clearLlmEnv();
     process.env.OLLAMA_API_KEY = "legacy-key";
-    assert.equal(process.env.ADAPT_LLM_BASE_URL, undefined);
+    process.env.OLLAMA_MODEL = "gemma4:31b";
+    process.env.ADAPT_LLM_BASE_URL = "https://api.openai.com/v1";
+    process.env.ADAPT_LLM_MODEL = "gpt-4o-mini";
+    assert.equal(process.env.ADAPT_LLM_API_KEY, undefined);
+    assert.deepEqual(readLlmConfig(), {
+      apiKey: "legacy-key",
+      baseUrl: "https://ollama.com/v1",
+      model: "gemma4:31b",
+    });
+  });
+
+  it("keeps gemma4:31b when OLLAMA_MODEL is unset even if adapt URL and model are set", () => {
+    clearLlmEnv();
+    process.env.OLLAMA_API_KEY = "legacy-key";
+    process.env.ADAPT_LLM_BASE_URL = "https://api.openai.com/v1";
+    process.env.ADAPT_LLM_MODEL = "gpt-4o-mini";
     assert.deepEqual(readLlmConfig(), {
       apiKey: "legacy-key",
       baseUrl: "https://ollama.com/v1",
