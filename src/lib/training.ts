@@ -20,10 +20,10 @@ import {
   disconnectIntervals,
   getIntervalsConnection,
   INTERVALS_CONNECT_UNAVAILABLE,
-  INTERVALS_ENC_NOT_CONFIGURED,
   INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_RECONNECT_ERROR,
   INTERVALS_SYNC_NEEDS_CONNECT,
+  intervalsSyncUserError,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
   loadIntervalsRoute,
@@ -2126,12 +2126,11 @@ export async function syncIntervalsForUser(userId: string): Promise<
   if (!fetched.ok) {
     if (
       fetched.error !== INTERVALS_RECONNECT_ERROR &&
-      fetched.error !== INTERVALS_ENC_NOT_CONFIGURED &&
       fetched.error !== INTERVALS_CONNECT_UNAVAILABLE
     ) {
       await markIntervalsSyncError(userId);
     }
-    return { ok: false, error: fetched.error };
+    return { ok: false, error: intervalsSyncUserError(fetched.error) };
   }
   const sessionDays = new Set(sessionDates);
   const routes = new Map<string, IntervalsStreamRoute>();
@@ -2217,13 +2216,13 @@ async function postIntervalsSettings(
   if (intent === "intervals-sync") {
     const result = await syncIntervalsForUser(userId);
     if (!result.ok) {
+      const error = intervalsSyncUserError(result.error);
       if (
-        result.error === INTERVALS_RECONNECT_ERROR ||
-        result.error === INTERVALS_ENC_NOT_CONFIGURED ||
-        result.error === INTERVALS_CONNECT_UNAVAILABLE ||
+        error === INTERVALS_RECONNECT_ERROR ||
+        error === INTERVALS_CONNECT_UNAVAILABLE ||
         !getIntervalsConnection(userId)
       ) {
-        return { ok: false, error: result.error, section: "intervals" };
+        return { ok: false, error, section: "intervals" };
       }
       return { ok: true, redirect: "/settings" };
     }
@@ -2241,7 +2240,7 @@ async function postIntervalsSettings(
       if (!creds.ok) {
         return {
           ok: false,
-          error: creds.error === INTERVALS_RECONNECT_ERROR ? INTERVALS_RECONNECT_ERROR : creds.error,
+          error: intervalsSyncUserError(creds.error),
           section: "intervals",
         };
       }

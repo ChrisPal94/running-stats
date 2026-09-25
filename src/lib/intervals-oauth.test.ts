@@ -44,8 +44,12 @@ const {
 } = await import("./intervals-crypto.ts");
 const {
   INTERVALS_ACCESS_EXPIRED,
+  INTERVALS_ATHLETE_ID_INVALID,
   INTERVALS_CONNECT_REJECTED,
   INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_RECONNECT_LINK_LABEL,
+  INTERVALS_RECONNECT_NOTICE,
+  INTERVALS_UNAVAILABLE_HELPER_ID,
   INTERVALS_CONNECTED_TOAST,
   INTERVALS_CSRF_ERROR,
   INTERVALS_OAUTH_CALENDAR_SCOPE,
@@ -254,7 +258,7 @@ function renderConnectedApps(props: Record<string, unknown>): Promise<string> {
 }
 
 function renderNotice(props: Record<string, unknown>): Promise<string> {
-  noticeRender ??= renderAstro("IntervalsExpiredNotice.astro", false);
+  noticeRender ??= renderAstro("IntervalsExpiredNotice.astro", true);
   return noticeRender.then((render) => render(props));
 }
 
@@ -716,7 +720,9 @@ describe("Intervals OAuth", () => {
       true,
     );
     assert.equal(keyHtml.includes("Couldn’t connect. Check your API key and athlete ID."), true);
-    assert.equal(keyHtml.includes('placeholder="i123456"'), true);
+    assert.equal(INTERVALS_ATHLETE_ID_INVALID, "Enter an athlete ID like i123456.");
+    assert.equal(keyHtml.includes(`placeholder="${INTERVALS_ATHLETE_ID_INVALID}"`), true);
+    assert.equal(keyHtml.includes("i704884"), false);
     assert.match(keyHtml, /role="alert"/);
     assert.equal(keyHtml.includes("Not available for your account"), false);
     assert.equal(keyHtml.includes('data-intervals-actions'), true);
@@ -780,9 +786,15 @@ describe("Intervals OAuth", () => {
     assert.equal(expired.includes(TOKEN_A), false);
 
     const notice = await renderNotice({ show: true });
-    assert.equal(notice.includes("Intervals access expired"), true);
-    assert.equal(notice.includes('href="/settings"'), true);
-    assert.equal(notice.includes("Reconnect"), true);
+    assert.equal(
+      INTERVALS_RECONNECT_NOTICE,
+      "Intervals access expired. Reconnect to keep your runs and plan in sync.",
+    );
+    assert.equal(notice.includes("Intervals access expired."), true);
+    assert.equal(notice.includes('href="/settings#intervals"'), true);
+    assert.match(notice, new RegExp(`>\\s*${INTERVALS_RECONNECT_LINK_LABEL}\\s*<`));
+    assert.equal(notice.includes("to keep your runs and plan in sync."), true);
+    assert.equal(notice.includes('href="/auth/intervals/start"'), false);
     const hidden = await renderNotice({ show: false });
     assert.equal(hidden.includes("Intervals access expired"), false);
     assert.equal(INTERVALS_CONNECTED_TOAST, "Intervals connected");
@@ -1179,8 +1191,14 @@ describe("Intervals OAuth", () => {
     });
     assert.equal(unavailable.includes("Not available for your account"), false);
     assert.equal(unavailable.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
+    assert.equal(unavailable.includes('id="intervals"'), true);
+    assert.equal(unavailable.includes(`aria-describedby="${INTERVALS_UNAVAILABLE_HELPER_ID}"`), true);
+    assert.equal(unavailable.includes(`id="${INTERVALS_UNAVAILABLE_HELPER_ID}"`), true);
     assert.equal(unavailable.includes("Connect Intervals.icu"), true);
-    assert.match(unavailable, /<button[^>]*disabled[^>]*>[\s\S]*Connect Intervals\.icu[\s\S]*<\/button>/);
+    assert.match(
+      unavailable,
+      /<button[^>]*disabled[^>]*>[\s\S]*Connect Intervals\.icu[\s\S]*<\/button>/,
+    );
     assert.equal(unavailable.includes('name="intervalsApiKey"'), false);
     assert.equal(unavailable.includes('data-intervals-actions'), true);
     assert.equal(unavailable.includes('data-intervals-helper'), true);
@@ -1223,6 +1241,7 @@ describe("Intervals OAuth", () => {
     assert.equal(expired.includes("Disconnect"), true);
     assert.equal(expired.includes("Not available for your account"), false);
     assert.match(expired, /<button[^>]*disabled[^>]*>[\s\S]*Reconnect[\s\S]*<\/button>/);
+    assert.equal(expired.includes(`id="${INTERVALS_UNAVAILABLE_HELPER_ID}"`), true);
     assert.match(expired, /<button(?![^>]*disabled)[^>]*>\s*Disconnect\s*<\/button>/);
     assert.equal(expired.includes('href="/auth/intervals/start"'), false);
     assert.equal(expired.includes('data-intervals-actions'), true);

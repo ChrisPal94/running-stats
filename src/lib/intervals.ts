@@ -32,6 +32,10 @@ export const INTERVALS_CONNECT_REJECTED = "Couldn’t connect. Check your API ke
 export const INTERVALS_ACCESS_EXPIRED = "Intervals access expired";
 /** 401/403 and a stored secret that will not decrypt. Same copy as the Settings status. */
 export const INTERVALS_RECONNECT_ERROR = INTERVALS_ACCESS_EXPIRED;
+/** Today notice. The link wraps `INTERVALS_RECONNECT_LINK_LABEL` and goes to `#intervals`. */
+export const INTERVALS_RECONNECT_LINK_LABEL = "Reconnect";
+export const INTERVALS_RECONNECT_NOTICE =
+  `Intervals access expired. ${INTERVALS_RECONNECT_LINK_LABEL} to keep your runs and plan in sync.`;
 export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
 export const INTERVALS_OAUTH_CONNECT_ERROR = "Couldn’t connect to Intervals. Try again.";
 /** OAuth callback when the grant omits CALENDAR:WRITE. Nothing is stored. */
@@ -43,6 +47,8 @@ export const INTERVALS_ROW_ID = "intervals";
 export const INTERVALS_CONNECTED_TOAST = "Intervals connected";
 export const INTERVALS_CONNECT_UNAVAILABLE =
   "Connecting Intervals.icu isn’t available right now. Try again later.";
+/** `aria-describedby` target for the disabled Connect/Reconnect control. */
+export const INTERVALS_UNAVAILABLE_HELPER_ID = "intervals-unavailable";
 export const INTERVALS_OAUTH_CONNECT_BUTTON = "Connect Intervals.icu";
 export const INTERVALS_OAUTH_CONNECT_LINE =
   "We import your runs and add planned workouts to your Intervals calendar.";
@@ -59,6 +65,22 @@ export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
 export const INTERVALS_COOPER_SYNC_TOAST = "Cooper test result synced — plan updated.";
 
 export type IntervalsSyncToast = "no-session" | "no-new-runs" | "cooper" | null;
+
+const INTERVALS_SYNC_PUBLIC_ERRORS = new Set<string>([
+  INTERVALS_SYNC_ERROR,
+  INTERVALS_RECONNECT_ERROR,
+  INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_SYNC_NEEDS_CONNECT,
+]);
+
+/**
+ * Sync copy safe to show. Config failures (`encryption is not configured`,
+ * `API key not configured`, and anything else internal) become the generic sync error.
+ * A missing encryption secret on the Settings row stays the unavailable line.
+ */
+export function intervalsSyncUserError(error: string): string {
+  return INTERVALS_SYNC_PUBLIC_ERRORS.has(error) ? error : INTERVALS_SYNC_ERROR;
+}
 
 /**
  * Toast after Sync now when the Which run? picker is not shown.

@@ -1,8 +1,10 @@
 ---
 import {
   INTERVALS_ACCESS_EXPIRED,
+  INTERVALS_ATHLETE_ID_INVALID,
   INTERVALS_CONNECT_COPY,
   INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_UNAVAILABLE_HELPER_ID,
   INTERVALS_KEY_HELP,
   INTERVALS_KEY_HELP_URL,
   INTERVALS_OAUTH_CONNECT_BUTTON,
@@ -120,7 +122,7 @@ const disabledClass =
               type="text"
               name="intervalsAthleteId"
               value={athleteIdDraft}
-              placeholder="i123456"
+              placeholder={INTERVALS_ATHLETE_ID_INVALID}
               autocomplete="off"
               autocapitalize="off"
               spellcheck="false"
@@ -141,7 +143,12 @@ const disabledClass =
             </button>
           </form>
         ) : connectDisabled ? (
-          <button type="button" class:list={[disabledClass, "sm:flex-1"]} disabled>
+          <button
+            type="button"
+            class:list={[disabledClass, "sm:flex-1"]}
+            disabled
+            aria-describedby={INTERVALS_UNAVAILABLE_HELPER_ID}
+          >
             {connectLabel}
           </button>
         ) : showKeyForm ? (
@@ -178,7 +185,13 @@ const disabledClass =
     class:list={["mt-4 min-h-5 text-xs leading-5", helperIsError ? "text-[#ffb4aa]" : "text-mist"]}
     data-intervals-helper
   >
-    {helper ? <p role="status">{helper}</p> : null}
+    {
+      helper ? (
+        <p role="status" id={helper === INTERVALS_CONNECT_UNAVAILABLE ? INTERVALS_UNAVAILABLE_HELPER_ID : undefined}>
+          {helper}
+        </p>
+      ) : null
+    }
     {
       showKeyForm ? (
         <p class:list={[helper ? "mt-3" : undefined]}>

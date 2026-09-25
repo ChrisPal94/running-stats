@@ -7,8 +7,14 @@ import { getDb, getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnaps
 import {
   canUseIntervals,
   getIntervalsConnection,
+  INTERVALS_API_KEY_NOT_CONFIGURED,
+  INTERVALS_ENC_NOT_CONFIGURED,
   INTERVALS_NOT_FOR_ACCOUNT,
+  INTERVALS_SYNC_ERROR,
   INTERVALS_SYNC_NEEDS_CONNECT,
+  INTERVALS_CONNECT_UNAVAILABLE,
+  getIntervalsConnectionView,
+  intervalsSyncUserError,
   intervalsBasicAuthHeader,
   intervalsSettingsControls,
   revokeUnownedIntervals,
@@ -442,6 +448,45 @@ describe("connect/sync route", () => {
       if (previousClientSecret === undefined) delete process.env.INTERVALS_CLIENT_SECRET;
       else process.env.INTERVALS_CLIENT_SECRET = previousClientSecret;
     }
+  });
+
+  it("hides internal sync errors and keeps the unavailable line for a missing secret", async () => {
+    assert.equal(intervalsSyncUserError(INTERVALS_ENC_NOT_CONFIGURED), INTERVALS_SYNC_ERROR);
+    assert.equal(intervalsSyncUserError(INTERVALS_API_KEY_NOT_CONFIGURED), INTERVALS_SYNC_ERROR);
+    assert.equal(intervalsSyncUserError("API key not configured"), INTERVALS_SYNC_ERROR);
+    assert.equal(intervalsSyncUserError(INTERVALS_CONNECT_UNAVAILABLE), INTERVALS_CONNECT_UNAVAILABLE);
+    assert.equal(INTERVALS_SYNC_ERROR, "Couldn’t sync. Try again.");
+
+    process.env.INTERVALS_OWNER_EMAILS = "owner-sync@example.com";
+    process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
+    delete process.env.INTERVALS_ICU_API_KEY;
+    const userId = "sync-internal-error";
+    if (!getUserById(userId)) {
+      insertUser({
+        id: userId,
+        email: "owner-sync@example.com",
+        createdAt: "2026-09-01T00:00:00.000Z",
+        emailVerifiedAt: "2026-09-25T12:00:00.000Z",
+      });
+    }
+    upsertIntervalsConnection({
+      userId,
+      athleteId: "i123456",
+      connectedAt: "2026-09-01T00:00:00.000Z",
+    });
+    const sync = new FormData();
+    sync.set("intent", "intervals-sync");
+    const result = await handleSettingsPost(userId, sync);
+    const dumped = JSON.stringify(result);
+    assert.equal(dumped.includes(INTERVALS_API_KEY_NOT_CONFIGURED), false);
+    assert.equal(dumped.includes(INTERVALS_ENC_NOT_CONFIGURED), false);
+    assert.equal(dumped.includes("encryption is not configured"), false);
+    if (!result.ok) assert.equal(result.error, INTERVALS_SYNC_ERROR);
+    const view = getIntervalsConnectionView(userId);
+    assert.equal(view.connected, true);
+    if (!view.connected) return;
+    assert.equal(view.lastSyncLabel, INTERVALS_SYNC_ERROR);
+    assert.equal(view.lastSyncLabel.includes("API key"), false);
   });
 });
 
