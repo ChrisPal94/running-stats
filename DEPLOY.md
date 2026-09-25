@@ -44,7 +44,7 @@ Set these on the **web** service. Names match `.env.example`. Intervals OAuth `r
 | `INTERVALS_CLIENT_ID` | For OAuth | Intervals.icu OAuth client id from [the app form](https://intervals.icu/oauth/apply). When this and `INTERVALS_CLIENT_SECRET` are both set, and `PUBLIC_ORIGIN` is set in production, Settings uses **Connect Intervals.icu**. Otherwise it shows the API key and athlete ID form. |
 | `INTERVALS_CLIENT_SECRET` | For OAuth | OAuth client secret. Used only on the server when exchanging the code at `https://intervals.icu/api/oauth/token`. Never sent to the browser. |
 | `INTERVALS_ICU_API_KEY` | No | Shared Intervals key. Not used unless `INTERVALS_OWNER_ENV_FALLBACK=true`. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`. Only a verified account listed in `INTERVALS_OWNER_EMAILS` may use it. |
-| `INTERVALS_ICU_ATHLETE_ID` | No | Athlete id for that shared key (for example `i704884`). Used only with the owner env fallback. |
+| `INTERVALS_ICU_ATHLETE_ID` | No | Athlete id for that shared key (for example `i123456`). Used only with the owner env fallback. |
 | `INTERVALS_OWNER_ENV_FALLBACK` | No | Set to `true` to let a verified allowlisted owner use `INTERVALS_ICU_API_KEY` and `INTERVALS_ICU_ATHLETE_ID` when they have no stored personal key. Default off. Anyone else uses their own OAuth token or pasted key, which does not require the allowlist or a verified email. |
 | `INTERVALS_OWNER_EMAILS` | For owner fallback | Comma-separated emails allowed to use the shared env key. Case-insensitive; whitespace around each address is ignored. Unset or empty: the env fallback matches nobody. The account must also have `emailVerifiedAt` set (Google `email_verified === true`, or a consumed magic link). Password signup does not verify, and existing rows are not backfilled. The allowlist does not gate per-user OAuth or pasted keys. Production must set `crispal94@gmail.com` if the env fallback is on. |
 
@@ -105,7 +105,7 @@ If the dry run or `--apply` aborts because the target account already has rows (
 
 4. Connect Intervals in Settings. The owner’s legacy Intervals connection row (no stored personal key) disappears after deploy unless `INTERVALS_OWNER_ENV_FALLBACK=true`. Running adapt, or opening Settings and submitting an Intervals action, deletes that row. Run logs are kept. After the verified Google sign-in the owner must Connect again in Settings.
 
-5. **Cleanup `--apply` only after the Google login.** Until `emailVerifiedAt` is set, cleanup `--apply` aborts and deletes no RunLogs. Then dry-run again; it should show 0.
+5. **Cleanup `--apply` only after the Google login.** Run it during low traffic. An active sync can race with the delete. Until `emailVerifiedAt` is set, cleanup `--apply` aborts and deletes no RunLogs. Then dry-run again; it should show 0.
 
 ```bash
 npm run cleanup:intervals-nonowners -- --apply
@@ -135,7 +135,7 @@ npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --ap
 
 ## One-off: remove non-owner Intervals imports
 
-Order is the owner runbook, not dry-run then `--apply` back to back. Dry-run first (step 1), before reassign and before any Google login. `--apply` is step 5, only after that Google login and Connect. Then dry-run again; it should show 0. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` and, before `--apply`, that account’s `emailVerifiedAt` must be set. Do not run it on the cron service; that service has no volume.
+Order is the owner runbook, not dry-run then `--apply` back to back. Dry-run first (step 1), before reassign and before any Google login. `--apply` is step 5, only after that Google login and Connect. Then dry-run again; it should show 0. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` and, before `--apply`, that account’s `emailVerifiedAt` must be set. Do not run it on the cron service; that service has no volume. Run the dry run and `--apply` during low traffic. An active sync can race with the delete.
 
 Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
 
@@ -151,14 +151,14 @@ npm run cleanup:intervals-nonowners
 npm run cleanup:intervals-nonowners -- --apply
 ```
 
-Optional cutoff (ISO). The default is `2026-09-25T00:00:00.000Z` (`PER_USER_INTERVALS_SINCE`):
+Optional cutoff (`YYYY-MM-DD`, or an ISO timestamp). Impossible dates such as `2026-02-30` and any cutoff in the future abort with exit code 1. The default is `2026-09-25T00:00:00.000Z` (`PER_USER_INTERVALS_SINCE`):
 
 ```bash
 npm run cleanup:intervals-nonowners -- --before 2026-09-25T00:00:00.000Z
 npm run cleanup:intervals-nonowners -- --apply --before 2026-09-25T00:00:00.000Z
 ```
 
-A row is deleted only when all of these are true: `source = intervals`, the account is not a verified owner (`canUseIntervals` is false), the account has no encrypted Intervals token or API key of its own, and `createdAt` is strictly before the cutoff. Verified owners, accounts that connected their own Intervals (OAuth or API key), logs at or after the cutoff, and every manual `RunLog` stay. The dry run logs `email=`, `verified=`, and `wouldDelete=`. `--apply` logs `wouldDelete=` before the delete and `deleted=` after, with `userId` only (no email). If an allowlisted email matches an account with no `emailVerifiedAt`, the dry run warns and omits that account, and `--apply` exits 1 without deleting any RunLogs until that account is verified; an allowlisted email with no account does not abort. If `INTERVALS_OWNER_EMAILS` is unset or empty, or `--before` is not an ISO timestamp, both modes log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
+A row is deleted only when all of these are true: `source = intervals`, the account is not a verified owner (`canUseIntervals` is false), the account has no encrypted Intervals token or API key of its own, and `createdAt` is strictly before the cutoff. Verified owners, accounts that connected their own Intervals (OAuth or API key), logs at or after the cutoff, and every manual `RunLog` stay. The dry run logs `email=`, `verified=`, and `wouldDelete=`. `--apply` logs `wouldDelete=` before the delete and `deleted=` after, with `userId` only (no email). If an allowlisted email matches an account with no `emailVerifiedAt`, the dry run warns and omits that account, and `--apply` exits 1 without deleting any RunLogs until that account is verified; an allowlisted email with no account does not abort. If `INTERVALS_OWNER_EMAILS` is unset or empty, or `--before` is not a real `YYYY-MM-DD` (or ISO timestamp) that round-trips and is not in the future, both modes log why and delete nothing (exit code 1). `--apply` logs `deleted=` from the rows SQLite actually removed, which can be lower than `wouldDelete=` if a sync races. Safe to run again; a second `--apply` deletes zero rows.
 
 ## Reverse proxy / CSRF
 

@@ -53,7 +53,7 @@ function installAthlete(userId: string, email: string, emailVerifiedAt?: string)
   }
   upsertIntervalsConnection({
     userId,
-    athleteId: "i704884",
+    athleteId: "i123456",
     connectedAt: "2026-09-01T00:00:00.000Z",
   });
 
@@ -137,7 +137,7 @@ describe("adapt Intervals gate", () => {
     const stored = getDb()
       .prepare("SELECT athleteId FROM intervals_connections WHERE userId = ?")
       .get(userId) as { athleteId: string };
-    assert.equal(stored.athleteId, "i704884");
+    assert.equal(stored.athleteId, "i123456");
 
     const loadRunEffort = mock.fn(async () => null);
     const upsertPlannedRuns = mock.fn(async () => ({ uploaded: 1, failed: 0 }));

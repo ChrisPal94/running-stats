@@ -19,9 +19,11 @@ import {
   loadRunEffort,
   disconnectIntervals,
   getIntervalsConnection,
+  INTERVALS_CONNECT_UNAVAILABLE,
   INTERVALS_ENC_NOT_CONFIGURED,
   INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_RECONNECT_ERROR,
+  INTERVALS_SYNC_ERROR,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
   loadIntervalsRoute,
@@ -31,6 +33,7 @@ import {
   parseIntervalsRunChoice,
   parseIntervalsRunChoiceList,
   pickClosestRun,
+  intervalsEncryptionReady,
   openIntervalsCredentials,
   ownerEnvFallbackAllowed,
   revokeUnownedIntervals,
@@ -41,6 +44,7 @@ import {
   type IntervalsRunStats,
   type IntervalsStreamRoute,
 } from "./intervals";
+import { isIntervalsOAuthConfigured } from "./intervals-oauth";
 
 const PLAN_WEEKS = 4;
 const MIN_SESSION_KM = 2;
@@ -2120,7 +2124,11 @@ export async function syncIntervalsForUser(userId: string): Promise<
   const oldest = oldestFromSessions < addDaysYmd(today, -27) ? oldestFromSessions : addDaysYmd(today, -27);
   const fetched = await loadIntervalsRunsForSync(userId, oldest, today);
   if (!fetched.ok) {
-    if (fetched.error !== INTERVALS_RECONNECT_ERROR && fetched.error !== INTERVALS_ENC_NOT_CONFIGURED) {
+    if (
+      fetched.error !== INTERVALS_RECONNECT_ERROR &&
+      fetched.error !== INTERVALS_ENC_NOT_CONFIGURED &&
+      fetched.error !== INTERVALS_CONNECT_UNAVAILABLE
+    ) {
       await markIntervalsSyncError(userId);
     }
     return { ok: false, error: fetched.error };
@@ -2191,6 +2199,9 @@ async function postIntervalsSettings(
   const postingOwnKey = intent === "intervals-connect" && personalIntervalsConnect(formData);
   if (gated && !ownConnection && !postingOwnKey && !ownerEnvFallbackAllowed(userId)) {
     await revokeUnownedIntervals(userId);
+    if (intent === "intervals-sync" && (intervalsEncryptionReady() || isIntervalsOAuthConfigured())) {
+      return { ok: false, error: INTERVALS_SYNC_ERROR, section: "intervals", status: 403 };
+    }
     return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
   }
 
@@ -2209,6 +2220,7 @@ async function postIntervalsSettings(
       if (
         result.error === INTERVALS_RECONNECT_ERROR ||
         result.error === INTERVALS_ENC_NOT_CONFIGURED ||
+        result.error === INTERVALS_CONNECT_UNAVAILABLE ||
         !getIntervalsConnection(userId)
       ) {
         return { ok: false, error: result.error, section: "intervals" };

@@ -8,9 +8,9 @@ import { requireAppSession, userInitial } from "../lib/app-session";
 import { isSameOrigin } from "../lib/public-origin";
 import {
   INTERVALS_CONNECTED_TOAST,
-  INTERVALS_OAUTH_CONNECT_ERROR,
   denyIntervalsPostCsrf,
   intervalsEncryptionReady,
+  intervalsOAuthSettingsError,
   intervalsSyncToastCopy,
   ownerEnvFallbackAllowed,
   refreshIntervalsConnectionView,
@@ -85,9 +85,8 @@ const syncToastCopy = intervalsConnected
   : syncToast
     ? intervalsSyncToastCopy(syncToast)
     : "";
-if (toastParam === "intervals-error" && !intervalsError) {
-  intervalsError = INTERVALS_OAUTH_CONNECT_ERROR;
-}
+const oauthToastError = intervalsOAuthSettingsError(toastParam);
+if (oauthToastError && !intervalsError) intervalsError = oauthToastError;
 const connection = await refreshIntervalsConnectionView(user.id);
 const oauthConfigured = isIntervalsOAuthConfigured();
 const encryptionReady = intervalsEncryptionReady();
@@ -206,7 +205,7 @@ const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionRe
 }
 
 {
-  syncToast || intervalsConnected || toastParam === "intervals-error" ? (
+  syncToast || intervalsConnected || toastParam === "intervals-error" || toastParam === "intervals-calendar" ? (
     <script>
       const toast = document.querySelector("[data-sync-toast]");
       window.setTimeout(() => {

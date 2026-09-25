@@ -370,12 +370,12 @@ describe("planned run upload", () => {
           distanceKm: 8,
         },
       ],
-      { apiKey: "test-key", athletePathId: "i704884", fetchImpl },
+      { apiKey: "test-key", athletePathId: "i123456", fetchImpl },
     );
     assert.equal(result.failed, 1);
     assert.equal(result.uploaded, 0);
     assert.equal(calls.length, 1);
-    assert.match(calls[0].url, /\/athlete\/i704884\/events\/bulk\?upsert=true$/);
+    assert.match(calls[0].url, /\/athlete\/i123456\/events\/bulk\?upsert=true$/);
     assert.equal(calls[0].authorization.startsWith("Basic "), true);
     assert.equal(calls[0].authorization.includes("test-key"), false);
     const body = JSON.parse(calls[0].body) as Array<Record<string, unknown>>;

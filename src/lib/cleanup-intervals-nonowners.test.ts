@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
 import { cleanupNonOwnerIntervalsRunLogs, PER_USER_INTERVALS_SINCE } from "./cleanup-intervals-nonowners.ts";
 import {
+  getDb,
   getUserById,
   insertUser,
   loadTrainingSnapshot,
@@ -271,6 +273,85 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
     assert.deepEqual(bad.rows, []);
     assert.equal(lines.some((line) => line.includes("--before") && line.includes("no RunLogs deleted")), true);
     assert.deepEqual(ids(), before);
+  });
+
+  it("rejects impossible and future --before values and accepts a round-tripped YYYY-MM-DD", () => {
+    seedLogs();
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com";
+    const before = ids();
+    for (const value of ["2026-02-30", "2026-02-30T00:00:00.000Z", "2026-02-29", "2026-04-31T00:00:00.000Z"]) {
+      const lines = captureLogs();
+      const bad = cleanupNonOwnerIntervalsRunLogs({ apply: true, before: value });
+      assert.equal(bad.aborted, true);
+      assert.deepEqual(bad.rows, []);
+      assert.equal(
+        lines.some((line) => line.includes("YYYY-MM-DD") && line.includes("no RunLogs deleted")),
+        true,
+      );
+      mock.restoreAll();
+    }
+    for (const value of ["2099-01-01", "2099-01-01T00:00:00.000Z"]) {
+      const lines = captureLogs();
+      const future = cleanupNonOwnerIntervalsRunLogs({ apply: true, before: value });
+      assert.equal(future.aborted, true);
+      assert.deepEqual(future.rows, []);
+      assert.equal(lines.some((line) => line.includes("in the future") && line.includes("no RunLogs deleted")), true);
+      mock.restoreAll();
+    }
+    assert.deepEqual(ids(), before);
+
+    const kept = cleanupNonOwnerIntervalsRunLogs({ apply: true, before: "2026-01-01" });
+    assert.equal(kept.aborted, false);
+    assert.equal(kept.rows.every((row) => row.wouldDelete === 0), true);
+    assert.deepEqual(ids(), before);
+
+    const leap = cleanupNonOwnerIntervalsRunLogs({ before: "2024-02-29" });
+    assert.equal(leap.aborted, false);
+
+    const cli = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "src/jobs/cleanup-intervals-nonowners.ts", "--before", "2026-02-30"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          AUTH_DATA_DIR: dataDir,
+          INTERVALS_OWNER_EMAILS: "crispal94@gmail.com",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.equal(cli.status, 1);
+    assert.match(`${cli.stderr}`, /YYYY-MM-DD/);
+    assert.match(`${cli.stderr}`, /no RunLogs deleted/);
+    assert.deepEqual(ids(), before);
+  });
+
+  it("logs deleted= from sqlite changes when a planned row is not removed", () => {
+    seedLogs();
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com";
+    getDb().exec(`
+      CREATE TRIGGER skip_raced_intervals BEFORE DELETE ON run_logs
+      WHEN OLD.id = 'other-intervals-a'
+      BEGIN
+        SELECT RAISE(IGNORE);
+      END;
+    `);
+    try {
+      const lines = captureLogs();
+      const applied = cleanupNonOwnerIntervalsRunLogs({ apply: true });
+      assert.equal(applied.aborted, false);
+      assert.equal(applied.rows.find((row) => row.userId === OTHER_ID)?.wouldDelete, 2);
+      assert.equal(lines.includes(`[cleanup:intervals-nonowners] apply userId=${OTHER_ID} wouldDelete=2`), true);
+      assert.equal(lines.includes(`[cleanup:intervals-nonowners] apply userId=${OTHER_ID} deleted=1`), true);
+      assert.equal(lines.includes(`[cleanup:intervals-nonowners] apply userId=${OTHER_ID} deleted=2`), false);
+      assert.equal(lines.includes("[cleanup:intervals-nonowners] apply total=2"), true);
+      assert.equal(ids().includes("other-intervals-a"), true);
+      assert.equal(ids().includes("other-intervals-b"), false);
+      assert.equal(ids().includes("unverified-intervals"), false);
+    } finally {
+      getDb().exec("DROP TRIGGER IF EXISTS skip_raced_intervals");
+    }
   });
 
   it("aborts apply when an allowlisted account is unverified and deletes nothing", () => {

@@ -3,6 +3,7 @@ import type { AstroCookies } from "astro";
 import {
   connectIntervalsOAuth,
   INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_OAUTH_CALENDAR_SCOPE,
   INTERVALS_OAUTH_CONNECT_ERROR,
   INTERVALS_USER_AGENT,
 } from "./intervals";
@@ -181,38 +182,46 @@ function athleteIdFrom(value: unknown): string | null {
   return raw;
 }
 
-function grantedScope(record: Record<string, unknown>): string | null {
-  if (!("scope" in record) || typeof record.scope !== "string") return INTERVALS_OAUTH_SCOPE;
+function grantedScope(
+  record: Record<string, unknown>,
+): { ok: true; scope: string } | { ok: false; missingCalendar: boolean } {
+  if (!("scope" in record) || typeof record.scope !== "string") return { ok: true, scope: INTERVALS_OAUTH_SCOPE };
   const scopeRaw = record.scope.trim().slice(0, 200);
-  if (!scopeRaw) return INTERVALS_OAUTH_SCOPE;
+  if (!scopeRaw) return { ok: true, scope: INTERVALS_OAUTH_SCOPE };
   const granted = new Set(scopeRaw.split(/[\s,]+/).filter((part) => part.length > 0));
-  if (!granted.has("ACTIVITY:READ") || !granted.has("CALENDAR:WRITE")) return null;
-  return scopeRaw;
+  if (!granted.has("CALENDAR:WRITE")) return { ok: false, missingCalendar: true };
+  if (!granted.has("ACTIVITY:READ")) return { ok: false, missingCalendar: false };
+  return { ok: true, scope: scopeRaw };
 }
 
-function parseTokenPayload(value: unknown): {
-  accessToken: string;
-  athleteId: string;
-  athleteName?: string;
-  scope: string;
-} | null {
-  if (!value || typeof value !== "object") return null;
+function parseTokenPayload(value: unknown):
+  | {
+      kind: "ok";
+      accessToken: string;
+      athleteId: string;
+      athleteName?: string;
+      scope: string;
+    }
+  | { kind: "calendar" }
+  | { kind: "invalid" } {
+  if (!value || typeof value !== "object") return { kind: "invalid" };
   const record = value as Record<string, unknown>;
   const accessToken = typeof record.access_token === "string" ? record.access_token.trim() : "";
-  if (!accessToken || accessToken.length > 512) return null;
+  if (!accessToken || accessToken.length > 512) return { kind: "invalid" };
   const athlete = record.athlete;
-  if (!athlete || typeof athlete !== "object") return null;
+  if (!athlete || typeof athlete !== "object") return { kind: "invalid" };
   const athleteId = athleteIdFrom((athlete as Record<string, unknown>).id);
-  if (!athleteId) return null;
+  if (!athleteId) return { kind: "invalid" };
   const nameRaw = (athlete as Record<string, unknown>).name;
   const athleteName = typeof nameRaw === "string" ? nameRaw.trim().slice(0, 120) : "";
   const scope = grantedScope(record);
-  if (!scope) return null;
+  if (!scope.ok) return scope.missingCalendar ? { kind: "calendar" } : { kind: "invalid" };
   return {
+    kind: "ok",
     accessToken,
     athleteId,
     athleteName: athleteName || undefined,
-    scope,
+    scope: scope.scope,
   };
 }
 
@@ -270,7 +279,8 @@ export async function finishIntervalsOAuth(
       return { kind: "error", message: INTERVALS_OAUTH_CONNECT_ERROR };
     }
     const parsed = parseTokenPayload(payload);
-    if (!parsed) {
+    if (parsed.kind === "calendar") return { kind: "error", message: INTERVALS_OAUTH_CALENDAR_SCOPE };
+    if (parsed.kind !== "ok") {
       console.error("[intervals] oauth token exchange failed");
       return { kind: "error", message: INTERVALS_OAUTH_CONNECT_ERROR };
     }

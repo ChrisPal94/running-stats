@@ -3,13 +3,15 @@ import {
   listIntervalsRunLogs,
   listIntervalsSecretUserIds,
   listUserEmails,
+  withTransaction,
 } from "./db";
 import { canUseIntervals, hasVerifiedEmail, intervalsOwnerEmailAllowlist } from "./intervals";
 
 /** RunLogs created at or after this instant belong to per-user Intervals and are kept. */
 export const PER_USER_INTERVALS_SINCE = "2026-09-25T00:00:00.000Z";
 
-const CUTOFF_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+const CUTOFF_ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/;
 
 export type IntervalsCleanupRow = {
   userId: string;
@@ -25,10 +27,66 @@ export type IntervalsCleanupResult = {
   rows: IntervalsCleanupRow[];
 };
 
-function resolveCutoff(before: string | undefined): string | null {
-  if (before === undefined) return PER_USER_INTERVALS_SINCE;
-  if (!CUTOFF_ISO.test(before) || !Number.isFinite(Date.parse(before))) return null;
-  return before;
+function invalidBeforeLine(): string {
+  return "[cleanup:intervals-nonowners] aborted: --before must be a real YYYY-MM-DD or an ISO timestamp like 2026-09-25T00:00:00.000Z; no RunLogs deleted";
+}
+
+function futureBeforeLine(): string {
+  return "[cleanup:intervals-nonowners] aborted: --before is in the future; no RunLogs deleted";
+}
+
+/** Round-trip calendar parts so 2026-02-30 does not roll into March. */
+function cutoffInstant(
+  year: number,
+  month: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  second = 0,
+  ms = 0,
+): string | null {
+  if (month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59 || ms > 999) return null;
+  const stamp = Date.UTC(year, month - 1, day, hour, minute, second, ms);
+  const date = new Date(stamp);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day ||
+    date.getUTCHours() !== hour ||
+    date.getUTCMinutes() !== minute ||
+    date.getUTCSeconds() !== second ||
+    date.getUTCMilliseconds() !== ms
+  ) {
+    return null;
+  }
+  return date.toISOString();
+}
+
+function resolveCutoff(before: string | undefined): { cutoff: string } | { error: "invalid" | "future" } {
+  if (before === undefined) return { cutoff: PER_USER_INTERVALS_SINCE };
+  let cutoff: string | null = null;
+  const dateOnly = DATE_ONLY.exec(before);
+  if (dateOnly) {
+    cutoff = cutoffInstant(Number(dateOnly[1]), Number(dateOnly[2]), Number(dateOnly[3]));
+  } else {
+    const iso = CUTOFF_ISO.exec(before);
+    if (iso) {
+      const fraction = iso[7] ?? "";
+      const ms = fraction ? Number(fraction.padEnd(3, "0")) : 0;
+      cutoff = cutoffInstant(
+        Number(iso[1]),
+        Number(iso[2]),
+        Number(iso[3]),
+        Number(iso[4]),
+        Number(iso[5]),
+        Number(iso[6]),
+        ms,
+      );
+    }
+  }
+  if (!cutoff) return { error: "invalid" };
+  if (Date.parse(cutoff) > Date.now()) return { error: "future" };
+  return { cutoff };
 }
 
 function pendingOwnerAbortLine(userId: string): string {
@@ -49,19 +107,19 @@ function pendingOwnerWarningLine(userId: string): string {
  * and not a pending owner, the account has no encrypted token or API key, and
  * `createdAt` is strictly before the cutoff. Default cutoff is `PER_USER_INTERVALS_SINCE`.
  * Default is a dry run. Pass `{ apply: true }` to delete the eligible rows.
- * An unset or empty allowlist, or an invalid cutoff, aborts and deletes nothing.
+ * An unset or empty allowlist, an impossible or non-round-trippable `--before`,
+ * or a future cutoff aborts and deletes nothing.
  */
 export function cleanupNonOwnerIntervalsRunLogs(
   options: { apply?: boolean; before?: string } = {},
 ): IntervalsCleanupResult {
   const apply = options.apply === true;
-  const cutoff = resolveCutoff(options.before);
-  if (!cutoff) {
-    console.error(
-      "[cleanup:intervals-nonowners] aborted: --before must be an ISO timestamp like 2026-09-25T00:00:00.000Z; no RunLogs deleted",
-    );
+  const resolved = resolveCutoff(options.before);
+  if ("error" in resolved) {
+    console.error(resolved.error === "future" ? futureBeforeLine() : invalidBeforeLine());
     return { aborted: true, apply, rows: [] };
   }
+  const cutoff = resolved.cutoff;
 
   const allowlist = intervalsOwnerEmailAllowlist();
   if (!allowlist) {
@@ -139,10 +197,16 @@ export function cleanupNonOwnerIntervalsRunLogs(
     return { aborted: false, apply: false, rows };
   }
 
-  deleteIntervalsRunLogsByIds(rows.flatMap((row) => row.ids));
+  const deletedByUser = new Map<string, number>();
+  withTransaction(() => {
+    for (const row of rows) deletedByUser.set(row.userId, deleteIntervalsRunLogsByIds(row.ids));
+  });
+  let deletedTotal = 0;
   for (const row of rows) {
-    console.log(`[cleanup:intervals-nonowners] apply userId=${row.userId} deleted=${row.wouldDelete}`);
+    const deleted = deletedByUser.get(row.userId) ?? 0;
+    deletedTotal += deleted;
+    console.log(`[cleanup:intervals-nonowners] apply userId=${row.userId} deleted=${deleted}`);
   }
-  console.log(`[cleanup:intervals-nonowners] apply total=${total}`);
+  console.log(`[cleanup:intervals-nonowners] apply total=${deletedTotal}`);
   return { aborted: false, apply: true, rows };
 }

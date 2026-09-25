@@ -48,6 +48,7 @@ const {
   INTERVALS_CONNECT_UNAVAILABLE,
   INTERVALS_CONNECTED_TOAST,
   INTERVALS_CSRF_ERROR,
+  INTERVALS_OAUTH_CALENDAR_SCOPE,
   INTERVALS_OAUTH_CONNECT_BUTTON,
   INTERVALS_OAUTH_CONNECT_ERROR,
   INTERVALS_OAUTH_CONNECT_LINE,
@@ -57,6 +58,7 @@ const {
   intervalsCsrfDeniedResponse,
   disconnectIntervals,
   getIntervalsConnectionView,
+  intervalsOAuthSettingsError,
   intervalsAuthorizationHeader,
   intervalsBasicAuthHeader,
   loadIntervalsRoute,
@@ -842,10 +844,10 @@ describe("Intervals OAuth", () => {
       cookies: csrfJar.cookies,
       redirect: redirectTo,
     } as Parameters<typeof callbackRoute>[0]);
-    assert.equal(csrfDenied.status, 403);
-    const csrfBody = await csrfDenied.text();
-    assert.equal(csrfBody, INTERVALS_CSRF_ERROR);
-    assert.equal(csrfBody.includes(CLIENT_SECRET), false);
+    assert.equal(csrfDenied.status, 302);
+    assert.equal(csrfDenied.headers.get("location"), "/settings?toast=intervals-error");
+    assert.equal(intervalsOAuthSettingsError("intervals-error"), INTERVALS_OAUTH_CONNECT_ERROR);
+    assert.equal(csrfDenied.headers.get("content-type"), null);
 
     const cancelJar = cookieJar();
     setSessionCookie(cancelJar.cookies, userId);
@@ -1027,8 +1029,62 @@ describe("Intervals OAuth", () => {
       userId,
     );
     assert.equal(result.kind, "error");
-    if (result.kind === "error") assert.equal(result.message, INTERVALS_OAUTH_CONNECT_ERROR);
+    if (result.kind === "error") assert.equal(result.message, INTERVALS_OAUTH_CALENDAR_SCOPE);
     assert.equal(getStoredConnection(userId), null);
+    mock.restoreAll();
+
+    const readOnly = cookieJar();
+    const startedRead = startIntervalsOAuth(prodRequest("/auth/intervals/start"), readOnly.cookies, userId);
+    const readState = new URL(startedRead.location).searchParams.get("state") ?? "";
+    mock.method(globalThis, "fetch", async () => {
+      return new Response(
+        JSON.stringify({
+          access_token: TOKEN_B,
+          scope: "CALENDAR:WRITE",
+          athlete: { id: ATHLETE_B, name: NAME_A },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const missingRead = await finishIntervalsOAuth(
+      prodRequest(`/auth/intervals/callback?code=no-read&state=${readState}`),
+      readOnly.cookies,
+      userId,
+    );
+    assert.equal(missingRead.kind, "error");
+    if (missingRead.kind === "error") assert.equal(missingRead.message, INTERVALS_OAUTH_CONNECT_ERROR);
+    assert.equal(getStoredConnection(userId), null);
+  });
+
+  it("redirects to Settings when calendar write was not granted and stores nothing", async () => {
+    const userId = "oauth-calendar-redirect";
+    insertUser({ id: userId, email: "calendar-scope@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    const jar = cookieJar();
+    setSessionCookie(jar.cookies, userId);
+    const started = startIntervalsOAuth(prodRequest("/auth/intervals/start"), jar.cookies, userId);
+    const state = new URL(started.location).searchParams.get("state") ?? "";
+    mock.method(globalThis, "fetch", async () => {
+      return new Response(
+        JSON.stringify({
+          access_token: TOKEN_A,
+          scope: "ACTIVITY:READ",
+          athlete: { id: ATHLETE_A, name: NAME_A },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const response = await callbackRoute({
+      request: prodRequest(`/auth/intervals/callback?code=narrow&state=${state}`),
+      cookies: jar.cookies,
+      redirect: redirectTo,
+    } as Parameters<typeof callbackRoute>[0]);
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get("location"), "/settings?toast=intervals-calendar");
+    assert.equal(intervalsOAuthSettingsError("intervals-calendar"), INTERVALS_OAUTH_CALENDAR_SCOPE);
+    assert.equal(getStoredConnection(userId), null);
+    const body = await response.text();
+    assert.equal(body.includes(TOKEN_A), false);
+    assert.equal(body.includes(CLIENT_SECRET), false);
   });
 
   it("marks reconnect when one user's ciphertext is copied onto another user", async () => {

@@ -20,7 +20,7 @@ legacy
   .prepare(
     `INSERT INTO intervals_connections (userId, athleteId, connectedAt) VALUES (?, ?, ?)`,
   )
-  .run("legacy-user", "i704884", "2026-09-01T00:00:00.000Z");
+  .run("legacy-user", "i123456", "2026-09-01T00:00:00.000Z");
 legacy.close();
 
 const { ensureIntervalsConnectionColumns, getDb, getIntervalsConnection } = await import("./db.ts");
@@ -48,7 +48,7 @@ describe("intervals connection migration", () => {
       assert.equal(columnNames().has(name), true);
     }
     const stored = getIntervalsConnection("legacy-user");
-    assert.equal(stored?.athleteId, "i704884");
+    assert.equal(stored?.athleteId, "i123456");
     assert.equal(stored?.authType, "apikey");
     assert.equal(stored?.athleteName, undefined);
     assert.equal(stored?.apiKeyEnc, undefined);

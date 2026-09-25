@@ -904,12 +904,14 @@ export function listIntervalsSecretUserIds(): string[] {
   return rows.map((row) => row.userId);
 }
 
-/** Delete specific `source = intervals` RunLogs by id. Other sources stay. */
-export function deleteIntervalsRunLogsByIds(ids: readonly string[]): void {
-  if (ids.length === 0) return;
-  withTransaction(() => {
+/** Delete specific `source = intervals` RunLogs by id. Returns rows actually removed. */
+export function deleteIntervalsRunLogsByIds(ids: readonly string[]): number {
+  if (ids.length === 0) return 0;
+  return withTransaction(() => {
     const remove = getDb().prepare("DELETE FROM run_logs WHERE source = 'intervals' AND id = ?");
-    for (const id of ids) remove.run(id);
+    let deleted = 0;
+    for (const id of ids) deleted += Number(remove.run(id).changes);
+    return deleted;
   });
 }
 

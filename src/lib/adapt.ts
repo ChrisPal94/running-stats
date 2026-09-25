@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { adaptRunLogLine, type AdaptRunCounts } from "./adapt-cron";
 import { readLlmConfig } from "./llm-config";
 import {
+  INTERVALS_CONNECT_UNAVAILABLE,
   INTERVALS_ENC_NOT_CONFIGURED,
   INTERVALS_RECONNECT_ERROR,
   loadRunEffort,
@@ -677,7 +678,7 @@ export async function runNocturnalAdaptation(
     reconnectNeeded += 1;
   };
   const noteCredentialGap = (userId: string, error: string) => {
-    if (error === INTERVALS_ENC_NOT_CONFIGURED) {
+    if (error === INTERVALS_ENC_NOT_CONFIGURED || error === INTERVALS_CONNECT_UNAVAILABLE) {
       if (!loggedEncryption) {
         loggedEncryption = true;
         console.error("[intervals] encryption is not configured");

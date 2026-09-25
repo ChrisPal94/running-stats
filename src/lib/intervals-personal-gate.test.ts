@@ -30,7 +30,7 @@ process.env.INTERVALS_KEY_ENC_SECRET = SECRET;
 process.env.INTERVALS_OWNER_EMAILS = "owner-only@example.com";
 process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
 process.env.INTERVALS_ICU_API_KEY = ENV_KEY;
-process.env.INTERVALS_ICU_ATHLETE_ID = "i704884";
+process.env.INTERVALS_ICU_ATHLETE_ID = "i123456";
 delete process.env.ADAPT_LLM_API_KEY;
 
 const originalFetch = globalThis.fetch;

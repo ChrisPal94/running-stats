@@ -66,7 +66,7 @@ describe("connectIntervals errors", () => {
     allowOwner("user-connect-test");
     delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
     process.env[KEY_ENV] = "dummy-intervals-key";
-    process.env.INTERVALS_ICU_ATHLETE_ID = "i704884";
+    process.env.INTERVALS_ICU_ATHLETE_ID = "i123456";
     let fetchCalled = false;
     globalThis.fetch = async () => {
       fetchCalled = true;
@@ -81,7 +81,7 @@ describe("connectIntervals errors", () => {
   it("returns API key not configured when owner fallback is on and the env key is missing", async () => {
     allowOwner("user-connect-test");
     process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
-    process.env.INTERVALS_ICU_ATHLETE_ID = "i704884";
+    process.env.INTERVALS_ICU_ATHLETE_ID = "i123456";
     for (const value of [undefined, "", "   "]) {
       if (value === undefined) delete process.env[KEY_ENV];
       else process.env[KEY_ENV] = value;
@@ -113,11 +113,11 @@ describe("connectIntervals errors", () => {
       return new Response("unauthorized", { status: 401 });
     };
 
-    const result = await connectIntervals("user-connect-test", { apiKey, athleteId: "i704884" });
+    const result = await connectIntervals("user-connect-test", { apiKey, athleteId: "i123456" });
     assert.deepEqual(result, { ok: false, error: INTERVALS_CONNECT_REJECTED });
     assert.equal(result.ok, false);
     if (!result.ok) assert.equal(result.error.includes(apiKey), false);
-    assert.equal(url.endsWith("/athlete/i704884"), true);
+    assert.equal(url.endsWith("/athlete/i123456"), true);
     assert.equal(auth, intervalsBasicAuthHeader(apiKey));
     assert.equal(agent, INTERVALS_USER_AGENT);
   });
@@ -129,7 +129,7 @@ describe("connectIntervals errors", () => {
       throw new Error(`network down ${apiKey}`);
     };
 
-    const result = await connectIntervals("user-connect-test", { apiKey, athleteId: "i704884" });
+    const result = await connectIntervals("user-connect-test", { apiKey, athleteId: "i123456" });
     assert.deepEqual(result, { ok: false, error: INTERVALS_CONNECT_ERROR });
     if (!result.ok) assert.equal(result.error.includes(apiKey), false);
   });
@@ -143,7 +143,7 @@ describe("connectIntervals errors", () => {
     };
     const result = await connectIntervals("user-connect-test", {
       apiKey: "dummy-intervals-key",
-      athleteId: "i704884",
+      athleteId: "i123456",
     });
     assert.deepEqual(result, { ok: false, error: INTERVALS_ENC_NOT_CONFIGURED });
     assert.equal(fetchCalled, false);
@@ -151,7 +151,7 @@ describe("connectIntervals errors", () => {
 
   it("rejects athlete ids that contain ../, ?, or %2F before calling Intervals", async () => {
     process.env.INTERVALS_KEY_ENC_SECRET = Buffer.alloc(32, 4).toString("base64");
-    for (const athleteId of ["../i1", "i1?x", "i1%2F2", "i704884/../x", "%2F"]) {
+    for (const athleteId of ["../i1", "i1?x", "i1%2F2", "i123456/../x", "%2F"]) {
       assert.equal(normalizeIntervalsAthleteId(athleteId), null);
       let fetchCalled = false;
       globalThis.fetch = async () => {
@@ -188,7 +188,7 @@ describe("connectIntervals errors", () => {
     };
     const result = await connectIntervals("user-connect-test", {
       apiKey: "dummy-intervals-key",
-      athleteId: "i704884",
+      athleteId: "i123456",
     });
     assert.deepEqual(result, { ok: false, error: INTERVALS_ENC_NOT_CONFIGURED });
     assert.equal(fetchCalled, false);

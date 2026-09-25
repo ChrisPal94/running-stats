@@ -12,11 +12,13 @@ import { decryptIntervalsApiKey, IntervalsDecryptError, IntervalsEncryptionError
 import {
   INTERVALS_CONNECT_INPUT,
   INTERVALS_CONNECT_REJECTED,
+  INTERVALS_CONNECT_UNAVAILABLE,
   INTERVALS_RECONNECT_ERROR,
   INTERVALS_USER_AGENT,
   connectIntervals,
   disconnectIntervals,
   getIntervalsConnection,
+  openIntervalsCredentials,
   getIntervalsConnectionView,
   intervalsBasicAuthHeader,
   upsertPlannedRuns,
@@ -45,7 +47,7 @@ const KEY_B = "user-b-intervals-key-do-not-leak";
 const ENV_KEY = "owner-env-intervals-key-do-not-leak";
 const ATHLETE_A = "i111111";
 const ATHLETE_B = "i222222";
-const ATHLETE_ENV = "i704884";
+const ATHLETE_ENV = "i123456";
 
 function restoreEnv(): void {
   for (const [key, value] of Object.entries(originalEnv)) {
@@ -501,6 +503,46 @@ describe("per-user Intervals key", () => {
     assert.equal(fetches, 1);
     assert.equal(JSON.stringify(result).includes(KEY_A), false);
     void today;
+  });
+
+  it("retries decrypt when a well-formed secret was wrong and clears needsReconnect once it opens", async () => {
+    const userId = "wrong-secret-recover";
+    insertUser({ id: userId, email: "wrong-secret@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    const secretA = Buffer.alloc(32, 3).toString("base64");
+    const secretB = Buffer.alloc(32, 4).toString("base64");
+    process.env.INTERVALS_KEY_ENC_SECRET = secretA;
+    mock.method(globalThis, "fetch", async () => athleteResponse(ATHLETE_A));
+    const connected = await connectIntervals(userId, { apiKey: KEY_A, athleteId: ATHLETE_A });
+    assert.equal(connected.ok, true);
+    process.env.INTERVALS_KEY_ENC_SECRET = secretB;
+    const failed = await openIntervalsCredentials(userId);
+    assert.equal(failed.ok, false);
+    if (!failed.ok) assert.equal(failed.error, INTERVALS_RECONNECT_ERROR);
+    assert.equal(getStoredConnection(userId)?.needsReconnect, true);
+    process.env.INTERVALS_KEY_ENC_SECRET = secretA;
+    const recovered = await openIntervalsCredentials(userId);
+    assert.equal(recovered.ok, true);
+    if (recovered.ok) assert.equal(recovered.apiKey, KEY_A);
+    assert.equal(getStoredConnection(userId)?.needsReconnect, false);
+    assert.notEqual(getStoredConnection(userId)?.lastSyncError, "decrypt");
+  });
+
+  it("does not tell a connected user that encryption is not configured when the secret is missing", async () => {
+    const userId = "sync-missing-secret";
+    insertUser({ id: userId, email: "missing-secret@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    mock.method(globalThis, "fetch", async () => athleteResponse(ATHLETE_A));
+    await connectIntervals(userId, { apiKey: KEY_A, athleteId: ATHLETE_A });
+    delete process.env.INTERVALS_KEY_ENC_SECRET;
+    const form = new FormData();
+    form.set("intent", "intervals-sync");
+    const result = await handleSettingsPost(userId, form);
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.error, INTERVALS_CONNECT_UNAVAILABLE);
+    assert.equal(result.error.includes("encryption is not configured"), false);
+    assert.equal(result.error.includes("your account"), false);
+    assert.notEqual(getStoredConnection(userId)?.needsReconnect, true);
+    assert.equal(getStoredConnection(userId)?.apiKeyEnc?.includes(KEY_A), false);
   });
 
   it("disconnects a stored key without decrypting when the secret is missing or the ciphertext will not open", async () => {

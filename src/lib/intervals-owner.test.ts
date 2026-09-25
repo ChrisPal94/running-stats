@@ -8,6 +8,7 @@ import {
   canUseIntervals,
   getIntervalsConnection,
   INTERVALS_NOT_FOR_ACCOUNT,
+  INTERVALS_SYNC_ERROR,
   intervalsBasicAuthHeader,
   intervalsSettingsControls,
   revokeUnownedIntervals,
@@ -66,12 +67,12 @@ describe("Settings Intervals row", () => {
       available: false,
       connection: {
         connected: true,
-        athleteId: "i704884",
-        statusLabel: "Connected as i704884",
+        athleteId: "i123456",
+        statusLabel: "Connected as i123456",
         lastSyncLabel: "Synced 2h ago",
       },
     });
-    assert.equal(hidden.statusLabel, "Connected as i704884");
+    assert.equal(hidden.statusLabel, "Connected as i123456");
     assert.equal(hidden.statusLabel.includes("Not available for your account"), false);
     assert.equal(hidden.showConnect, false);
     assert.equal(hidden.showSync, true);
@@ -99,12 +100,12 @@ describe("Settings Intervals row", () => {
       available: true,
       connection: {
         connected: true,
-        athleteId: "i704884",
-        statusLabel: "Connected · i704884",
+        athleteId: "i123456",
+        statusLabel: "Connected · i123456",
         lastSyncLabel: null,
       },
     });
-    assert.equal(sync.statusLabel, "Connected · i704884");
+    assert.equal(sync.statusLabel, "Connected · i123456");
     assert.equal(sync.showConnect, false);
     assert.equal(sync.showSync, true);
   });
@@ -121,7 +122,7 @@ describe("getIntervalsConnection", () => {
     }
     upsertIntervalsConnection({
       userId,
-      athleteId: "i704884",
+      athleteId: "i123456",
       connectedAt: "2026-09-01T00:00:00.000Z",
     });
 
@@ -131,12 +132,12 @@ describe("getIntervalsConnection", () => {
     });
     const connection = getIntervalsConnection(userId);
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(connection?.athleteId, "i704884");
+    assert.equal(connection?.athleteId, "i123456");
     assert.equal(connection?.apiKeyEnc, undefined);
     const still = getDb()
       .prepare("SELECT athleteId FROM intervals_connections WHERE userId = ?")
       .get(userId) as { athleteId: string };
-    assert.equal(still.athleteId, "i704884");
+    assert.equal(still.athleteId, "i123456");
     assert.equal(logged.filter((args) => String(args[0] ?? "").startsWith("[intervals]")).length, 0);
   });
 
@@ -150,7 +151,7 @@ describe("getIntervalsConnection", () => {
     }
     upsertIntervalsConnection({
       userId,
-      athleteId: "i704884",
+      athleteId: "i123456",
       connectedAt: "2026-09-01T00:00:00.000Z",
     });
 
@@ -166,7 +167,7 @@ describe("getIntervalsConnection", () => {
       logged.push(args);
     });
     await revokeUnownedIntervals(userId);
-    assert.equal(getIntervalsConnection(userId)?.athleteId, "i704884");
+    assert.equal(getIntervalsConnection(userId)?.athleteId, "i123456");
     const revokeLogs = logged.filter(
       (args) => typeof args[0] === "string" && args[0].startsWith("[intervals] revoke unowned failed"),
     );
@@ -191,7 +192,7 @@ describe("connect/sync route", () => {
     }
     upsertIntervalsConnection({
       userId,
-      athleteId: "i704884",
+      athleteId: "i123456",
       connectedAt: "2026-09-01T00:00:00.000Z",
     });
 
@@ -230,7 +231,7 @@ describe("connect/sync route", () => {
     }
     upsertIntervalsConnection({
       userId,
-      athleteId: "i704884",
+      athleteId: "i123456",
       connectedAt: "2026-09-14T12:00:00.000Z",
     });
     const plan: Plan = {
@@ -333,7 +334,7 @@ describe("connect/sync route", () => {
   it("returns 403 and does not use the shared key when the user has no connection of their own", async () => {
     const envKey = "shared-env-key-do-not-use";
     process.env.INTERVALS_ICU_API_KEY = envKey;
-    process.env.INTERVALS_ICU_ATHLETE_ID = "i704884";
+    process.env.INTERVALS_ICU_ATHLETE_ID = "i123456";
     process.env.INTERVALS_OWNER_EMAILS = "owner-gate@example.com";
     process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
     const userId = "no-own-connection";
@@ -387,6 +388,57 @@ describe("connect/sync route", () => {
     const allowed = await handleSettingsPost(ownerId, connect);
     assert.equal(allowed.ok, true);
     assert.equal(auths.some((header) => header === intervalsBasicAuthHeader(envKey)), true);
+  });
+
+  it("returns generic sync copy when the user can connect but has not yet", async () => {
+    const previousSecret = process.env.INTERVALS_KEY_ENC_SECRET;
+    const previousClientId = process.env.INTERVALS_CLIENT_ID;
+    const previousClientSecret = process.env.INTERVALS_CLIENT_SECRET;
+    delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
+    delete process.env.INTERVALS_ICU_API_KEY;
+    const userId = "can-connect-not-yet";
+    if (!getUserById(userId)) {
+      insertUser({ id: userId, email: "can-connect@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    }
+    const auths: string[] = [];
+    mock.method(globalThis, "fetch", async (_input: string | URL, init?: RequestInit) => {
+      auths.push(new Headers(init?.headers).get("authorization") ?? "");
+      return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    const sync = new FormData();
+    sync.set("intent", "intervals-sync");
+    try {
+      process.env.INTERVALS_KEY_ENC_SECRET = Buffer.alloc(32, 7).toString("base64");
+      delete process.env.INTERVALS_CLIENT_ID;
+      delete process.env.INTERVALS_CLIENT_SECRET;
+      const withKey = await handleSettingsPost(userId, sync);
+      assert.equal(withKey.ok, false);
+      if (!withKey.ok) {
+        assert.ok(withKey.status !== undefined && withKey.status >= 400 && withKey.status < 500);
+        assert.equal(withKey.status, 403);
+        assert.equal(withKey.error, INTERVALS_SYNC_ERROR);
+        assert.equal(withKey.error.toLowerCase().includes("your account"), false);
+      }
+
+      delete process.env.INTERVALS_KEY_ENC_SECRET;
+      process.env.INTERVALS_CLIENT_ID = "stride-client";
+      process.env.INTERVALS_CLIENT_SECRET = "stride-secret";
+      const withOAuth = await handleSettingsPost(userId, sync);
+      assert.equal(withOAuth.ok, false);
+      if (!withOAuth.ok) {
+        assert.equal(withOAuth.status, 403);
+        assert.equal(withOAuth.error, INTERVALS_SYNC_ERROR);
+        assert.equal(withOAuth.error.toLowerCase().includes("your account"), false);
+      }
+      assert.equal(auths.length, 0);
+    } finally {
+      if (previousSecret === undefined) delete process.env.INTERVALS_KEY_ENC_SECRET;
+      else process.env.INTERVALS_KEY_ENC_SECRET = previousSecret;
+      if (previousClientId === undefined) delete process.env.INTERVALS_CLIENT_ID;
+      else process.env.INTERVALS_CLIENT_ID = previousClientId;
+      if (previousClientSecret === undefined) delete process.env.INTERVALS_CLIENT_SECRET;
+      else process.env.INTERVALS_CLIENT_SECRET = previousClientSecret;
+    }
   });
 });
 

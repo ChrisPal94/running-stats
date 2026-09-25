@@ -12,7 +12,6 @@ import {
   encryptIntervalsApiKey,
   INTERVALS_ENC_NOT_CONFIGURED,
   intervalsEncryptionReady,
-  IntervalsDecryptError,
   IntervalsEncryptionError,
 } from "./intervals-crypto";
 import type { IntervalsAuthType } from "./db";
@@ -28,13 +27,16 @@ export const INTERVALS_CONNECT_COPY = "Your API key is encrypted and never shown
 export const INTERVALS_SYNC_ERROR = "Couldn’t sync. Try again.";
 export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
 export const INTERVALS_CONNECT_INPUT = "Enter your Intervals API key and athlete ID.";
-export const INTERVALS_ATHLETE_ID_INVALID = "Enter an athlete ID like i704884.";
+export const INTERVALS_ATHLETE_ID_INVALID = "Enter an athlete ID like i123456.";
 export const INTERVALS_CONNECT_REJECTED = "Couldn’t connect. Check your API key and athlete ID.";
 export const INTERVALS_ACCESS_EXPIRED = "Intervals access expired";
 /** 401/403 and a stored secret that will not decrypt. Same copy as the Settings status. */
 export const INTERVALS_RECONNECT_ERROR = INTERVALS_ACCESS_EXPIRED;
 export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
 export const INTERVALS_OAUTH_CONNECT_ERROR = "Couldn’t connect to Intervals. Try again.";
+/** OAuth callback when the grant omits CALENDAR:WRITE. Nothing is stored. */
+export const INTERVALS_OAUTH_CALENDAR_SCOPE =
+  "Stride Lab needs calendar access to add your workouts. Connect again and allow calendar access.";
 export const INTERVALS_CONNECTED_TOAST = "Intervals connected";
 export const INTERVALS_CONNECT_UNAVAILABLE =
   "Connecting Intervals.icu isn’t available right now. Try again later.";
@@ -70,6 +72,13 @@ export function intervalsSyncToast(input: {
   if (input.imported > 0) return null;
   if (input.skippedNoSession > 0) return "no-session";
   return "no-new-runs";
+}
+
+/** Settings copy for an Intervals OAuth redirect toast. Empty when the toast is unrelated. */
+export function intervalsOAuthSettingsError(toast: string | null): string {
+  if (toast === "intervals-calendar") return INTERVALS_OAUTH_CALENDAR_SCOPE;
+  if (toast === "intervals-error") return INTERVALS_OAUTH_CONNECT_ERROR;
+  return "";
 }
 
 export function intervalsSyncToastRedirect(toast: IntervalsSyncToast): string {
@@ -879,31 +888,40 @@ export type IntervalsCredentials =
   | { ok: true; apiKey: string; athleteId: string; authType: IntervalsAuthType; source: "stored" | "env" }
   | { ok: false; error: string };
 
-type ReadIntervalsCredentials = IntervalsCredentials & { decryptFailed?: boolean };
+/** Stored only on a decrypt failure, so a corrected secret can clear needsReconnect. Not shown in the UI. */
+const INTERVALS_DECRYPT_FAILURE = "decrypt";
+
+type ReadIntervalsCredentials = IntervalsCredentials & {
+  decryptFailed?: boolean;
+  clearDecryptReconnect?: boolean;
+};
 
 /** This user's decrypted secret and athlete, or the owner env fallback. Never another user's secret. */
 function readIntervalsCredentials(userId: string): ReadIntervalsCredentials {
   const stored = getStoredIntervalsConnection(userId);
-  if (stored?.needsReconnect) return { ok: false, error: INTERVALS_RECONNECT_ERROR };
   if (stored?.apiKeyEnc) {
     try {
       const apiKey = decryptIntervalsApiKey(stored.apiKeyEnc, userId);
-      if (!apiKey || !stored.athleteId) return { ok: false, error: INTERVALS_ENC_NOT_CONFIGURED };
+      if (!apiKey || !stored.athleteId) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
+      const decryptReconnect =
+        stored.needsReconnect === true && stored.lastSyncError === INTERVALS_DECRYPT_FAILURE;
+      if (stored.needsReconnect && !decryptReconnect) {
+        return { ok: false, error: INTERVALS_RECONNECT_ERROR };
+      }
       return {
         ok: true,
         apiKey,
         athleteId: stored.athleteId,
         authType: stored.authType === "oauth" ? "oauth" : "apikey",
         source: "stored",
+        clearDecryptReconnect: decryptReconnect,
       };
     } catch (error) {
-      if (error instanceof IntervalsDecryptError) {
-        return { ok: false, error: INTERVALS_RECONNECT_ERROR, decryptFailed: true };
-      }
-      if (error instanceof IntervalsEncryptionError) return { ok: false, error: INTERVALS_ENC_NOT_CONFIGURED };
+      if (error instanceof IntervalsEncryptionError) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
       return { ok: false, error: INTERVALS_RECONNECT_ERROR, decryptFailed: true };
     }
   }
+  if (stored?.needsReconnect) return { ok: false, error: INTERVALS_RECONNECT_ERROR };
   if (stored && ownerEnvFallbackAllowed(userId)) {
     const apiKey = envValue("INTERVALS_ICU_API_KEY");
     const athleteId = stored.athleteId.trim() || envValue("INTERVALS_ICU_ATHLETE_ID");
@@ -923,13 +941,20 @@ export async function openIntervalsCredentials(userId: string): Promise<Interval
   if (read.decryptFailed) {
     console.error("[intervals] stored connection could not be read");
     try {
-      await markIntervalsNeedsReconnect(userId);
+      await markIntervalsDecryptFailure(userId);
     } catch {
       console.error("[intervals] could not mark reconnect");
     }
     return { ok: false, error: INTERVALS_RECONNECT_ERROR };
   }
-  const { decryptFailed: _decryptFailed, ...creds } = read;
+  if (read.ok && read.clearDecryptReconnect) {
+    try {
+      await clearDecryptNeedsReconnect(userId);
+    } catch {
+      console.error("[intervals] could not clear reconnect");
+    }
+  }
+  const { decryptFailed: _decryptFailed, clearDecryptReconnect: _clearDecryptReconnect, ...creds } = read;
   return creds;
 }
 
@@ -1082,6 +1107,31 @@ export async function markIntervalsNeedsReconnect(userId: string): Promise<void>
       ...existing,
       needsReconnect: true,
       lastSyncError: INTERVALS_RECONNECT_ERROR,
+    });
+  });
+}
+
+/** Decrypt failed with a configured secret. A later successful decrypt clears this. */
+async function markIntervalsDecryptFailure(userId: string): Promise<void> {
+  await enqueueWrite(() => {
+    const existing = getStoredIntervalsConnection(userId);
+    if (!existing) return;
+    upsertIntervalsConnection({
+      ...existing,
+      needsReconnect: true,
+      lastSyncError: INTERVALS_DECRYPT_FAILURE,
+    });
+  });
+}
+
+async function clearDecryptNeedsReconnect(userId: string): Promise<void> {
+  await enqueueWrite(() => {
+    const existing = getStoredIntervalsConnection(userId);
+    if (!existing || existing.lastSyncError !== INTERVALS_DECRYPT_FAILURE) return;
+    upsertIntervalsConnection({
+      ...existing,
+      needsReconnect: false,
+      lastSyncError: undefined,
     });
   });
 }

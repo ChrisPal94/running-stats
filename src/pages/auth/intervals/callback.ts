@@ -1,6 +1,6 @@
 import type { APIRoute } from "astro";
 import { getCurrentUser } from "../../../lib/auth";
-import { intervalsCsrfDeniedResponse } from "../../../lib/intervals";
+import { INTERVALS_OAUTH_CALENDAR_SCOPE } from "../../../lib/intervals";
 import { clearIntervalsOAuthState, finishIntervalsOAuth } from "../../../lib/intervals-oauth";
 
 export const prerender = false;
@@ -15,8 +15,11 @@ export const GET: APIRoute = async ({ request, cookies, redirect }) => {
     const result = await finishIntervalsOAuth(request, cookies, user.id);
     if (result.kind === "connected") return redirect("/settings?toast=intervals-connected");
     if (result.kind === "cancelled") return redirect("/settings");
-    if (result.kind === "csrf") return intervalsCsrfDeniedResponse();
-    return redirect("/settings?toast=intervals-error");
+    const toast =
+      result.kind === "error" && result.message === INTERVALS_OAUTH_CALENDAR_SCOPE
+        ? "intervals-calendar"
+        : "intervals-error";
+    return redirect(`/settings?toast=${toast}`);
   } catch {
     console.error("[intervals] oauth callback failed");
     clearIntervalsOAuthState(cookies);

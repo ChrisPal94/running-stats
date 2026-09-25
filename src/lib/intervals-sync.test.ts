@@ -128,7 +128,7 @@ function logsFor(userId: string): RunLog[] {
 function connectUser(userId: string): void {
   upsertIntervalsConnection({
     userId,
-    athleteId: "i704884",
+    athleteId: "i123456",
     connectedAt: "2026-09-14T12:00:00.000Z",
     apiKeyEnc: encryptIntervalsApiKey(API_KEY, userId),
     needsReconnect: false,
@@ -387,7 +387,7 @@ describe("connect/sync error text", () => {
       throw new Error(`401 Unauthorized for ${API_KEY}`);
     });
 
-    const result = await connectIntervals("user-connect", { apiKey: API_KEY, athleteId: "i704884" });
+    const result = await connectIntervals("user-connect", { apiKey: API_KEY, athleteId: "i123456" });
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.equal(result.error, INTERVALS_CONNECT_ERROR);
