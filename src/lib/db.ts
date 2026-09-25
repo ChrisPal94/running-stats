@@ -762,6 +762,13 @@ export function listUserEmails(): { id: string; email: string }[] {
   return getDb().prepare("SELECT id, email FROM users").all() as { id: string; email: string }[];
 }
 
+export function listIntervalsRunLogCounts(): { userId: string; count: number }[] {
+  const rows = getDb()
+    .prepare("SELECT userId, COUNT(*) AS tally FROM run_logs WHERE source = 'intervals' GROUP BY userId")
+    .all() as { userId: string; tally: number }[];
+  return rows.map((row) => ({ userId: row.userId, count: Number(row.tally) }));
+}
+
 /**
  * Delete `source = intervals` RunLogs whose user id is not in `ownerUserIds`.
  * Returns how many rows were removed for each affected user. Owners are untouched.

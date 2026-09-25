@@ -3,7 +3,8 @@ import { cleanupNonOwnerIntervalsRunLogs } from "../lib/cleanup-intervals-nonown
 
 loadLocalEnv();
 
-const result = cleanupNonOwnerIntervalsRunLogs();
+const apply = process.argv.includes("--apply");
+const result = cleanupNonOwnerIntervalsRunLogs({ apply });
 if (result.aborted) {
   process.exitCode = 1;
 }

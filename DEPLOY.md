@@ -49,13 +49,21 @@ Do not commit a production `.env`. Railway variables are enough at runtime (`pro
 
 Run this once on the **web** service (the service that mounts `.data` / `app.db`), after `INTERVALS_OWNER_EMAILS` is set to `crispal94@gmail.com`. Do not run it on the cron service; that service has no volume.
 
-Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`):
+Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
+
+Default is a dry run. It prints each account (`userId`, `email`) and how many Intervals `RunLog`s it would delete, including owner accounts at `0`, plus a total. It does not delete.
 
 ```bash
 npm run cleanup:intervals-nonowners
 ```
 
-Deletes `run_logs` with `source = intervals` whose account email is not in `INTERVALS_OWNER_EMAILS` (both sides trimmed and lowercased). The owner’s Intervals imports and every manual `RunLog` stay. Logs `deleted userId=… count=…` for each account. If `INTERVALS_OWNER_EMAILS` is unset or empty, the command logs why and deletes nothing (exit code 1). Safe to run again; a second run deletes zero rows.
+Share that output, then delete with:
+
+```bash
+npm run cleanup:intervals-nonowners -- --apply
+```
+
+`--apply` deletes `run_logs` with `source = intervals` whose account email is not in `INTERVALS_OWNER_EMAILS` (both sides trimmed and lowercased). The owner’s Intervals imports and every manual `RunLog` stay. If `INTERVALS_OWNER_EMAILS` is unset or empty, both the dry run and `--apply` log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
 
 ## Reverse proxy / CSRF
 
