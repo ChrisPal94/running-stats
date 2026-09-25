@@ -12,6 +12,7 @@ import {
   withTransaction,
   type UserRecord,
 } from "./db";
+import { signupDuplicateMessage } from "./auth-methods";
 import { loadLocalEnv } from "./load-env";
 import { isSameOrigin } from "./public-origin";
 
@@ -33,9 +34,8 @@ const PASSWORD_MAX = 128;
 export const GOOGLE_AUTH_ERROR =
   "Couldn’t connect to Google. Try email or try again.";
 
-/** Duplicate password signup. Does not say whether the address is registered. */
-export const SIGNUP_DUPLICATE_ERROR =
-  "Couldn’t create your account. If you already have one, log in, sign in with an email link, or continue with Google.";
+/** `/login` reads `signedOut=1` and shows the all-devices confirmation. */
+export const LOGGED_OUT_ALL_PATH = "/login?signedOut=1";
 
 /** Shown on /login for Google and magic-link sign-in failures. No account or address details. */
 export const SIGN_IN_ERROR = "Couldn’t sign in. Try again or use another method.";
@@ -263,7 +263,7 @@ export async function signupFromForm(
       if (getUserByEmail(email)) {
         return {
           ok: false,
-          error: SIGNUP_DUPLICATE_ERROR,
+          error: signupDuplicateMessage(),
           email,
         };
       }

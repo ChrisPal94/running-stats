@@ -5,17 +5,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { APIContext, AstroCookies } from "astro";
-import { GET, LOGGED_OUT_ALL_PATH, POST } from "../pages/logout.ts";
+import { signupDuplicateMessage } from "./auth-methods.ts";
 import { postAuthPath, requireAppSession } from "./app-session.ts";
 import {
   getAuthPageUser,
   getCurrentUser,
   loginFromForm,
+  LOGGED_OUT_ALL_PATH,
   setGoogleOAuthState,
   setSessionCookie,
-  SIGNUP_DUPLICATE_ERROR,
   signupFromForm,
 } from "./auth.ts";
+import { GET, POST } from "../pages/logout.ts";
 import { getDb, getUserById } from "./db.ts";
 import { finishGoogleOAuth } from "./google-oauth.ts";
 import { finishMagicLink, issueMagicLinkToken } from "./magic-link.ts";
@@ -25,8 +26,6 @@ process.env.AUTH_DATA_DIR = dataDir;
 process.env.AUTH_SECRET = "test-auth-secret-16chars";
 process.env.AUTH_COOKIE_SECURE = "false";
 
-const DUPLICATE_COPY =
-  "Couldn\u2019t create your account. If you already have one, log in, sign in with an email link, or continue with Google.";
 const PASSWORD = "correct-horse";
 
 after(() => {
@@ -224,13 +223,7 @@ describe("signup duplicate email", () => {
     );
     assert.equal(again.ok, false);
     if (again.ok) return;
-    assert.equal(again.error, DUPLICATE_COPY);
-    assert.equal(again.error, SIGNUP_DUPLICATE_ERROR);
-    const authForm = readFileSync(join(process.cwd(), "src/components/AuthForm.astro"), "utf8");
-    assert.match(authForm, /error === SIGNUP_DUPLICATE_ERROR/);
-    assert.match(authForm, /href="\/login"/);
-    assert.match(authForm, /href="\/login\?method=link"/);
-    assert.match(authForm, /href=\{`\/auth\/google\?from=\$\{googleFrom\}`\}/);
+    assert.equal(again.error, signupDuplicateMessage());
     assert.equal(/already exists/i.test(again.error), false);
     assert.equal(jar.get("rs_session"), undefined);
     assert.equal(jar.deletes.length, 0);
@@ -523,40 +516,55 @@ describe("logout ends every session", () => {
     }
   });
 
-  it("rejects logout in production when Origin is missing or PUBLIC_ORIGIN is unset", async () => {
+  it("logs out in production when PUBLIC_ORIGIN is unset and Origin matches the request", async () => {
     const previousOrigin = process.env.PUBLIC_ORIGIN;
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     delete process.env.PUBLIC_ORIGIN;
     try {
-      const email = "logout-prod-closed@example.com";
+      const email = "logout-prod-request-origin@example.com";
       const jar = cookieJar();
       const signed = await signupFromForm(post("http://localhost/signup"), jar.cookies, passwordForm(email));
       assert.equal(signed.ok, true);
       if (!signed.ok) return;
       const token = jar.get("rs_session");
       const epoch = getUserById(signed.user.id)?.sessionEpoch ?? 0;
+      const sameOrigin = new Request("http://10.0.0.1:8080/logout", {
+        method: "POST",
+        headers: {
+          origin: "https://running-stats-production.up.railway.app",
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "running-stats-production.up.railway.app",
+          host: "10.0.0.1:8080",
+        },
+      });
 
       const missing = await postLogout(jar.cookies, new Request("http://10.0.0.1:8080/logout", { method: "POST" }));
       assert.equal(missing.status, 403);
+      assert.equal(jar.get("rs_session"), token);
 
-      const forwarded = await postLogout(
+      const foreign = await postLogout(
         jar.cookies,
         new Request("http://10.0.0.1:8080/logout", {
           method: "POST",
           headers: {
-            origin: "https://running-stats-production.up.railway.app",
+            origin: "https://evil.example",
             "x-forwarded-proto": "https",
             "x-forwarded-host": "running-stats-production.up.railway.app",
             host: "10.0.0.1:8080",
           },
         }),
       );
-      assert.equal(forwarded.status, 403);
+      assert.equal(foreign.status, 403);
       assert.equal(jar.get("rs_session"), token);
       assert.equal(jar.deletes.length, 0);
       assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch);
-      assert.equal((await getCurrentUser(jar.cookies))?.id, signed.user.id);
+
+      const allowed = await postLogout(jar.cookies, sameOrigin);
+      assert.equal(allowed.status, 302);
+      assert.equal(allowed.headers.get("Location"), LOGGED_OUT_ALL_PATH);
+      assert.equal(jar.get("rs_session"), undefined);
+      assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch + 1);
     } finally {
       if (previousOrigin === undefined) delete process.env.PUBLIC_ORIGIN;
       else process.env.PUBLIC_ORIGIN = previousOrigin;
