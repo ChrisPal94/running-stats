@@ -19,6 +19,7 @@ import {
   loadRunEffort,
   disconnectIntervals,
   getIntervalsConnection,
+  INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_SYNC_ERROR,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
@@ -29,6 +30,8 @@ import {
   parseIntervalsRunChoice,
   parseIntervalsRunChoiceList,
   pickClosestRun,
+  revokeUnownedIntervals,
+  userCanUseIntervals,
   type IntervalsRunChoice,
   type IntervalsRunPickerState,
   type IntervalsRunStats,
@@ -335,7 +338,7 @@ export type OnboardingStep = 1 | 2 | 3 | 4 | 5;
 export type SettingsFormResult =
   | { ok: true; redirect: string }
   | { ok: true; picker: IntervalsRunPickerState }
-  | { ok: false; error: string; section?: "cadence" | "intervals" };
+  | { ok: false; error: string; section?: "cadence" | "intervals"; status?: 403 };
 
 export type { IntervalsRunChoice, IntervalsRunPickerState };
 
@@ -1324,7 +1327,9 @@ export async function handleTodayPost(userId: string, formData: FormData): Promi
     const recorded =
       runLog.route?.type === "polyline" ? effortFromSamples(runLog.route.samples) : null;
     const effort =
-      runLog.source === "intervals" ? await loadRunEffort(session.date, runLog.distanceKm) : null;
+      runLog.source === "intervals" && getIntervalsConnection(userId)
+        ? await loadRunEffort(session.date, runLog.distanceKm)
+        : null;
     const generated = await requestCoachFeedback({
       plannedTitle: session.title,
       plannedKm: session.distanceKm,
@@ -2067,6 +2072,7 @@ export async function applyChosenIntervalsRun(
   run: IntervalsRunStats,
   sessionId: string,
 ): Promise<boolean> {
+  if (!getIntervalsConnection(userId)) return false;
   const streams = await loadIntervalsRoute(run.activityId);
   return enqueueWrite(async () => {
     const data = await readTraining();
@@ -2102,6 +2108,10 @@ export async function syncIntervalsForUser(userId: string): Promise<
     }
   | { ok: false; error: string }
 > {
+  if (!userCanUseIntervals(userId)) {
+    await revokeUnownedIntervals(userId);
+    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT };
+  }
   if (!getIntervalsConnection(userId)) {
     return { ok: false, error: INTERVALS_SYNC_ERROR };
   }
@@ -2140,16 +2150,36 @@ export async function handleSettingsPost(
   formData: FormData,
 ): Promise<SettingsFormResult> {
   const intent = String(formData.get("intent") ?? "").trim();
+  if (
+    (intent === "intervals-connect" ||
+      intent === "intervals-sync" ||
+      intent === "intervals-pick-run" ||
+      intent === "intervals-skip-pick") &&
+    !userCanUseIntervals(userId)
+  ) {
+    await revokeUnownedIntervals(userId);
+    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
+  }
 
   if (intent === "intervals-connect") {
     const result = await connectIntervals(userId);
-    if (!result.ok) return { ok: false, error: result.error, section: "intervals" };
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: result.error,
+        section: "intervals",
+        status: result.error === INTERVALS_NOT_FOR_ACCOUNT ? 403 : undefined,
+      };
+    }
     return { ok: true, redirect: "/settings" };
   }
 
   if (intent === "intervals-sync") {
     const result = await syncIntervalsForUser(userId);
     if (!result.ok) {
+      if (result.error === INTERVALS_NOT_FOR_ACCOUNT) {
+        return { ok: false, error: result.error, section: "intervals", status: 403 };
+      }
       if (!getIntervalsConnection(userId)) {
         return { ok: false, error: result.error, section: "intervals" };
       }

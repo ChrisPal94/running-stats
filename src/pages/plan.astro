@@ -5,7 +5,7 @@ import PlanCard from "../components/PlanCard.astro";
 import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession } from "../lib/app-session";
 import { addDaysYmd, appTodayYmd } from "../lib/calendar";
-import { choosePlanWeek, formatWeekRange } from "../lib/plan-week";
+import { choosePlanWeek, formatWeekRange, planWeekRedirect } from "../lib/plan-week";
 import {
   WEEKDAYS,
   getPlanForUser,
@@ -20,13 +20,18 @@ if (!gate.ok) {
 }
 
 const { user } = gate;
+const weekParam = Astro.url.searchParams.get("week");
+const dayParam = Astro.url.searchParams.get("day");
+if (planWeekRedirect(weekParam, dayParam)) {
+  return Astro.redirect("/plan", 302);
+}
 const today = appTodayYmd();
 const plan = await getPlanForUser(user.id);
 const sessions = plan ? await getSessionsForPlan(plan.id) : [];
 const choice = choosePlanWeek({
   today,
-  weekParam: Astro.url.searchParams.get("week"),
-  dayParam: Astro.url.searchParams.get("day"),
+  weekParam,
+  dayParam,
   sessionDates: sessions.map((session) => session.date),
 });
 const shown = sessions.filter((session) => session.date >= choice.weekStart && session.date <= choice.weekEnd);

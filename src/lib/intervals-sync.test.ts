@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
 import { addDaysYmd, appTodayYmd } from "./calendar.ts";
-import { loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
+import { getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
 import {
   connectIntervals,
   INTERVALS_CONNECT_ERROR,
@@ -69,7 +69,27 @@ function planAndSession(userId: string): { plan: Plan; session: Session } {
   return { plan, session };
 }
 
+function ensureOwner(userId: string): void {
+  const email = `${userId}@example.com`.toLowerCase();
+  const current = new Set(
+    (process.env.INTERVALS_OWNER_EMAILS ?? "")
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0),
+  );
+  current.add(email);
+  process.env.INTERVALS_OWNER_EMAILS = [...current].join(",");
+  if (!getUserById(userId)) {
+    insertUser({
+      id: userId,
+      email,
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+  }
+}
+
 function seed(userId: string, runLogs: RunLog[] = []): { plan: Plan; session: Session } {
+  ensureOwner(userId);
   const { plan, session } = planAndSession(userId);
   saveTrainingSnapshot({
     onboarding: [],
@@ -355,6 +375,7 @@ describe("connect/sync error text", () => {
   });
 
   it("connectIntervals never returns the API key in error text", async () => {
+    ensureOwner("user-connect");
     process.env.INTERVALS_ICU_API_KEY = API_KEY;
     mock.method(console, "error", () => {});
     mock.method(globalThis, "fetch", async () => {
@@ -566,6 +587,7 @@ describe("Settings Sync with a Cooper-pending plan", () => {
   });
 
   function cooperSeed(userId: string): Plan {
+    ensureOwner(userId);
     const plan: Plan = {
       id: `${userId}-plan`,
       userId,

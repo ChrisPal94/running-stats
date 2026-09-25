@@ -14,7 +14,8 @@
     "check": "astro check",
     "test": "tsx --test src/lib/*.test.ts",
     "adapt": "tsx src/jobs/adapt.ts",
-    "adapt:cron": "tsx src/jobs/adapt.ts --cron"
+    "adapt:cron": "tsx src/jobs/adapt.ts --cron",
+    "cleanup:intervals-nonowners": "tsx src/jobs/cleanup-intervals-nonowners.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",

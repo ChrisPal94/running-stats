@@ -2,6 +2,27 @@ import { addDaysYmd, startOfWeekMonday } from "./calendar";
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Real civil `YYYY-MM-DD`. Rejects month 13, day 32, zero parts, and overflow. */
+export function isRealCalendarYmd(ymd: string): boolean {
+  if (!YMD.test(ymd)) return false;
+  const year = Number(ymd.slice(0, 4));
+  const month = Number(ymd.slice(5, 7));
+  const day = Number(ymd.slice(8, 10));
+  if (month < 1 || month > 12 || day < 1) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/**
+ * `?week=` / `?day=` that are not real calendar dates go back to the current week.
+ * A real date outside the plan is left for `choosePlanWeek` to ignore.
+ */
+export function planWeekRedirect(weekParam: string | null, dayParam: string | null): "/plan" | null {
+  if (weekParam !== null && !isRealCalendarYmd(weekParam)) return "/plan";
+  if (dayParam !== null && !isRealCalendarYmd(dayParam)) return "/plan";
+  return null;
+}
+
 export type PlanWeekChoice = {
   weekStart: string;
   weekEnd: string;
@@ -14,9 +35,9 @@ export type PlanWeekChoice = {
 };
 
 function mondayInRange(ymd: string, minStart: string, maxStart: string): string | null {
-  if (!YMD.test(ymd)) return null;
+  if (!isRealCalendarYmd(ymd)) return null;
   const monday = startOfWeekMonday(ymd);
-  if (monday < minStart || monday > maxStart) return null;
+  if (!isRealCalendarYmd(monday) || monday < minStart || monday > maxStart) return null;
   return monday;
 }
 
@@ -28,7 +49,7 @@ export function choosePlanWeek(input: {
   sessionDates: readonly string[];
 }): PlanWeekChoice {
   const currentStart = startOfWeekMonday(input.today);
-  const dates = input.sessionDates.filter((date) => YMD.test(date)).sort();
+  const dates = input.sessionDates.filter((date) => isRealCalendarYmd(date)).sort();
   const earliest = startOfWeekMonday(dates[0] ?? input.today);
   const latest = startOfWeekMonday(dates[dates.length - 1] ?? input.today);
   const minStart = earliest < currentStart ? earliest : currentStart;
@@ -39,7 +60,7 @@ export function choosePlanWeek(input: {
 
   let selectedDay = dates.find(inWeek) ?? weekStart;
   if (inWeek(input.today)) selectedDay = input.today;
-  if (input.dayParam && YMD.test(input.dayParam) && inWeek(input.dayParam)) {
+  if (input.dayParam && isRealCalendarYmd(input.dayParam) && inWeek(input.dayParam)) {
     selectedDay = input.dayParam;
   }
 
