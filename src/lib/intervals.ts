@@ -147,20 +147,28 @@ function envValue(name: string): string {
 }
 
 /**
- * Shared Intervals key is owner-only. Unset or empty `INTERVALS_OWNER_EMAILS`
- * allows nobody (fail closed). Matching is case-insensitive and trims each address.
+ * Allowlist from `INTERVALS_OWNER_EMAILS`, trimmed and lowercased.
+ * `null` when unset, blank, or with no addresses (fail closed).
  */
-export function canUseIntervals(user: { email?: string | null } | null | undefined): boolean {
-  const email = user?.email?.trim().toLowerCase() ?? "";
-  if (!email) return false;
+export function intervalsOwnerEmailAllowlist(): Set<string> | null {
   const raw = process.env.INTERVALS_OWNER_EMAILS;
-  if (!raw?.trim()) return false;
+  if (raw === undefined || raw.trim() === "") return null;
   const allow = new Set(
     raw
       .split(",")
       .map((part) => part.trim().toLowerCase())
       .filter((part) => part.length > 0),
   );
+  if (allow.size === 0) return null;
+  return allow;
+}
+
+/** Shared Intervals key is owner-only. Email match is trim + lowercase on both sides. */
+export function canUseIntervals(user: { email?: string | null } | null | undefined): boolean {
+  const email = user?.email?.trim().toLowerCase() ?? "";
+  if (!email) return false;
+  const allow = intervalsOwnerEmailAllowlist();
+  if (!allow) return false;
   return allow.has(email);
 }
 

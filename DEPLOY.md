@@ -45,6 +45,18 @@ Google Cloud Console: add the production authorized redirect URI before testing 
 
 Do not commit a production `.env`. Railway variables are enough at runtime (`process.env`); no `.env` file is required on the host.
 
+## One-off: remove non-owner Intervals imports
+
+Run this once on the **web** service (the service that mounts `.data` / `app.db`), after `INTERVALS_OWNER_EMAILS` is set to `crispal94@gmail.com`. Do not run it on the cron service; that service has no volume.
+
+Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`):
+
+```bash
+npm run cleanup:intervals-nonowners
+```
+
+Deletes `run_logs` with `source = intervals` whose account email is not in `INTERVALS_OWNER_EMAILS` (both sides trimmed and lowercased). The owner’s Intervals imports and every manual `RunLog` stay. Logs `deleted userId=… count=…` for each account. If `INTERVALS_OWNER_EMAILS` is unset or empty, the command logs why and deletes nothing (exit code 1). Safe to run again; a second run deletes zero rows.
+
 ## Reverse proxy / CSRF
 
 Railway (and similar TLS-terminating proxies) must forward `X-Forwarded-Proto` and `X-Forwarded-Host` (Railway does this by default). Form POSTs — signup, login, magic-link send, onboarding, Today, Settings — compare the browser `Origin` (or `Referer`) to that **public** origin, not the internal `http://…` `request.url`. Magic-link emails also use that public origin so Sign in points at `https://<public-host>/auth/magic?token=…`.

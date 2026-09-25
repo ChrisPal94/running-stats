@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, describe, it, mock } from "node:test";
 import { adaptRunLogLine } from "./adapt-cron.ts";
 import { runNocturnalAdaptation } from "./adapt.ts";
-import { getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
+import { getDb, getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
 import type { Feedback, Plan, RunLog, Session } from "./training.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-adapt-gate-"));
@@ -104,11 +104,15 @@ function installAthlete(userId: string, email: string): void {
 }
 
 describe("adapt Intervals gate", () => {
-  it("keeps a Skip patch local for a non-owner and does not call Intervals", async () => {
+  it("does not call upsertPlannedRuns or loadRunEffort for a non-owner with a stale connection", async () => {
     delete process.env.ADAPT_LLM_API_KEY;
     process.env.INTERVALS_OWNER_EMAILS = OWNER_EMAIL;
     const userId = "adapt-non-owner";
     installAthlete(userId, "runner@example.com");
+    const stored = getDb()
+      .prepare("SELECT athleteId FROM intervals_connections WHERE userId = ?")
+      .get(userId) as { athleteId: string };
+    assert.equal(stored.athleteId, "i704884");
 
     const loadRunEffort = mock.fn(async () => null);
     const upsertPlannedRuns = mock.fn(async () => ({ uploaded: 1, failed: 0 }));

@@ -11,3 +11,5 @@ Copy `.env.example` to `.env`. Variable names match deploy.
 ```
 INTERVALS_OWNER_EMAILS=crispal94@gmail.com
 ```
+
+After that variable is set in production, remove Intervals imports that landed on other accounts. On the Railway web service (the one with the `.data` volume): `npm run cleanup:intervals-nonowners`. If the variable is unset or empty, the script deletes nothing. See `DEPLOY.md`.

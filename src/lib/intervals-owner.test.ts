@@ -3,13 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
-import { getUserById, insertUser, upsertIntervalsConnection } from "./db.ts";
+import { getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
 import {
   canUseIntervals,
   INTERVALS_NOT_FOR_ACCOUNT,
   intervalsOwnerDeniedResponse,
 } from "./intervals.ts";
-import { handleSettingsPost } from "./training.ts";
+import { handleSettingsPost, type Plan, type Session } from "./training.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-intervals-owner-"));
 process.env.AUTH_DATA_DIR = dataDir;
@@ -94,5 +94,116 @@ describe("connect/sync route", () => {
     assert.equal(fetched, false);
     assert.equal(intervalsOwnerDeniedResponse({ email: "CrisPal94@gmail.com" }, "intervals-connect"), null);
     assert.equal(intervalsOwnerDeniedResponse({ email: "CrisPal94@gmail.com" }, "intervals-sync"), null);
+  });
+
+  it("does not import a RunLog from sync or Which run? pick/skip when the connection is stale", async () => {
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com";
+    process.env.INTERVALS_ICU_API_KEY = "owner-key-do-not-leak";
+    const userId = "stale-non-owner";
+    const email = "stale-runner@example.com";
+    const sessionId = "stale-session";
+    if (!getUserById(userId)) {
+      insertUser({ id: userId, email, createdAt: "2026-09-01T00:00:00.000Z" });
+    }
+    upsertIntervalsConnection({
+      userId,
+      athleteId: "i704884",
+      connectedAt: "2026-09-14T12:00:00.000Z",
+    });
+    const plan: Plan = {
+      id: "stale-plan",
+      userId,
+      version: 1,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      goal: "5k",
+      raceDate: null,
+      level: "beginner",
+      days: ["mon"],
+      feedbackCadence: "daily",
+    };
+    const session: Session = {
+      id: sessionId,
+      planId: plan.id,
+      userId,
+      date: "2026-09-14",
+      weekday: "mon",
+      weekIndex: 0,
+      kind: "easy",
+      title: "Easy run · 8 km",
+      cue: "Keep it conversational",
+      distanceKm: 8,
+    };
+    saveTrainingSnapshot(
+      {
+        onboarding: [],
+        plans: [plan],
+        sessions: [session],
+        feedbacks: [],
+        runLogs: [],
+        adaptationEvents: [],
+      },
+      "replace",
+    );
+
+    let fetched = false;
+    mock.method(globalThis, "fetch", async () => {
+      fetched = true;
+      return new Response(
+        JSON.stringify([
+          {
+            id: "act-stale",
+            start_date_local: "2026-09-14T07:15:00",
+            distance: 8000,
+            moving_time: 2400,
+            type: "Run",
+          },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+
+    const run = {
+      activityId: "act-stale",
+      date: "2026-09-14",
+      distanceKm: 8,
+      timeSec: 2400,
+      paceSecPerKm: 300,
+      start_date_local: "2026-09-14T07:15:00",
+    };
+    const pick = new FormData();
+    pick.set("intent", "intervals-pick-run");
+    pick.set("pickerDate", "2026-09-14");
+    pick.set("pickerSessionId", sessionId);
+    pick.set("pickerSessionDistanceKm", "8");
+    pick.set("pickerRuns", JSON.stringify([run]));
+    pick.set("pickerRemaining", "[]");
+    pick.set("skippedNoSession", "0");
+    pick.set("imported", "0");
+    pick.set("activityId", "act-stale");
+
+    const skip = new FormData();
+    skip.set("intent", "intervals-skip-pick");
+    skip.set("pickerRemaining", "[]");
+    skip.set("skippedNoSession", "0");
+    skip.set("imported", "0");
+
+    const sync = new FormData();
+    sync.set("intent", "intervals-sync");
+
+    for (const [intent, formData] of [
+      ["intervals-sync", sync],
+      ["intervals-pick-run", pick],
+      ["intervals-skip-pick", skip],
+    ] as const) {
+      const denied = intervalsOwnerDeniedResponse({ email }, intent);
+      assert.ok(denied);
+      assert.equal(denied.status, 403);
+      const result = await handleSettingsPost(userId, formData);
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.status, 403);
+    }
+
+    assert.equal(fetched, false);
+    assert.equal(loadTrainingSnapshot().runLogs.filter((entry) => entry.userId === userId).length, 0);
   });
 });

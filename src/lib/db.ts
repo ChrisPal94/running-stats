@@ -758,6 +758,35 @@ function replaceTraining(
   }
 }
 
+export function listUserEmails(): { id: string; email: string }[] {
+  return getDb().prepare("SELECT id, email FROM users").all() as { id: string; email: string }[];
+}
+
+/**
+ * Delete `source = intervals` RunLogs whose user id is not in `ownerUserIds`.
+ * Returns how many rows were removed for each affected user. Owners are untouched.
+ */
+export function deleteIntervalsRunLogsExceptUsers(
+  ownerUserIds: readonly string[],
+): { userId: string; count: number }[] {
+  return withTransaction(() => {
+    const rows = getDb()
+      .prepare("SELECT userId, COUNT(*) AS tally FROM run_logs WHERE source = 'intervals' GROUP BY userId")
+      .all() as { userId: string; tally: number }[];
+    const owners = new Set(ownerUserIds);
+    const remove = getDb().prepare("DELETE FROM run_logs WHERE source = 'intervals' AND userId = ?");
+    const deleted: { userId: string; count: number }[] = [];
+    for (const row of rows) {
+      if (owners.has(row.userId)) continue;
+      const count = Number(row.tally);
+      if (!(count > 0)) continue;
+      remove.run(row.userId);
+      deleted.push({ userId: row.userId, count });
+    }
+    return deleted;
+  });
+}
+
 export function getUserById(id: string): UserRecord | null {
   const row = getDb()
     .prepare("SELECT id, email, createdAt, passwordHash, googleId FROM users WHERE id = ?")
