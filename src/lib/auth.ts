@@ -221,8 +221,8 @@ export async function getAuthPageUser(cookies: AstroCookies): Promise<AuthUser |
 
 /**
  * End this user's sessions on every device by bumping `sessionEpoch`, then
- * clear the cookie on this response. Astro's origin check on POST /logout
- * still runs before this. No valid session: clear the cookie and return.
+ * clear the cookie on this response. POST /logout checks Origin before calling
+ * this. No valid session: clear the cookie and return.
  */
 export async function logoutSession(cookies: AstroCookies): Promise<void> {
   const user = await getCurrentUser(cookies);
