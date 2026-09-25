@@ -3,10 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
-import type { APIContext, AstroCookies } from "astro";
-import { POST } from "../pages/logout.ts";
-import { getCurrentUser, signupFromForm } from "./auth.ts";
-import { getIntervalsConnection, getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot } from "./db.ts";
+import { getIntervalsConnection, insertUser, loadTrainingSnapshot, saveTrainingSnapshot } from "./db.ts";
 import { applySettingsPost } from "./settings-post.ts";
 import { readFormData } from "./safe-form-data.ts";
 import { applyTodayPost } from "./today-post.ts";
@@ -28,31 +25,6 @@ function sourceFiles(dir: string): string[] {
     else if (/\.(ts|astro)$/.test(entry.name) && !entry.name.endsWith(".test.ts")) files.push(path);
   }
   return files;
-}
-
-function cookieJar(): { cookies: AstroCookies; get(name: string): string | undefined } {
-  const values = new Map<string, string>();
-  const cookies = {
-    get(name: string) {
-      const value = values.get(name);
-      return value === undefined ? undefined : { value };
-    },
-    set(name: string, value: string) {
-      values.set(name, String(value));
-    },
-    delete(name: string) {
-      values.delete(name);
-    },
-  };
-  return { cookies: cookies as unknown as AstroCookies, get: (name) => values.get(name) };
-}
-
-function redirect(path: string): Response {
-  return new Response(null, { status: 302, headers: { Location: path } });
-}
-
-function postLogout(cookies: AstroCookies, request: Request): Promise<Response> {
-  return Promise.resolve(POST({ cookies, request, redirect } as APIContext));
 }
 
 function request(url: string, contentType: string | null, body?: string, origin = "http://localhost"): Request {
@@ -106,50 +78,6 @@ describe("POST routes reject non-form bodies", () => {
       return /\.formData\s*\(/.test(readFileSync(file, "utf8"));
     });
     assert.deepEqual(offenders, []);
-  });
-
-  it("logout: JSON and a missing type are 400, a form still signs out, origin stays first", async () => {
-    const email = "form-logout@example.com";
-    const jar = cookieJar();
-    const signed = await signupFromForm(
-      request("http://localhost/signup", "application/x-www-form-urlencoded"),
-      jar.cookies,
-      form({ email, password: "correct-horse" }),
-    );
-    assert.equal(signed.ok, true);
-    if (!signed.ok) return;
-    const epoch = getUserById(signed.user.id)?.sessionEpoch ?? 0;
-    const token = jar.get("rs_session");
-
-    const json = await postLogout(
-      jar.cookies,
-      request("http://localhost/logout", "application/json", "{\"intent\":\"logout\"}"),
-    );
-    await assertBadForm(json);
-    assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch);
-    assert.equal(jar.get("rs_session"), token);
-    assert.equal((await getCurrentUser(jar.cookies))?.id, signed.user.id);
-
-    const missing = await postLogout(jar.cookies, request("http://localhost/logout", null));
-    await assertBadForm(missing);
-    assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch);
-    assert.equal((await getCurrentUser(jar.cookies))?.id, signed.user.id);
-
-    const foreign = await postLogout(
-      jar.cookies,
-      request("http://localhost/logout", "application/json", "{\"a\":1}", "https://evil.example"),
-    );
-    assert.equal(foreign.status, 403);
-    assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch);
-
-    const formLogout = await postLogout(
-      jar.cookies,
-      request("http://localhost/logout", "application/x-www-form-urlencoded", ""),
-    );
-    assert.equal(formLogout.status, 302);
-    assert.equal(formLogout.headers.get("Location"), "/login");
-    assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch + 1);
-    assert.equal(jar.get("rs_session"), undefined);
   });
 
   it("intervals connect: JSON, missing type, and broken multipart are 400; a form still connects", async () => {
@@ -283,9 +211,3 @@ describe("POST routes reject non-form bodies", () => {
     assert.equal(stored.sessions.find((entry) => entry.id === session.id)?.outcome, "skipped");
   });
 });
-
-function form(fields: Record<string, string>): FormData {
-  const data = new FormData();
-  for (const [key, value] of Object.entries(fields)) data.set(key, value);
-  return data;
-}

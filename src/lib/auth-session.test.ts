@@ -82,10 +82,7 @@ function redirect(path: string): Response {
 function logoutRequest(headers?: HeadersInit): Request {
   return new Request("http://localhost/logout", {
     method: "POST",
-    headers: headers ?? {
-      origin: "http://localhost",
-      "content-type": "application/x-www-form-urlencoded",
-    },
+    headers: headers ?? { origin: "http://localhost" },
   });
 }
 
@@ -363,7 +360,6 @@ describe("logout ends every session", () => {
         method: "POST",
         headers: {
           origin: "https://running-stats-production.up.railway.app",
-          "content-type": "application/x-www-form-urlencoded",
           "x-forwarded-proto": "https",
           "x-forwarded-host": "running-stats-production.up.railway.app",
           host: "10.0.0.1:8080",
@@ -373,6 +369,45 @@ describe("logout ends every session", () => {
     assert.equal(proxied.status, 302);
     assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch + 1);
     assert.equal(jar.get("rs_session"), undefined);
+  });
+
+  it("signs out a same-origin POST with JSON or no content type", async () => {
+    const email = "logout-any-body@example.com";
+    const jar = cookieJar();
+    const signed = await signupFromForm(post("http://localhost/signup"), jar.cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    const epoch = getUserById(signed.user.id)?.sessionEpoch ?? 0;
+
+    const json = await postLogout(
+      jar.cookies,
+      new Request("http://localhost/logout", {
+        method: "POST",
+        headers: { origin: "http://localhost", "content-type": "application/json" },
+        body: "{\"intent\":\"logout\"}",
+      }),
+    );
+    assert.equal(json.status, 302);
+    assert.equal(json.headers.get("Location"), "/login");
+    assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch + 1);
+    assert.equal(jar.get("rs_session"), undefined);
+
+    const again = cookieJar();
+    const logged = await loginFromForm(post("http://localhost/login"), again.cookies, passwordForm(email));
+    assert.equal(logged.ok, true);
+    if (!logged.ok) return;
+    const epochAfter = getUserById(signed.user.id)?.sessionEpoch ?? 0;
+    const bare = await postLogout(
+      again.cookies,
+      new Request("http://localhost/logout", {
+        method: "POST",
+        headers: { origin: "http://localhost" },
+      }),
+    );
+    assert.equal(bare.status, 302);
+    assert.equal(bare.headers.get("Location"), "/login");
+    assert.equal(getUserById(signed.user.id)?.sessionEpoch, epochAfter + 1);
+    assert.equal(again.get("rs_session"), undefined);
   });
 
   it("invalidates a Google session and a magic-link session", async () => {

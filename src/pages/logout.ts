@@ -1,7 +1,6 @@
 import type { APIRoute } from "astro";
 import { logoutSession } from "../lib/auth";
 import { publicOrigin } from "../lib/public-origin";
-import { invalidFormResponse, readFormData } from "../lib/safe-form-data";
 
 export const prerender = false;
 
@@ -20,8 +19,6 @@ export const POST: APIRoute = async ({ request, cookies, redirect }) => {
   if (!logoutOriginAllowed(request)) {
     return new Response("Cross-site POST form submissions are forbidden", { status: 403 });
   }
-  const formData = await readFormData(request);
-  if (!formData) return invalidFormResponse();
   await logoutSession(cookies);
   return redirect("/login");
 };
