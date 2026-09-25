@@ -623,7 +623,7 @@ export function getIntervalsConnection(userId: string): IntervalsConnection | nu
   const stored = getStoredIntervalsConnection(userId);
   if (!stored) return null;
   if (userCanUseIntervals(userId)) return stored;
-  void revokeUnownedIntervals(userId);
+  revokeUnownedIntervals(userId).catch((err) => console.error("[intervals] revoke unowned failed", err));
   return null;
 }
 

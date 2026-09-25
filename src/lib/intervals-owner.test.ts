@@ -3,9 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
-import { getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
+import { getDb, getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
 import {
   canUseIntervals,
+  getIntervalsConnection,
   INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_UNAVAILABLE_STATUS,
   intervalsOwnerDeniedResponse,
@@ -99,6 +100,56 @@ describe("Settings Intervals row", () => {
     assert.equal(sync.statusLabel, "Connected · i704884");
     assert.equal(sync.showConnect, false);
     assert.equal(sync.showSync, true);
+  });
+});
+
+describe("getIntervalsConnection", () => {
+  it("does not throw when revoking an unowned connection rejects", async () => {
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com";
+    process.env.INTERVALS_ICU_API_KEY = "owner-key-do-not-leak";
+    const userId = "revoke-reject";
+    if (!getUserById(userId)) {
+      insertUser({ id: userId, email: "revoke-reject@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    }
+    upsertIntervalsConnection({
+      userId,
+      athleteId: "i704884",
+      connectedAt: "2026-09-01T00:00:00.000Z",
+    });
+
+    const database = getDb();
+    const originalPrepare = database.prepare.bind(database);
+    mock.method(database, "prepare", (sql: string) => {
+      if (sql.includes("DELETE FROM intervals_connections")) throw new Error("revoke failed");
+      return originalPrepare(sql);
+    });
+
+    const logged: unknown[][] = [];
+    mock.method(console, "error", (...args: unknown[]) => {
+      logged.push(args);
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const connection = getIntervalsConnection(userId);
+      assert.equal(connection, null);
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    assert.equal(unhandled.length, 0);
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0]?.[0], "[intervals] revoke unowned failed");
+    const dumped = JSON.stringify(logged, (_key, value) =>
+      value instanceof Error ? { message: value.message } : value,
+    );
+    assert.equal(dumped.includes("owner-key-do-not-leak"), false);
+    assert.equal(dumped.includes("INTERVALS_"), false);
   });
 });
 
