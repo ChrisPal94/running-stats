@@ -49,6 +49,7 @@ const {
   INTERVALS_CONNECTED_TOAST,
   INTERVALS_CSRF_ERROR,
   INTERVALS_OAUTH_CALENDAR_SCOPE,
+  INTERVALS_SYNC_NEEDS_CONNECT,
   INTERVALS_OAUTH_CONNECT_BUTTON,
   INTERVALS_OAUTH_CONNECT_ERROR,
   INTERVALS_OAUTH_CONNECT_LINE,
@@ -715,6 +716,8 @@ describe("Intervals OAuth", () => {
       true,
     );
     assert.equal(keyHtml.includes("Couldn’t connect. Check your API key and athlete ID."), true);
+    assert.equal(keyHtml.includes('placeholder="i123456"'), true);
+    assert.match(keyHtml, /role="alert"/);
     assert.equal(keyHtml.includes("Not available for your account"), false);
     assert.equal(keyHtml.includes('data-intervals-actions'), true);
     assert.equal(keyHtml.includes('data-intervals-helper'), true);
@@ -1081,7 +1084,56 @@ describe("Intervals OAuth", () => {
     assert.equal(response.status, 302);
     assert.equal(response.headers.get("location"), "/settings?toast=intervals-calendar");
     assert.equal(intervalsOAuthSettingsError("intervals-calendar"), INTERVALS_OAUTH_CALENDAR_SCOPE);
+    assert.equal(
+      INTERVALS_OAUTH_CALENDAR_SCOPE,
+      "Couldn’t connect. Stride Lab needs permission to add workouts to your Intervals calendar. Try again and allow calendar access.",
+    );
     assert.equal(getStoredConnection(userId), null);
+    const row = await renderConnectedApps({
+      connection: { connected: false, statusLabel: "Not connected" },
+      oauthConfigured: true,
+      encryptionReady: true,
+      error: INTERVALS_OAUTH_CALENDAR_SCOPE,
+    });
+    assert.match(row, /role="alert"/);
+    assert.equal(row.includes(INTERVALS_OAUTH_CALENDAR_SCOPE), true);
+    assert.equal(row.includes("Not connected"), true);
+    assert.equal(row.includes('href="/auth/intervals/start"'), true);
+    assert.equal(row.includes("disabled"), false);
+    assert.equal(row.includes("Connect Intervals.icu"), true);
+    assert.equal(row.includes("border-[#ff8a80]/30"), true);
+
+    const stateError = await renderConnectedApps({
+      connection: { connected: false, statusLabel: "Not connected" },
+      oauthConfigured: true,
+      encryptionReady: true,
+      error: INTERVALS_OAUTH_CONNECT_ERROR,
+    });
+    assert.equal(INTERVALS_OAUTH_CONNECT_ERROR, "Couldn’t connect to Intervals. Try again.");
+    assert.equal(stateError.includes(INTERVALS_OAUTH_CONNECT_ERROR), true);
+    assert.match(stateError, /role="alert"/);
+    assert.equal(stateError.includes("Not connected"), true);
+    assert.equal(stateError.includes("Intervals access expired"), false);
+    assert.equal(stateError.includes('href="/auth/intervals/start"'), true);
+    assert.equal(stateError.includes("disabled"), false);
+    assert.equal(stateError.includes("border-[#ff8a80]/30"), true);
+
+    const syncPrompt = await renderConnectedApps({
+      connection: { connected: false, statusLabel: "Not connected" },
+      oauthConfigured: true,
+      encryptionReady: true,
+      error: INTERVALS_SYNC_NEEDS_CONNECT,
+    });
+    assert.equal(INTERVALS_SYNC_NEEDS_CONNECT, "Connect Intervals.icu to import your runs.");
+    assert.equal(syncPrompt.includes('id="intervals"'), true);
+    assert.equal(syncPrompt.includes('href="/settings#intervals"'), true);
+    assert.equal(syncPrompt.includes("to import your runs."), true);
+    assert.match(syncPrompt, /role="alert"/);
+    assert.equal(syncPrompt.includes("border-[#ff8a80]/30"), true);
+    assert.equal(syncPrompt.includes("your account"), false);
+    assert.equal(syncPrompt.includes("isn’t available"), false);
+    assert.equal(syncPrompt.includes('href="/auth/intervals/start"'), true);
+    assert.equal(syncPrompt.includes("disabled"), false);
     const body = await response.text();
     assert.equal(body.includes(TOKEN_A), false);
     assert.equal(body.includes(CLIENT_SECRET), false);

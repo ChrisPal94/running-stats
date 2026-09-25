@@ -23,7 +23,7 @@ import {
   INTERVALS_ENC_NOT_CONFIGURED,
   INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_RECONNECT_ERROR,
-  INTERVALS_SYNC_ERROR,
+  INTERVALS_SYNC_NEEDS_CONNECT,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
   loadIntervalsRoute,
@@ -2200,7 +2200,7 @@ async function postIntervalsSettings(
   if (gated && !ownConnection && !postingOwnKey && !ownerEnvFallbackAllowed(userId)) {
     await revokeUnownedIntervals(userId);
     if (intent === "intervals-sync" && (intervalsEncryptionReady() || isIntervalsOAuthConfigured())) {
-      return { ok: false, error: INTERVALS_SYNC_ERROR, section: "intervals", status: 403 };
+      return { ok: false, error: INTERVALS_SYNC_NEEDS_CONNECT, section: "intervals" };
     }
     return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
   }

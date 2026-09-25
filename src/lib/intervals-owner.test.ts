@@ -8,7 +8,7 @@ import {
   canUseIntervals,
   getIntervalsConnection,
   INTERVALS_NOT_FOR_ACCOUNT,
-  INTERVALS_SYNC_ERROR,
+  INTERVALS_SYNC_NEEDS_CONNECT,
   intervalsBasicAuthHeader,
   intervalsSettingsControls,
   revokeUnownedIntervals,
@@ -414,10 +414,12 @@ describe("connect/sync route", () => {
       const withKey = await handleSettingsPost(userId, sync);
       assert.equal(withKey.ok, false);
       if (!withKey.ok) {
-        assert.ok(withKey.status !== undefined && withKey.status >= 400 && withKey.status < 500);
-        assert.equal(withKey.status, 403);
-        assert.equal(withKey.error, INTERVALS_SYNC_ERROR);
-        assert.equal(withKey.error.toLowerCase().includes("your account"), false);
+        assert.equal(withKey.status, undefined);
+        assert.equal(withKey.error, INTERVALS_SYNC_NEEDS_CONNECT);
+        assert.equal(withKey.error, "Connect Intervals.icu to import your runs.");
+        assert.equal(withKey.error.includes("your account"), false);
+        assert.equal(withKey.error.includes("isn’t available"), false);
+        assert.equal(withKey.section, "intervals");
       }
 
       delete process.env.INTERVALS_KEY_ENC_SECRET;
@@ -426,9 +428,10 @@ describe("connect/sync route", () => {
       const withOAuth = await handleSettingsPost(userId, sync);
       assert.equal(withOAuth.ok, false);
       if (!withOAuth.ok) {
-        assert.equal(withOAuth.status, 403);
-        assert.equal(withOAuth.error, INTERVALS_SYNC_ERROR);
-        assert.equal(withOAuth.error.toLowerCase().includes("your account"), false);
+        assert.equal(withOAuth.status, undefined);
+        assert.equal(withOAuth.error, INTERVALS_SYNC_NEEDS_CONNECT);
+        assert.equal(withOAuth.error.includes("your account"), false);
+        assert.equal(withOAuth.error.includes("isn’t available"), false);
       }
       assert.equal(auths.length, 0);
     } finally {

@@ -36,7 +36,10 @@ export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
 export const INTERVALS_OAUTH_CONNECT_ERROR = "Couldn’t connect to Intervals. Try again.";
 /** OAuth callback when the grant omits CALENDAR:WRITE. Nothing is stored. */
 export const INTERVALS_OAUTH_CALENDAR_SCOPE =
-  "Stride Lab needs calendar access to add your workouts. Connect again and allow calendar access.";
+  "Couldn’t connect. Stride Lab needs permission to add workouts to your Intervals calendar. Try again and allow calendar access.";
+/** Sync before this user has connected, when Connect is available. Shown in the Intervals row. */
+export const INTERVALS_SYNC_NEEDS_CONNECT = "Connect Intervals.icu to import your runs.";
+export const INTERVALS_ROW_ID = "intervals";
 export const INTERVALS_CONNECTED_TOAST = "Intervals connected";
 export const INTERVALS_CONNECT_UNAVAILABLE =
   "Connecting Intervals.icu isn’t available right now. Try again later.";

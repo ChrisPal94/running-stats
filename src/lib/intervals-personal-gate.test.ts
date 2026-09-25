@@ -13,7 +13,7 @@ import {
   upsertIntervalsConnection,
 } from "./db.ts";
 import { encryptIntervalsApiKey } from "./intervals-crypto.ts";
-import { intervalsBasicAuthHeader } from "./intervals.ts";
+import { INTERVALS_SYNC_NEEDS_CONNECT, intervalsBasicAuthHeader } from "./intervals.ts";
 import { handleSettingsPost, type Feedback, type Plan, type RunLog, type Session } from "./training.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-personal-gate-"));
@@ -142,7 +142,13 @@ describe("personal Intervals connection without the owner allowlist", () => {
     sync.set("intent", "intervals-sync");
     const denied = await handleSettingsPost(USER_ID, sync);
     assert.equal(denied.ok, false);
-    if (!denied.ok) assert.equal(denied.status, 403);
+    if (!denied.ok) {
+      assert.equal(denied.error, INTERVALS_SYNC_NEEDS_CONNECT);
+      assert.equal(denied.status, undefined);
+      assert.equal(denied.error.includes("your account"), false);
+      assert.equal(denied.error.includes("isn’t available"), false);
+      assert.equal(JSON.stringify(denied).includes(ENV_KEY), false);
+    }
     assert.equal(fetched, false);
 
     const loadRunEffort = mock.fn(async () => null);
