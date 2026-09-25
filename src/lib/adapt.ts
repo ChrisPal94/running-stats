@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { adaptRunLogLine, type AdaptRunCounts } from "./adapt-cron";
+import { OLLAMA_CLOUD_BASE_URL } from "./ollama-feedback";
 import {
   loadRunEffort,
   upsertPlannedRuns,
@@ -277,8 +278,42 @@ function effortEase(
   return { factor, easeKind, reason };
 }
 
+export type AdaptLlmEnv = {
+  ADAPT_LLM_API_KEY?: string;
+  ADAPT_LLM_BASE_URL?: string;
+  ADAPT_LLM_MODEL?: string;
+  OLLAMA_API_KEY?: string;
+  OLLAMA_MODEL?: string;
+};
+
+export type AdaptLlmConfig = { apiKey: string; baseUrl: string; model: string };
+
+/**
+ * Resolve the LLM the nocturnal adaptation talks to.
+ *
+ * An explicit `ADAPT_LLM_*` trio wins, so any OpenAI-compatible endpoint keeps
+ * working unchanged. Otherwise fall back to the coach feedback credentials so a
+ * single Ollama key serves both features instead of being declared twice. The
+ * fallback needs a model as well as a key, because `ollamaCloudConfig` treats a
+ * missing model as unconfigured.
+ */
+export function adaptLlmConfig(env: AdaptLlmEnv = process.env): AdaptLlmConfig | null {
+  const adaptKey = env.ADAPT_LLM_API_KEY?.trim();
+  if (adaptKey) {
+    return {
+      apiKey: adaptKey,
+      baseUrl: (env.ADAPT_LLM_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/$/, ""),
+      model: env.ADAPT_LLM_MODEL?.trim() || "gpt-4o-mini",
+    };
+  }
+  const ollamaKey = env.OLLAMA_API_KEY?.trim();
+  const ollamaModel = env.OLLAMA_MODEL?.trim();
+  if (!ollamaKey || !ollamaModel) return null;
+  return { apiKey: ollamaKey, baseUrl: OLLAMA_CLOUD_BASE_URL, model: ollamaModel };
+}
+
 function llmConfigured(): boolean {
-  return Boolean(process.env.ADAPT_LLM_API_KEY?.trim());
+  return adaptLlmConfig() !== null;
 }
 
 export function decideHeuristic(input: {
@@ -455,14 +490,9 @@ async function callLlmOnce(
   todaySession: Session | null,
   actual: LlmActual | null,
 ): Promise<LlmAdjustment | null> {
-  const apiKey = process.env.ADAPT_LLM_API_KEY?.trim();
-  if (!apiKey) return null;
-
-  const baseUrl = (process.env.ADAPT_LLM_BASE_URL?.trim() || "https://api.openai.com/v1").replace(
-    /\/$/,
-    "",
-  );
-  const model = process.env.ADAPT_LLM_MODEL?.trim() || "gpt-4o-mini";
+  const config = adaptLlmConfig();
+  if (!config) return null;
+  const { apiKey, baseUrl, model } = config;
   const payload = {
     model,
     temperature: 0.1,
