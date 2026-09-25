@@ -8,5 +8,6 @@ dist/
 .DS_Store
 .impeccable/review/
 .impeccable/build/
+.impeccable/config.local.json
 # Local Pi runtime state
 .atl/
