@@ -19,8 +19,8 @@ import {
   loadRunEffort,
   disconnectIntervals,
   getIntervalsConnection,
-  INTERVALS_NOT_FOR_ACCOUNT,
-  INTERVALS_SYNC_ERROR,
+  INTERVALS_ENC_NOT_CONFIGURED,
+  INTERVALS_RECONNECT_ERROR,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
   loadIntervalsRoute,
@@ -30,8 +30,7 @@ import {
   parseIntervalsRunChoice,
   parseIntervalsRunChoiceList,
   pickClosestRun,
-  revokeUnownedIntervals,
-  userCanUseIntervals,
+  resolveIntervalsCredentials,
   type IntervalsRunChoice,
   type IntervalsRunPickerState,
   type IntervalsRunStats,
@@ -1327,8 +1326,8 @@ export async function handleTodayPost(userId: string, formData: FormData): Promi
     const recorded =
       runLog.route?.type === "polyline" ? effortFromSamples(runLog.route.samples) : null;
     const effort =
-      runLog.source === "intervals" && getIntervalsConnection(userId)
-        ? await loadRunEffort(session.date, runLog.distanceKm)
+      runLog.source === "intervals" && resolveIntervalsCredentials(userId).ok
+        ? await loadRunEffort(userId, session.date, runLog.distanceKm)
         : null;
     const generated = await requestCoachFeedback({
       plannedTitle: session.title,
@@ -2072,8 +2071,8 @@ export async function applyChosenIntervalsRun(
   run: IntervalsRunStats,
   sessionId: string,
 ): Promise<boolean> {
-  if (!getIntervalsConnection(userId)) return false;
-  const streams = await loadIntervalsRoute(run.activityId);
+  if (!resolveIntervalsCredentials(userId).ok) return false;
+  const streams = await loadIntervalsRoute(userId, run.activityId);
   return enqueueWrite(async () => {
     const data = await readTraining();
     const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
@@ -2108,29 +2107,24 @@ export async function syncIntervalsForUser(userId: string): Promise<
     }
   | { ok: false; error: string }
 > {
-  if (!userCanUseIntervals(userId)) {
-    await revokeUnownedIntervals(userId);
-    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT };
-  }
-  if (!getIntervalsConnection(userId)) {
-    return { ok: false, error: INTERVALS_SYNC_ERROR };
-  }
   const data = await readTraining();
   const today = appTodayYmd();
   const sessionDates = data.sessions.filter((entry) => entry.userId === userId).map((entry) => entry.date);
   const oldestFromSessions =
     sessionDates.length > 0 ? sessionDates.reduce((min, date) => (date < min ? date : min)) : today;
   const oldest = oldestFromSessions < addDaysYmd(today, -27) ? oldestFromSessions : addDaysYmd(today, -27);
-  const fetched = await loadIntervalsRunsForSync(oldest, today);
+  const fetched = await loadIntervalsRunsForSync(userId, oldest, today);
   if (!fetched.ok) {
-    await markIntervalsSyncError(userId);
+    if (fetched.error !== INTERVALS_RECONNECT_ERROR && fetched.error !== INTERVALS_ENC_NOT_CONFIGURED) {
+      await markIntervalsSyncError(userId);
+    }
     return { ok: false, error: fetched.error };
   }
   const sessionDays = new Set(sessionDates);
   const routes = new Map<string, IntervalsStreamRoute>();
   for (const run of fetched.runs) {
     if (!sessionDays.has(run.date)) continue;
-    const route = await loadIntervalsRoute(run.activityId);
+    const route = await loadIntervalsRoute(userId, run.activityId);
     if (route) routes.set(run.activityId, route);
   }
   const result = await applyIntervalsRuns(userId, fetched.runs, routes);
@@ -2150,37 +2144,23 @@ export async function handleSettingsPost(
   formData: FormData,
 ): Promise<SettingsFormResult> {
   const intent = String(formData.get("intent") ?? "").trim();
-  if (
-    (intent === "intervals-connect" ||
-      intent === "intervals-sync" ||
-      intent === "intervals-pick-run" ||
-      intent === "intervals-skip-pick") &&
-    !userCanUseIntervals(userId)
-  ) {
-    await revokeUnownedIntervals(userId);
-    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
-  }
-
   if (intent === "intervals-connect") {
-    const result = await connectIntervals(userId);
-    if (!result.ok) {
-      return {
-        ok: false,
-        error: result.error,
-        section: "intervals",
-        status: result.error === INTERVALS_NOT_FOR_ACCOUNT ? 403 : undefined,
-      };
-    }
+    const result = await connectIntervals(userId, {
+      apiKey: String(formData.get("intervalsApiKey") ?? ""),
+      athleteId: String(formData.get("intervalsAthleteId") ?? ""),
+    });
+    if (!result.ok) return { ok: false, error: result.error, section: "intervals" };
     return { ok: true, redirect: "/settings" };
   }
 
   if (intent === "intervals-sync") {
     const result = await syncIntervalsForUser(userId);
     if (!result.ok) {
-      if (result.error === INTERVALS_NOT_FOR_ACCOUNT) {
-        return { ok: false, error: result.error, section: "intervals", status: 403 };
-      }
-      if (!getIntervalsConnection(userId)) {
+      if (
+        result.error === INTERVALS_RECONNECT_ERROR ||
+        result.error === INTERVALS_ENC_NOT_CONFIGURED ||
+        !getIntervalsConnection(userId)
+      ) {
         return { ok: false, error: result.error, section: "intervals" };
       }
       return { ok: true, redirect: "/settings" };
@@ -2195,6 +2175,14 @@ export async function handleSettingsPost(
     const skippedNoSession = String(formData.get("skippedNoSession") ?? "") === "1";
     let imported = postedImportedCount(formData.get("imported"));
     if (intent === "intervals-pick-run") {
+      const creds = resolveIntervalsCredentials(userId);
+      if (!creds.ok) {
+        return {
+          ok: false,
+          error: creds.error === INTERVALS_RECONNECT_ERROR ? INTERVALS_RECONNECT_ERROR : creds.error,
+          section: "intervals",
+        };
+      }
       let postedRuns: unknown = [];
       try {
         postedRuns = JSON.parse(String(formData.get("pickerRuns") ?? "[]")) as unknown;
@@ -2213,6 +2201,9 @@ export async function handleSettingsPost(
       if (current && selected) {
         const wrote = await applyChosenIntervalsRun(userId, selected, current.sessionId);
         if (wrote) imported += 1;
+        if (getIntervalsConnection(userId)?.needsReconnect) {
+          return { ok: false, error: INTERVALS_RECONNECT_ERROR, section: "intervals" };
+        }
       }
     }
     const picker = pickerResult(remaining, skippedNoSession, imported);

@@ -5,13 +5,14 @@ import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
 import { addDaysYmd, appTodayYmd } from "./calendar.ts";
 import { getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
+import { encryptIntervalsApiKey } from "./intervals-crypto.ts";
 import {
   connectIntervals,
   INTERVALS_CONNECT_ERROR,
+  INTERVALS_RECONNECT_ERROR,
   INTERVALS_COOPER_SYNC_TOAST,
   INTERVALS_NO_NEW_RUNS_TOAST,
   INTERVALS_NO_SESSION_TOAST,
-  INTERVALS_SYNC_ERROR,
   intervalsActivityDay,
   effortForDistance,
   intervalsActivityStats,
@@ -33,6 +34,7 @@ import {
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-intervals-"));
 process.env.AUTH_DATA_DIR = dataDir;
+process.env.INTERVALS_KEY_ENC_SECRET = Buffer.alloc(32, 9).toString("base64");
 
 const API_KEY = "icu-fixture-key-do-not-leak";
 const SESSION_DAY = "2026-09-14";
@@ -127,6 +129,8 @@ function connectUser(userId: string): void {
     userId,
     athleteId: "i704884",
     connectedAt: "2026-09-14T12:00:00.000Z",
+    apiKeyEnc: encryptIntervalsApiKey(API_KEY),
+    needsReconnect: false,
   });
 }
 
@@ -382,7 +386,7 @@ describe("connect/sync error text", () => {
       throw new Error(`401 Unauthorized for ${API_KEY}`);
     });
 
-    const result = await connectIntervals("user-connect");
+    const result = await connectIntervals("user-connect", { apiKey: API_KEY, athleteId: "i704884" });
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.equal(result.error, INTERVALS_CONNECT_ERROR);
@@ -390,16 +394,19 @@ describe("connect/sync error text", () => {
   });
 
   it("loadIntervalsRunsForSync never returns the API key in error text", async () => {
+    const userId = "sync-error-user";
+    ensureOwner(userId);
+    connectUser(userId);
     process.env.INTERVALS_ICU_API_KEY = API_KEY;
     mock.method(console, "error", () => {});
     mock.method(globalThis, "fetch", async () => {
       return new Response(`invalid key ${API_KEY}`, { status: 401, statusText: "Unauthorized" });
     });
 
-    const result = await loadIntervalsRunsForSync(SESSION_DAY, SESSION_DAY);
+    const result = await loadIntervalsRunsForSync(userId, SESSION_DAY, SESSION_DAY);
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.equal(result.error, INTERVALS_SYNC_ERROR);
+    assert.equal(result.error, INTERVALS_RECONNECT_ERROR);
     assert.equal(result.error.includes(API_KEY), false);
   });
 });

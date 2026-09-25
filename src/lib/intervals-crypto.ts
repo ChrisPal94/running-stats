@@ -1,0 +1,47 @@
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+
+/** User-facing when a personal key cannot be stored or read. No secret material. */
+export const INTERVALS_ENC_NOT_CONFIGURED = "Intervals encryption is not configured.";
+
+export class IntervalsEncryptionError extends Error {
+  constructor() {
+    super(INTERVALS_ENC_NOT_CONFIGURED);
+    this.name = "IntervalsEncryptionError";
+  }
+}
+
+/** 32-byte key from `INTERVALS_KEY_ENC_SECRET` (base64 or 64-char hex). Fail closed. */
+export function intervalsEncryptionKey(): Buffer {
+  const raw = process.env.INTERVALS_KEY_ENC_SECRET?.trim() ?? "";
+  if (!raw) throw new IntervalsEncryptionError();
+  const key = /^[0-9a-fA-F]{64}$/.test(raw) ? Buffer.from(raw, "hex") : Buffer.from(raw, "base64");
+  if (key.length !== 32) throw new IntervalsEncryptionError();
+  return key;
+}
+
+/** AES-256-GCM payload `v1:iv:tag:ciphertext` (base64). Ciphertext does not contain the plaintext. */
+export function encryptIntervalsApiKey(plaintext: string): string {
+  const key = intervalsEncryptionKey();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1:${iv.toString("base64")}:${tag.toString("base64")}:${ciphertext.toString("base64")}`;
+}
+
+export function decryptIntervalsApiKey(payload: string): string {
+  const key = intervalsEncryptionKey();
+  const parts = payload.split(":");
+  if (parts.length !== 4 || parts[0] !== "v1") throw new IntervalsEncryptionError();
+  const iv = Buffer.from(parts[1] ?? "", "base64");
+  const tag = Buffer.from(parts[2] ?? "", "base64");
+  const data = Buffer.from(parts[3] ?? "", "base64");
+  if (iv.length !== 12 || tag.length !== 16 || data.length === 0) throw new IntervalsEncryptionError();
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+  } catch {
+    throw new IntervalsEncryptionError();
+  }
+}

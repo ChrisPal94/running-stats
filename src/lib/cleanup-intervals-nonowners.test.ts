@@ -146,6 +146,13 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
     assert.equal(applied.rows.find((row) => row.userId === OTHER_ID)?.wouldDelete, 2);
     assert.equal(applied.rows.find((row) => row.userId === OWNER_ID)?.wouldDelete, 0);
     assert.equal(lines.includes("[cleanup:intervals-nonowners] apply total=2"), true);
+    assert.equal(
+      lines.includes(
+        `[cleanup:intervals-nonowners] apply userId=${OTHER_ID} email=Runner@Example.com deleted=2`,
+      ),
+      true,
+    );
+    assert.equal(lines.some((line) => line.includes("wouldDelete=")), false);
     assert.deepEqual(ids(), ["other-manual", "owner-intervals", "owner-manual"]);
 
     lines.length = 0;
@@ -155,10 +162,11 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
     assert.equal(lines.includes("[cleanup:intervals-nonowners] apply total=0"), true);
     assert.equal(
       lines.includes(
-        `[cleanup:intervals-nonowners] apply userId=${OWNER_ID} email=CrisPal94@gmail.com wouldDelete=0`,
+        `[cleanup:intervals-nonowners] apply userId=${OWNER_ID} email=CrisPal94@gmail.com deleted=0`,
       ),
       true,
     );
+    assert.equal(lines.some((line) => line.includes("wouldDelete=")), false);
     assert.deepEqual(ids(), ["other-manual", "owner-intervals", "owner-manual"]);
   });
 });

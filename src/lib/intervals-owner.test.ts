@@ -7,10 +7,13 @@ import { getDb, getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnaps
 import {
   canUseIntervals,
   getIntervalsConnection,
+  INTERVALS_CONNECT_INPUT,
   INTERVALS_NOT_FOR_ACCOUNT,
+  INTERVALS_SYNC_ERROR,
   INTERVALS_UNAVAILABLE_STATUS,
   intervalsOwnerDeniedResponse,
   intervalsSettingsControls,
+  revokeUnownedIntervals,
 } from "./intervals.ts";
 import { handleSettingsPost, type Plan, type Session } from "./training.ts";
 
@@ -104,8 +107,38 @@ describe("Settings Intervals row", () => {
 });
 
 describe("getIntervalsConnection", () => {
-  it("does not throw when revoking an unowned connection rejects", async () => {
+  it("returns the stored row and does not revoke as a side effect", async () => {
     process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com";
+    delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
+    process.env.INTERVALS_ICU_API_KEY = "owner-key-do-not-leak";
+    const userId = "getter-pure";
+    if (!getUserById(userId)) {
+      insertUser({ id: userId, email: "getter-pure@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    }
+    upsertIntervalsConnection({
+      userId,
+      athleteId: "i704884",
+      connectedAt: "2026-09-01T00:00:00.000Z",
+    });
+
+    const logged: unknown[][] = [];
+    mock.method(console, "error", (...args: unknown[]) => {
+      logged.push(args);
+    });
+    const connection = getIntervalsConnection(userId);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(connection?.athleteId, "i704884");
+    assert.equal(connection?.apiKeyEnc, undefined);
+    const still = getDb()
+      .prepare("SELECT athleteId FROM intervals_connections WHERE userId = ?")
+      .get(userId) as { athleteId: string };
+    assert.equal(still.athleteId, "i704884");
+    assert.equal(logged.length, 0);
+  });
+
+  it("logs a revoke failure without throwing when revoke is called explicitly", async () => {
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com";
+    delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
     process.env.INTERVALS_ICU_API_KEY = "owner-key-do-not-leak";
     const userId = "revoke-reject";
     if (!getUserById(userId)) {
@@ -128,21 +161,8 @@ describe("getIntervalsConnection", () => {
     mock.method(console, "error", (...args: unknown[]) => {
       logged.push(args);
     });
-    const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown) => {
-      unhandled.push(reason);
-    };
-    process.on("unhandledRejection", onUnhandled);
-    try {
-      const connection = getIntervalsConnection(userId);
-      assert.equal(connection, null);
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
-    } finally {
-      process.off("unhandledRejection", onUnhandled);
-    }
-
-    assert.equal(unhandled.length, 0);
+    await revokeUnownedIntervals(userId);
+    assert.equal(getIntervalsConnection(userId)?.athleteId, "i704884");
     assert.equal(logged.length, 1);
     assert.equal(logged[0]?.[0], "[intervals] revoke unowned failed");
     const dumped = JSON.stringify(logged, (_key, value) =>
@@ -188,9 +208,11 @@ describe("connect/sync route", () => {
       const result = await handleSettingsPost(userId, formData);
       assert.equal(result.ok, false);
       if (result.ok) continue;
-      assert.equal(result.status, 403);
-      assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
+      assert.equal(result.status, undefined);
+      assert.notEqual(result.error, INTERVALS_NOT_FOR_ACCOUNT);
       assert.equal(result.section, "intervals");
+      if (intent === "intervals-connect") assert.equal(result.error, INTERVALS_CONNECT_INPUT);
+      if (intent === "intervals-sync") assert.equal(result.error, INTERVALS_SYNC_ERROR);
     }
 
     assert.equal(fetched, false);
@@ -301,8 +323,15 @@ describe("connect/sync route", () => {
       assert.ok(denied);
       assert.equal(denied.status, 403);
       const result = await handleSettingsPost(userId, formData);
-      assert.equal(result.ok, false);
-      if (!result.ok) assert.equal(result.status, 403);
+      if (intent === "intervals-skip-pick") {
+        assert.equal(result.ok, true);
+      } else {
+        assert.equal(result.ok, false);
+        if (!result.ok) {
+          assert.equal(result.status, undefined);
+          assert.notEqual(result.error, INTERVALS_NOT_FOR_ACCOUNT);
+        }
+      }
     }
 
     assert.equal(fetched, false);

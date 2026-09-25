@@ -49,9 +49,10 @@ export function cleanupNonOwnerIntervalsRunLogs(
   rows.sort((a, b) => a.userId.localeCompare(b.userId));
 
   const mode = apply ? "apply" : "dry-run";
+  const countLabel = apply ? "deleted" : "wouldDelete";
   for (const row of rows) {
     console.log(
-      `[cleanup:intervals-nonowners] ${mode} userId=${row.userId} email=${row.email} wouldDelete=${row.wouldDelete}`,
+      `[cleanup:intervals-nonowners] ${mode} userId=${row.userId} email=${row.email} ${countLabel}=${row.wouldDelete}`,
     );
   }
   const total = rows.reduce((sum, row) => sum + row.wouldDelete, 0);

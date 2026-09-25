@@ -45,13 +45,19 @@ export type TrainingSnapshot = {
   adaptationEvents: AdaptationEvent[];
 };
 
-/** API key is env-only and is never stored here. */
+/**
+ * Per-user Intervals connection.
+ * `apiKeyEnc` is AES-256-GCM ciphertext. Never send it to the browser.
+ * Absent when the row is an owner env-fallback connection (no stored key).
+ */
 export type IntervalsConnection = {
   userId: string;
   athleteId: string;
   connectedAt: string;
   lastSyncAt?: string;
   lastSyncError?: string;
+  apiKeyEnc?: string;
+  needsReconnect?: boolean;
 };
 
 export type MagicTokenRecord = {
@@ -152,6 +158,8 @@ type IntervalsConnectionRow = {
   connectedAt: string;
   lastSyncAt: string | null;
   lastSyncError: string | null;
+  apiKeyEnc: string | null;
+  needsReconnect: number | null;
 };
 
 type MagicTokenRow = {
@@ -322,7 +330,9 @@ function applySchema(database: DatabaseSync): void {
       athleteId TEXT NOT NULL,
       connectedAt TEXT NOT NULL,
       lastSyncAt TEXT,
-      lastSyncError TEXT
+      lastSyncError TEXT,
+      apiKeyEnc TEXT,
+      needsReconnect INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS magic_tokens (
@@ -344,6 +354,13 @@ function applySchema(database: DatabaseSync): void {
   ensureColumn(database, "onboarding", "feedbackCadence", "TEXT");
   ensureColumn(database, "plans", "feedbackCadence", "TEXT NOT NULL DEFAULT 'daily'");
   ensureColumn(database, "run_logs", "source", "TEXT NOT NULL DEFAULT 'manual'");
+  ensureIntervalsConnectionColumns(database);
+}
+
+/** Idempotent. Safe to call on every open and again after the columns exist. */
+export function ensureIntervalsConnectionColumns(database: DatabaseSync): void {
+  ensureColumn(database, "intervals_connections", "apiKeyEnc", "TEXT");
+  ensureColumn(database, "intervals_connections", "needsReconnect", "INTEGER NOT NULL DEFAULT 0");
 }
 
 function tableColumns(database: DatabaseSync, table: string): Set<string> {
@@ -587,9 +604,11 @@ function intervalsConnectionFromRow(row: IntervalsConnectionRow): IntervalsConne
     userId: row.userId,
     athleteId: row.athleteId,
     connectedAt: row.connectedAt,
+    needsReconnect: Number(row.needsReconnect) === 1,
   };
   if (row.lastSyncAt) connection.lastSyncAt = row.lastSyncAt;
   if (row.lastSyncError) connection.lastSyncError = row.lastSyncError;
+  if (row.apiKeyEnc) connection.apiKeyEnc = row.apiKeyEnc;
   return connection;
 }
 
@@ -882,27 +901,49 @@ export function saveTrainingSnapshot(
 export function getIntervalsConnection(userId: string): IntervalsConnection | null {
   const row = getDb()
     .prepare(
-      "SELECT userId, athleteId, connectedAt, lastSyncAt, lastSyncError FROM intervals_connections WHERE userId = ?",
+      `SELECT userId, athleteId, connectedAt, lastSyncAt, lastSyncError, apiKeyEnc, needsReconnect
+       FROM intervals_connections WHERE userId = ?`,
     )
     .get(userId) as IntervalsConnectionRow | undefined;
   return row ? intervalsConnectionFromRow(row) : null;
 }
 
+/**
+ * `undefined` when this database has no `emailVerifiedAt` column (check does not exist).
+ * `null` when the column exists and this user is not verified.
+ */
+export function readEmailVerifiedAt(userId: string): string | null | undefined {
+  const database = getDb();
+  const columns = tableColumns(database, "users");
+  if (!columns.has("emailVerifiedAt")) return undefined;
+  const row = database.prepare("SELECT emailVerifiedAt FROM users WHERE id = ?").get(userId) as
+    | { emailVerifiedAt: string | null }
+    | undefined;
+  if (!row) return null;
+  const value = row.emailVerifiedAt?.trim() ?? "";
+  return value || null;
+}
+
 export function upsertIntervalsConnection(connection: IntervalsConnection): void {
   withTransaction(() => {
     run(
-      `INSERT INTO intervals_connections (userId, athleteId, connectedAt, lastSyncAt, lastSyncError)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO intervals_connections (
+         userId, athleteId, connectedAt, lastSyncAt, lastSyncError, apiKeyEnc, needsReconnect
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(userId) DO UPDATE SET
          athleteId = excluded.athleteId,
          connectedAt = excluded.connectedAt,
          lastSyncAt = excluded.lastSyncAt,
-         lastSyncError = excluded.lastSyncError`,
+         lastSyncError = excluded.lastSyncError,
+         apiKeyEnc = excluded.apiKeyEnc,
+         needsReconnect = excluded.needsReconnect`,
       connection.userId,
       connection.athleteId,
       connection.connectedAt,
       text(connection.lastSyncAt),
       text(connection.lastSyncError),
+      text(connection.apiKeyEnc),
+      connection.needsReconnect ? 1 : 0,
     );
   });
 }

@@ -13,9 +13,12 @@ export type AdaptRunCounts = {
   llmFailed: number;
   uploaded: number;
   uploadFailed: number;
+  /** Users skipped for Intervals because they have no usable connection. Count only. */
+  noConnection?: number;
 };
 
 /** Short ops summary for `/api/adapt` and the CLI cron loop. Counts only; no user PII. */
 export function adaptRunLogLine(result: AdaptRunCounts): string {
-  return `[adapt] run processed=${result.processed} written=${result.written} skipped=${result.skipped} patched=${result.patched} llmFailed=${result.llmFailed} uploaded=${result.uploaded} uploadFailed=${result.uploadFailed}`;
+  const noConnection = result.noConnection ?? 0;
+  return `[adapt] run processed=${result.processed} written=${result.written} skipped=${result.skipped} patched=${result.patched} llmFailed=${result.llmFailed} uploaded=${result.uploaded} uploadFailed=${result.uploadFailed} noConnection=${noConnection}`;
 }

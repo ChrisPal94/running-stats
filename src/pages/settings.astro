@@ -7,11 +7,8 @@ import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession, userInitial } from "../lib/app-session";
 import { isSameOrigin } from "../lib/public-origin";
 import {
-  canUseIntervals,
   getIntervalsConnectionView,
-  intervalsOwnerDeniedResponse,
   intervalsSyncToastCopy,
-  revokeUnownedIntervals,
   type IntervalsSyncToast,
 } from "../lib/intervals";
 import {
@@ -32,6 +29,7 @@ const initial = userInitial(user.email);
 
 let cadenceError = "";
 let intervalsError = "";
+let athleteIdDraft = "";
 let runPicker: IntervalsRunPickerState | null = null;
 let selectedCadence: FeedbackCadence = normalizeFeedbackCadence(plan.feedbackCadence);
 
@@ -46,10 +44,8 @@ if (Astro.request.method === "POST") {
     if (intent.startsWith("intervals-")) intervalsError = unverified;
     else cadenceError = unverified;
   } else {
-    const denied = intervalsOwnerDeniedResponse(user, intent);
-    if (denied) {
-      await revokeUnownedIntervals(user.id);
-      return denied;
+    if (intent === "intervals-connect") {
+      athleteIdDraft = String(formData.get("intervalsAthleteId") ?? "").trim().slice(0, 16);
     }
     const result = await handleSettingsPost(user.id, formData);
     if (result.ok) {
@@ -144,11 +140,7 @@ const connection = getIntervalsConnectionView(user.id);
       </form>
     </article>
 
-    <ConnectedApps
-      connection={connection}
-      error={intervalsError}
-      intervalsAvailable={canUseIntervals(user)}
-    />
+    <ConnectedApps connection={connection} error={intervalsError} athleteIdDraft={athleteIdDraft} />
 
     <article
       class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"

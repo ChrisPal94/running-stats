@@ -2,9 +2,12 @@ import { timingSafeEqual } from "node:crypto";
 import { adaptRunLogLine, type AdaptRunCounts } from "./adapt-cron";
 import { readLlmConfig } from "./llm-config";
 import {
-  getIntervalsConnection,
+  INTERVALS_ENC_NOT_CONFIGURED,
+  INTERVALS_RECONNECT_ERROR,
   loadRunEffort,
+  resolveIntervalsCredentials,
   upsertPlannedRuns,
+  markIntervalsNeedsReconnect,
   type PlannedRunUpload,
   type RunEffort,
 } from "./intervals";
@@ -644,8 +647,9 @@ function adaptCounts(
   llmFailed: number,
   uploaded = 0,
   uploadFailed = 0,
+  noConnection = 0,
 ): AdaptRunCounts {
-  return { processed, written, skipped, patched, llmFailed, uploaded, uploadFailed };
+  return { processed, written, skipped, patched, llmFailed, uploaded, uploadFailed, noConnection };
 }
 
 export async function runNocturnalAdaptation(
@@ -661,6 +665,22 @@ export async function runNocturnalAdaptation(
   const planned = planDecisions(snapshot, now);
   const decisions: AdaptationDecision[] = [];
   let llmFailed = 0;
+  let noConnection = 0;
+  let loggedEncryption = false;
+  const skippedUsers = new Set<string>();
+  const noteCredentialGap = (userId: string, error: string) => {
+    if (error === INTERVALS_ENC_NOT_CONFIGURED) {
+      if (!loggedEncryption) {
+        loggedEncryption = true;
+        console.error("[intervals] encryption is not configured");
+      }
+      return;
+    }
+    if (error === INTERVALS_RECONNECT_ERROR) return;
+    if (skippedUsers.has(userId)) return;
+    skippedUsers.add(userId);
+    noConnection += 1;
+  };
 
   for (const plannedDecision of planned) {
     const tomorrow = plannedDecision.draft.sessionId
@@ -678,9 +698,11 @@ export async function runNocturnalAdaptation(
       plannedDecision.draft.sourceDate,
       todaySession,
     );
+    const creds = resolveIntervalsCredentials(plannedDecision.draft.userId);
+    if (!creds.ok) noteCredentialGap(plannedDecision.draft.userId, creds.error);
     const effort =
-      log && getIntervalsConnection(plannedDecision.draft.userId)
-        ? await readEffort(plannedDecision.draft.sourceDate, log.distanceKm)
+      log && creds.ok
+        ? await readEffort(plannedDecision.draft.userId, plannedDecision.draft.sourceDate, log.distanceKm)
         : null;
     const actual = llmActualFromRunLog(log, effort);
     let decision = applyEffortToDecision(
@@ -702,7 +724,16 @@ export async function runNocturnalAdaptation(
   }
 
   if (decisions.length === 0) {
-    return adaptCounts(snapshot.plans.length, 0, snapshot.plans.length - planned.length + llmFailed, 0, llmFailed);
+    return adaptCounts(
+      snapshot.plans.length,
+      0,
+      snapshot.plans.length - planned.length + llmFailed,
+      0,
+      llmFailed,
+      0,
+      0,
+      noConnection,
+    );
   }
 
   const written = await commitAdaptationRun({
@@ -712,14 +743,30 @@ export async function runNocturnalAdaptation(
 
   let uploaded = 0;
   let uploadFailed = 0;
-  const uploads = (written.length > 0 ? plannedUploads(snapshot, decisions) : []).filter((upload) => {
+  const uploads = written.length > 0 ? plannedUploads(snapshot, decisions) : [];
+  const byUser = new Map<string, PlannedRunUpload[]>();
+  for (const upload of uploads) {
     const session = snapshot.sessions.find((entry) => entry.id === upload.externalId);
-    return Boolean(session && getIntervalsConnection(session.userId));
-  });
-  if (uploads.length > 0) {
-    const result = await uploadRuns(uploads);
-    uploaded = result.uploaded;
-    uploadFailed = result.failed;
+    if (!session) continue;
+    const list = byUser.get(session.userId) ?? [];
+    list.push(upload);
+    byUser.set(session.userId, list);
+  }
+  for (const [userId, userUploads] of byUser) {
+    const creds = resolveIntervalsCredentials(userId);
+    if (!creds.ok) {
+      noteCredentialGap(userId, creds.error);
+      continue;
+    }
+    const result = await uploadRuns(userUploads, {
+      apiKey: creds.apiKey,
+      athletePathId: creds.athleteId,
+    });
+    uploaded += result.uploaded;
+    uploadFailed += result.failed;
+    if (result.status === 401 || result.status === 403) {
+      await markIntervalsNeedsReconnect(userId);
+    }
   }
 
   return adaptCounts(
@@ -730,6 +777,7 @@ export async function runNocturnalAdaptation(
     llmFailed,
     uploaded,
     uploadFailed,
+    noConnection,
   );
 }
 

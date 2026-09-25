@@ -9,10 +9,15 @@ interface Props {
   connection: IntervalsConnectionView;
   error?: string;
   intervalsAvailable?: boolean;
+  /** Athlete id to refill after a failed connect. Never the API key. */
+  athleteIdDraft?: string;
 }
 
-const { connection, error = "", intervalsAvailable = true } = Astro.props;
+const { connection, error = "", intervalsAvailable = true, athleteIdDraft = "" } = Astro.props;
 const controls = intervalsSettingsControls({ available: intervalsAvailable, connection });
+const reconnecting = connection.connected && connection.needsReconnect === true;
+const showSync = controls.showSync && !reconnecting;
+const showForm = controls.showConnect || reconnecting;
 const secondaryClass =
   "inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]";
 const primaryClass =
@@ -42,7 +47,7 @@ const primaryClass =
   }
 
   {
-    controls.showSync && connection.connected ? (
+    showSync && connection.connected ? (
       <>
         {connection.lastSyncLabel ? (
           <p
@@ -70,15 +75,55 @@ const primaryClass =
           </form>
         </div>
       </>
-    ) : controls.showConnect ? (
+    ) : showForm ? (
       <>
+        {connection.connected && connection.lastSyncLabel ? (
+          <p class="mt-4 text-xs leading-5 text-[#ffb4aa]" role="status">
+            {connection.lastSyncLabel}
+          </p>
+        ) : null}
         <p class="mt-4 text-xs leading-5 text-mist">{INTERVALS_CONNECT_COPY}</p>
-        <form method="post" class="mt-5">
+        <form method="post" class="mt-5 flex flex-col gap-3">
           <input type="hidden" name="intent" value="intervals-connect" />
+          <label class="flex flex-col gap-2">
+            <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">API key</span>
+            <input
+              type="password"
+              name="intervalsApiKey"
+              autocomplete="off"
+              spellcheck="false"
+              maxlength="256"
+              class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
+            />
+          </label>
+          <label class="flex flex-col gap-2">
+            <span class="text-[0.66rem] font-semibold tracking-[0.13em] text-mist uppercase">Athlete ID</span>
+            <input
+              type="text"
+              name="intervalsAthleteId"
+              value={athleteIdDraft}
+              placeholder="i704884"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              maxlength="16"
+              class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
+            />
+          </label>
           <button type="submit" class={primaryClass}>
-            Connect
+            {reconnecting ? "Reconnect" : "Connect"}
           </button>
         </form>
+        {
+          reconnecting ? (
+            <form method="post" class="mt-2">
+              <input type="hidden" name="intent" value="intervals-disconnect" />
+              <button type="submit" class={secondaryClass}>
+                Disconnect
+              </button>
+            </form>
+          ) : null
+        }
       </>
     ) : null
   }
