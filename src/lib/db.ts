@@ -828,9 +828,10 @@ export function getUserById(id: string): UserRecord | null {
 }
 
 export function getUserByEmail(email: string): UserRecord | null {
+  const normalized = email.trim().toLowerCase();
   const row = getDb()
     .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE email = ?`)
-    .get(email) as UserRow | undefined;
+    .get(normalized) as UserRow | undefined;
   return row ? userFromRow(row) : null;
 }
 

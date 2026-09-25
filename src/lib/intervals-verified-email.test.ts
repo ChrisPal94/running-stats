@@ -354,6 +354,9 @@ describe("magic link consume verifies email", () => {
     assert.ok(user?.emailVerifiedAt);
     assert.equal(user?.passwordHash, undefined);
     assert.equal(canUseIntervals(user), true);
+    const newToken = magicJar.get("rs_session");
+    assert.ok(newToken);
+    assert.ok(sessionEpoch(newToken) > sessionEpoch(oldJar.get("rs_session")));
     assert.equal(await getCurrentUser(oldJar.cookies), null);
     assert.ok(await getCurrentUser(magicJar.cookies));
   });
@@ -387,8 +390,27 @@ describe("unverified password account then Google login", () => {
     assert.equal(await getCurrentUser(loginJar.cookies), null);
     assert.ok(await getCurrentUser(jar.cookies));
 
+    const newToken = jar.get("rs_session");
+    assert.ok(newToken);
+    const oldEpoch = sessionEpoch(signupJar.get("rs_session"));
+    const newEpoch = sessionEpoch(newToken);
+    assert.ok(newEpoch > oldEpoch);
+    assert.equal(await getCurrentUser(signupJar.cookies), null);
+    assert.equal(await getCurrentUser(loginJar.cookies), null);
+    assert.ok(await getCurrentUser(jar.cookies));
+
     const retry = await loginFromForm(post("http://localhost/login"), cookieJar().cookies, passwordForm(email));
+    const unknown = await loginFromForm(
+      post("http://localhost/login"),
+      cookieJar().cookies,
+      passwordForm("nobody-hijack@example.com"),
+    );
     assert.equal(retry.ok, false);
+    assert.equal(unknown.ok, false);
+    if (!retry.ok && !unknown.ok) {
+      assert.equal(retry.error, "Email or password is incorrect.");
+      assert.equal(unknown.error, retry.error);
+    }
   });
 
   it("keeps the password and existing sessions when the account is already verified", async () => {
@@ -411,5 +433,128 @@ describe("unverified password account then Google login", () => {
     assert.ok(await getCurrentUser(googleJar.cookies));
     const retry = await loginFromForm(post("http://localhost/login"), cookieJar().cookies, passwordForm(email));
     assert.equal(retry.ok, true);
+    assert.equal(getUserById(signed.user.id)?.emailVerifiedAt, verifiedAt);
+    assert.equal(getUserById(signed.user.id)?.passwordHash, hash);
+  });
+});
+
+function sessionEpoch(token: string | undefined): number {
+  assert.ok(token);
+  const payload = token.split(".")[0] ?? "";
+  const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { epoch?: number };
+  return typeof data.epoch === "number" ? data.epoch : 0;
+}
+
+function countUsers(email: string): number {
+  const row = getDb().prepare("SELECT COUNT(*) AS n FROM users WHERE email = ?").get(email) as { n: number };
+  return Number(row.n);
+}
+
+describe("normalized email lookup", () => {
+  it("links a mixed-case Google email to the existing lowercase account", async () => {
+    const email = "crispal94-google-link@gmail.com";
+    const signed = await signupFromForm(post("http://localhost/signup"), cookieJar().cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    assert.equal(countUsers(email), 1);
+
+    const { location, jar } = await finishGoogle({
+      email: "  Crispal94-Google-Link@gmail.com ",
+      sub: "google-link-sub",
+      emailVerified: true,
+    });
+    assert.equal(location, "/onboarding");
+    assert.equal(countUsers(email), 1);
+    const user = getUserById(signed.user.id);
+    assert.equal(user?.email, email);
+    assert.equal(user?.googleId, "google-link-sub");
+    assert.ok(user?.emailVerifiedAt);
+    assert.ok(await getCurrentUser(jar.cookies));
+    assert.equal(getUserByEmail("CRISPAL94-GOOGLE-LINK@gmail.com")?.id, signed.user.id);
+  });
+
+  it("links a mixed-case magic-link email to the existing lowercase account", async () => {
+    const email = "crispal94-magic-link@gmail.com";
+    const signed = await signupFromForm(post("http://localhost/signup"), cookieJar().cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    const issued = issueMagicLinkToken("  Crispal94-Magic-Link@gmail.com ");
+    const result = await consumeMagicLink(issued.raw);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.created, false);
+      assert.equal(result.user.id, signed.user.id);
+    }
+    assert.equal(countUsers(email), 1);
+    assert.equal(getUserByEmail("  crispal94-magic-link@gmail.com ")?.id, signed.user.id);
+  });
+});
+
+describe("password signup and login edges", () => {
+  it("rejects signup for an existing email without changing verification or the password", async () => {
+    const unverifiedEmail = "signup-exists-unverified@example.com";
+    const verifiedEmail = "signup-exists-verified@example.com";
+    const first = await signupFromForm(
+      post("http://localhost/signup"),
+      cookieJar().cookies,
+      passwordForm(unverifiedEmail),
+    );
+    assert.equal(first.ok, true);
+    if (!first.ok) return;
+    const unverifiedHash = getUserById(first.user.id)?.passwordHash;
+    assert.ok(unverifiedHash);
+
+    const verified = await signupFromForm(
+      post("http://localhost/signup"),
+      cookieJar().cookies,
+      passwordForm(verifiedEmail, "another-secret"),
+    );
+    assert.equal(verified.ok, true);
+    if (!verified.ok) return;
+    const verifiedAt = "2026-09-22T00:00:00.000Z";
+    getDb().prepare("UPDATE users SET emailVerifiedAt = ? WHERE id = ?").run(verifiedAt, verified.user.id);
+    const verifiedHash = getUserById(verified.user.id)?.passwordHash;
+    assert.ok(verifiedHash);
+
+    for (const [email, id, hash, verifiedStamp] of [
+      [unverifiedEmail, first.user.id, unverifiedHash, null],
+      [verifiedEmail, verified.user.id, verifiedHash, verifiedAt],
+    ] as const) {
+      const jar = cookieJar();
+      const again = await signupFromForm(
+        post("http://localhost/signup"),
+        jar.cookies,
+        passwordForm(`  ${email.toUpperCase()}  `, "different-password"),
+      );
+      assert.equal(again.ok, false);
+      if (again.ok) continue;
+      assert.equal(again.error, "An account with this email already exists. Log in to continue.");
+      assert.equal(jar.get("rs_session"), undefined);
+      assert.equal(countUsers(email), 1);
+      const stored = getUserById(id);
+      assert.equal(stored?.passwordHash, hash);
+      assert.equal(stored?.emailVerifiedAt, verifiedStamp);
+    }
+  });
+
+  it("keeps emailVerifiedAt when a verified account logs in with a password", async () => {
+    const email = "verified-password-login@example.com";
+    const signed = await signupFromForm(post("http://localhost/signup"), cookieJar().cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    const verifiedAt = "2026-09-21T00:00:00.000Z";
+    getDb().prepare("UPDATE users SET emailVerifiedAt = ? WHERE id = ?").run(verifiedAt, signed.user.id);
+    const hash = getUserById(signed.user.id)?.passwordHash;
+    assert.ok(hash);
+
+    const logged = await loginFromForm(
+      post("http://localhost/login"),
+      cookieJar().cookies,
+      passwordForm(`  ${email.toUpperCase()}  `),
+    );
+    assert.equal(logged.ok, true);
+    const user = getUserById(signed.user.id);
+    assert.equal(user?.emailVerifiedAt, verifiedAt);
+    assert.equal(user?.passwordHash, hash);
   });
 });
