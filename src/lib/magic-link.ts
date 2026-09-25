@@ -279,8 +279,8 @@ export async function finishMagicLink(
     }
     setSessionCookie(cookies, result.user.id);
     return { location: await magicLinkContinuePath(result.created, result.user.id) };
-  } catch {
-    console.error("[auth] magic link sign-in failed");
+  } catch (error) {
+    console.error("[auth] magic link sign-in failed", error instanceof Error ? error.name : "Error");
     return { location: "/login?error=signin" };
   }
 }

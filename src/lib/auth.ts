@@ -285,9 +285,12 @@ export function googleAuthErrorPath(from: GoogleOAuthFrom): string {
 
 /** Google subject does not match an already-verified account. Shown as the generic Google error. */
 export class GoogleAccountLinkError extends Error {
-  constructor() {
+  readonly userId: string;
+
+  constructor(userId: string) {
     super("Google sign-in could not be linked to this account.");
     this.name = "GoogleAccountLinkError";
+    this.userId = userId;
   }
 }
 
@@ -421,7 +424,7 @@ export async function upsertGoogleUser(
           const verified =
             typeof byEmail.emailVerifiedAt === "string" && byEmail.emailVerifiedAt.trim().length > 0;
           if (verified) {
-            throw new GoogleAccountLinkError();
+            throw new GoogleAccountLinkError(byEmail.id);
           }
           console.warn(`[auth] replacing googleId on unverified user ${byEmail.id}`);
         }

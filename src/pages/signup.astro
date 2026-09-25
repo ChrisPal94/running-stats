@@ -8,8 +8,9 @@ import { authPageError, getCurrentUser, signupFromForm } from "../lib/auth";
 import { isMagicLinkIntent, requestMagicLink } from "../lib/magic-link";
 
 const existing = await getCurrentUser(Astro.cookies);
-if (existing) {
-  return Astro.redirect(await postAuthPath(existing.id));
+const signedInPath = existing ? await postAuthPath(existing.id) : undefined;
+if (signedInPath) {
+  return Astro.redirect(signedInPath);
 }
 
 let formError = "";

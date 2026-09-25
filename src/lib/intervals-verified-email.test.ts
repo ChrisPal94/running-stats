@@ -489,8 +489,12 @@ describe("Google callback verification", () => {
     const before = getUserById(signed.user.id);
     assert.ok(before?.passwordHash);
     const warnings: string[] = [];
+    const errors: string[] = [];
     mock.method(console, "warn", (line: string) => {
       warnings.push(String(line));
+    });
+    mock.method(console, "error", (...args: unknown[]) => {
+      errors.push(args.map((arg) => (arg instanceof Error ? arg.name : String(arg))).join(" "));
     });
 
     const { location, jar } = await finishGoogle({
@@ -507,6 +511,10 @@ describe("Google callback verification", () => {
     assert.equal(user?.passwordHash, before.passwordHash);
     assert.equal(user?.sessionEpoch, before.sessionEpoch);
     assert.equal(warnings.length, 0);
+    assert.equal(errors.length, 1);
+    assert.equal((errors[0] ?? "").includes(signed.user.id), true);
+    assert.equal((errors[0] ?? "").includes(email), false);
+    assert.equal((errors[0] ?? "").includes("@"), false);
     assert.equal(getUserByGoogleId("verified-new-sub"), null);
   });
 

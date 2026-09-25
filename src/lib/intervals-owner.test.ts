@@ -164,10 +164,12 @@ describe("getIntervalsConnection", () => {
     });
     await revokeUnownedIntervals(userId);
     assert.equal(getIntervalsConnection(userId)?.athleteId, "i704884");
-    const intervalsLogs = logged.filter((args) => String(args[0] ?? "").startsWith("[intervals]"));
-    assert.equal(intervalsLogs.length, 1);
-    assert.equal(intervalsLogs[0]?.[0], "[intervals] revoke unowned failed");
-    const dumped = JSON.stringify(intervalsLogs, (_key, value) =>
+    const revokeLogs = logged.filter(
+      (args) => typeof args[0] === "string" && args[0].startsWith("[intervals] revoke unowned failed"),
+    );
+    assert.equal(revokeLogs.length, 1);
+    assert.equal(revokeLogs[0]?.[0], "[intervals] revoke unowned failed");
+    const dumped = JSON.stringify(logged, (_key, value) =>
       value instanceof Error ? { message: value.message } : value,
     );
     assert.equal(dumped.includes("owner-key-do-not-leak"), false);
