@@ -62,9 +62,11 @@ class ReassignRejected extends Error {
  * runs the unverified takeover on this same user id.
  *
  * Google is linked by `users.googleId` (provider subject), then by normalized email.
- * This script does not change `googleId`. A later sign-in with the target email
- * finds this row by subject when it already matches, otherwise by email, and
- * `verifyUserEmail` stores that subject on this row.
+ * This script does not change `googleId`. A later sign-in verifies this row only
+ * when the Google email matches the stored email: by subject if that subject is
+ * already here, otherwise by email (which then stores the subject). A subject
+ * match whose Google email differs signs into that user and does not set
+ * `emailVerifiedAt` or edit the account that owns the Google email.
  */
 export function reassignOwnerEmail(options: {
   from: string;
@@ -122,7 +124,7 @@ export function reassignOwnerEmail(options: {
     `${LOG} ${mode} plan deleteTo=${to?.id ?? "none"} renameUser=${from.id} email ${from.email} -> ${toEmail} emailVerifiedAt=null googleId=unchanged moveRows=no`,
   );
   console.log(
-    `${LOG} googleId is the provider subject. A later Google sign-in with ${toEmail} resolves to user ${from.id} by that subject, or by this email if the subject is new, and links the subject onto that user.`,
+    `${LOG} googleId is the provider subject. A later Google sign-in verifies user ${from.id} only when the Google email matches ${toEmail}: by this subject if it is already on that user, otherwise by the email. A subject match with a different Google email does not set emailVerifiedAt.`,
   );
 
   if (to && !deletable) {

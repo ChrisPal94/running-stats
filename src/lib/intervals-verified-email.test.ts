@@ -319,6 +319,100 @@ describe("Google callback verification", () => {
     assert.equal(getUserByEmail(email)?.passwordHash, hash);
     assert.ok(await getCurrentUser(jar.cookies));
   });
+
+  it("verifies when the Google subject matches and the email matches", async () => {
+    const email = "subject-same@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = `  ${email.toUpperCase()}  `;
+    const signed = await signupFromForm(post("http://localhost/signup"), cookieJar().cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    getDb().prepare("UPDATE users SET googleId = ? WHERE id = ?").run("subject-same-sub", signed.user.id);
+    const hash = getUserById(signed.user.id)?.passwordHash;
+    assert.ok(hash);
+
+    const { jar } = await finishGoogle({
+      email: `  ${email.toUpperCase()}  `,
+      sub: "subject-same-sub",
+      emailVerified: true,
+    });
+    const user = getUserById(signed.user.id);
+    assert.equal(user?.email, email);
+    assert.ok(user?.emailVerifiedAt);
+    assert.equal(user?.googleId, "subject-same-sub");
+    assert.equal(user?.passwordHash, undefined);
+    assert.equal(canUseIntervals(user), true);
+    assert.equal((await getCurrentUser(jar.cookies))?.id, signed.user.id);
+  });
+
+  it("does not verify when the Google subject matches a different email", async () => {
+    const stored = "subject-diff-owner@example.com";
+    const googleEmail = "subject-diff-google@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = stored;
+    const signed = await signupFromForm(post("http://localhost/signup"), cookieJar().cookies, passwordForm(stored));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    getDb().prepare("UPDATE users SET googleId = ? WHERE id = ?").run("subject-diff-sub", signed.user.id);
+    const before = getUserById(signed.user.id);
+    assert.ok(before?.passwordHash);
+
+    const { jar } = await finishGoogle({
+      email: `  ${googleEmail.toUpperCase()}  `,
+      sub: "subject-diff-sub",
+      emailVerified: true,
+    });
+    const user = getUserById(signed.user.id);
+    assert.equal(user?.email, stored);
+    assert.equal(user?.emailVerifiedAt, null);
+    assert.equal(user?.passwordHash, before.passwordHash);
+    assert.equal(user?.googleId, "subject-diff-sub");
+    assert.equal(user?.sessionEpoch, before.sessionEpoch);
+    assert.equal(canUseIntervals(user), false);
+    assert.equal((await getCurrentUser(jar.cookies))?.id, signed.user.id);
+    assert.equal(getUserByEmail(googleEmail), null);
+  });
+
+  it("logs into the subject account and leaves the email account untouched", async () => {
+    const emailA = "subject-account-a@example.com";
+    const emailB = "subject-account-b@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = `${emailA},${emailB}`;
+    const signedA = await signupFromForm(post("http://localhost/signup"), cookieJar().cookies, passwordForm(emailA));
+    const signedB = await signupFromForm(
+      post("http://localhost/signup"),
+      cookieJar().cookies,
+      passwordForm(emailB, "other-secret"),
+    );
+    assert.equal(signedA.ok, true);
+    assert.equal(signedB.ok, true);
+    if (!signedA.ok || !signedB.ok) return;
+    getDb().prepare("UPDATE users SET googleId = ? WHERE id = ?").run("subject-a-sub", signedA.user.id);
+    const beforeA = getUserById(signedA.user.id);
+    const beforeB = getUserById(signedB.user.id);
+    assert.ok(beforeA?.passwordHash);
+    assert.ok(beforeB?.passwordHash);
+
+    const { jar } = await finishGoogle({
+      email: `  ${emailB.toUpperCase()}  `,
+      sub: "subject-a-sub",
+      emailVerified: true,
+    });
+    assert.equal((await getCurrentUser(jar.cookies))?.id, signedA.user.id);
+
+    const accountA = getUserById(signedA.user.id);
+    const accountB = getUserById(signedB.user.id);
+    assert.equal(accountA?.email, emailA);
+    assert.equal(accountA?.emailVerifiedAt, null);
+    assert.equal(accountA?.googleId, "subject-a-sub");
+    assert.equal(accountA?.passwordHash, beforeA.passwordHash);
+    assert.equal(accountA?.sessionEpoch, beforeA.sessionEpoch);
+    assert.equal(accountB?.email, emailB);
+    assert.equal(accountB?.emailVerifiedAt, null);
+    assert.equal(accountB?.googleId, undefined);
+    assert.equal(accountB?.passwordHash, beforeB.passwordHash);
+    assert.equal(accountB?.sessionEpoch, beforeB.sessionEpoch);
+    assert.equal(canUseIntervals(accountA), false);
+    assert.equal(canUseIntervals(accountB), false);
+    assert.equal(countUsers(emailB), 1);
+  });
 });
 
 describe("magic link consume verifies email", () => {

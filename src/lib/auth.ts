@@ -379,7 +379,11 @@ export async function upsertGoogleUser(
     return withTransaction(() => {
       const byGoogle = getUserByGoogleId(googleId);
       if (byGoogle) {
-        verifyUserEmail(byGoogle.id, verifiedAt);
+        // Verify only the address Google asserted. A subject match with a different
+        // email still signs into this user and does not touch any other account.
+        if (byGoogle.email.trim().toLowerCase() === normalized) {
+          verifyUserEmail(byGoogle.id, verifiedAt);
+        }
         const fresh = getUserById(byGoogle.id);
         if (!fresh) throw new Error("Google account is missing a verified email.");
         return { user: publicUser(fresh), created: false };
