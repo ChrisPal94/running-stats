@@ -1,5 +1,5 @@
 import { isValidEmail } from "./auth";
-import { getDb, withTransaction } from "./db";
+import { getDb, openAppDatabase, withTransaction } from "./db";
 
 const LOG = "[reassign-owner-email]";
 
@@ -75,6 +75,12 @@ export function reassignOwnerEmail(options: {
 }): ReassignOwnerEmailResult {
   const apply = options.apply === true;
   const mode = apply ? "apply" : "dry-run";
+  const opened = openAppDatabase();
+  if (!apply && opened.wroteSchema) {
+    console.log(
+      `${LOG} note: opening the database applied a schema migration because tables or columns were missing`,
+    );
+  }
   const fromEmail = options.from.trim().toLowerCase();
   const toEmail = options.to.trim().toLowerCase();
   const empty: ReassignOwnerEmailResult = {
@@ -130,6 +136,7 @@ export function reassignOwnerEmail(options: {
   if (to && !deletable) {
     const found = blockingFound(toCounts);
     console.error(`${LOG} aborted: to user is not empty id=${to.id} email=${toEmail} ${found}`);
+    console.error(`${LOG} stop and ask the dev team; do not delete rows manually`);
     console.log(`${LOG} nothing changed`);
     return { aborted: true, apply, fromId: from.id, toId: to.id, fromEmail, toEmail };
   }

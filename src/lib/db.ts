@@ -192,15 +192,20 @@ export function enqueueWrite<T>(fn: () => Promise<T> | T): Promise<T> {
   return run;
 }
 
-export function getDb(): DatabaseSync {
-  if (db) return db;
+/**
+ * Open the process-wide database.
+ * `wroteSchema` is true only when this call created tables or columns.
+ * A later call in the same process returns false.
+ */
+export function openAppDatabase(): { database: DatabaseSync; wroteSchema: boolean } {
+  if (db) return { database: db, wroteSchema: false };
 
   mkdirSync(dataDir(), { recursive: true });
   const opened = new DatabaseSync(dbPath());
   opened.exec("PRAGMA journal_mode = WAL");
   opened.exec("PRAGMA busy_timeout = 5000");
   opened.exec("PRAGMA foreign_keys = OFF");
-  applySchema(opened);
+  const wroteSchema = applySchema(opened);
   db = opened;
   try {
     importJsonIfEmpty();
@@ -213,9 +218,18 @@ export function getDb(): DatabaseSync {
     }
     throw error;
   }
-  return opened;
+  return { database: opened, wroteSchema };
 }
 
+export function getDb(): DatabaseSync {
+  return openAppDatabase().database;
+}
+
+/**
+ * Outermost call runs BEGIN IMMEDIATE / COMMIT / ROLLBACK.
+ * Nested calls (verifyUserEmail inside upsertGoogleUser or consumeMagicLink)
+ * join that transaction and do not issue another BEGIN.
+ */
 export function withTransaction<T>(fn: () => T): T {
   const database = getDb();
   const nested = txDepth > 0;
@@ -239,7 +253,47 @@ export function withTransaction<T>(fn: () => T): T {
   }
 }
 
-function applySchema(database: DatabaseSync): void {
+function schemaIsCurrent(database: DatabaseSync): boolean {
+  const rows = database
+    .prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'index')")
+    .all() as { name: string; type: string }[];
+  const tables = new Set(rows.filter((row) => row.type === "table").map((row) => row.name));
+  const indexes = new Set(rows.filter((row) => row.type === "index").map((row) => row.name));
+  const requiredTables = [
+    "users",
+    "onboarding",
+    "plans",
+    "sessions",
+    "feedbacks",
+    "run_logs",
+    "adaptation_events",
+    "intervals_connections",
+    "magic_tokens",
+  ];
+  const requiredIndexes = [
+    "plans_userId",
+    "sessions_planId",
+    "sessions_userId_date",
+    "feedbacks_userId_sessionId",
+    "run_logs_userId_sessionId",
+    "adaptation_events_userId_date",
+    "magic_tokens_email_createdAt",
+  ];
+  if (!requiredTables.every((name) => tables.has(name))) return false;
+  if (!requiredIndexes.every((name) => indexes.has(name))) return false;
+  const requiredColumns: Array<[string, string]> = [
+    ["onboarding", "feedbackCadence"],
+    ["plans", "feedbackCadence"],
+    ["run_logs", "source"],
+    ["users", "emailVerifiedAt"],
+    ["users", "sessionEpoch"],
+  ];
+  return requiredColumns.every(([table, column]) => tableColumns(database, table).has(column));
+}
+
+/** Returns whether tables or columns were written. A current schema is left untouched. */
+function applySchema(database: DatabaseSync): boolean {
+  if (schemaIsCurrent(database)) return false;
   database.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -356,6 +410,7 @@ function applySchema(database: DatabaseSync): void {
   ensureColumn(database, "run_logs", "source", "TEXT NOT NULL DEFAULT 'manual'");
   ensureColumn(database, "users", "emailVerifiedAt", "TEXT");
   ensureColumn(database, "users", "sessionEpoch", "INTEGER NOT NULL DEFAULT 0");
+  return true;
 }
 
 /** Re-run schema creation and column adds. Safe to call more than once. Does not backfill verification. */

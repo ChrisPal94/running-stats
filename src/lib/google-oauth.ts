@@ -7,6 +7,7 @@ import {
   setGoogleOAuthState,
   setSessionCookie,
   takeGoogleOAuthState,
+  GoogleAccountLinkError,
   upsertGoogleUser,
   type GoogleOAuthFrom,
 } from "./auth";
@@ -60,6 +61,11 @@ function verifiedClaim(value: unknown): boolean | null {
   return value === true;
 }
 
+/**
+ * Read `email_verified` from the id_token payload without checking the signature.
+ * The token was returned just now by Google's token endpoint over TLS; it is not
+ * a token accepted from the browser.
+ */
 function idTokenVerifiedClaim(idToken: string | undefined): boolean | null {
   if (!idToken) return null;
   const part = idToken.split(".")[1];
@@ -175,6 +181,9 @@ export async function finishGoogleOAuth(
     setSessionCookie(cookies, result.user.id);
     return { location: result.created ? "/onboarding" : await postAuthPath(result.user.id) };
   } catch (error) {
+    if (error instanceof GoogleAccountLinkError) {
+      return { location: errorLocation };
+    }
     console.error("[auth] Google OAuth callback failed", error);
     return { location: errorLocation };
   }

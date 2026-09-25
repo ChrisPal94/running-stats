@@ -280,6 +280,14 @@ export function googleAuthErrorPath(from: GoogleOAuthFrom): string {
   return `/${from}?error=google`;
 }
 
+/** Google subject does not match an already-verified account. Shown as the generic Google error. */
+export class GoogleAccountLinkError extends Error {
+  constructor() {
+    super("Google sign-in could not be linked to this account.");
+    this.name = "GoogleAccountLinkError";
+  }
+}
+
 export function authPageError(url: URL, formError: string): string {
   if (formError) return formError;
   if (url.searchParams.get("error") === "google") return GOOGLE_AUTH_ERROR;
@@ -391,6 +399,14 @@ export async function upsertGoogleUser(
 
       const byEmail = getUserByEmail(normalized);
       if (byEmail) {
+        if (byEmail.googleId && byEmail.googleId !== googleId) {
+          const verified =
+            typeof byEmail.emailVerifiedAt === "string" && byEmail.emailVerifiedAt.trim().length > 0;
+          if (verified) {
+            throw new GoogleAccountLinkError();
+          }
+          console.warn(`[auth] replacing googleId on unverified user ${byEmail.id}`);
+        }
         verifyUserEmail(byEmail.id, verifiedAt, googleId);
         const fresh = getUserById(byEmail.id);
         if (!fresh) throw new Error("Google account is missing a verified email.");

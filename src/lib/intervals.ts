@@ -227,7 +227,7 @@ export function intervalsSettingsControls(input: {
 
 /** 403 for Settings connect/sync (and Which run? follow-ups) when the account is not allowed. */
 export function intervalsOwnerDeniedResponse(
-  user: { email?: string | null } | null | undefined,
+  user: { email?: string | null; emailVerifiedAt?: string | null } | null | undefined,
   intent: string,
 ): Response | null {
   if (!GATED_INTERVALS_INTENTS.has(intent.trim())) return null;

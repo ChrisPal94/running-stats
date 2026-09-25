@@ -241,6 +241,7 @@ describe("reassignOwnerEmail", () => {
       true,
     );
     assert.equal(lines.includes("[reassign-owner-email] dry-run: nothing changed"), true);
+    assert.equal(lines.some((line) => line.includes("schema migration")), false);
   });
 
   it("apply renames the from user, deletes an empty to user, and leaves the renamed user unverified", () => {

@@ -57,22 +57,25 @@ Run these on the **web** service (the service that mounts `.data` / `app.db`, wo
 
 1. Set `INTERVALS_OWNER_EMAILS=crispal94@gmail.com` on the web service.
 2. Deploy.
-3. Dry-run the email reassign, share the output, then apply. `<realEmail>` is the account that already holds the plan and run history.
+3. Reassign **before any Google login**. Do not sign in with Google, and do not send the owner through Google, until `--apply` below has finished. `<realEmail>` is the account that already holds the plan and run history. Dry-run, share the output, then apply.
 
 ```bash
 npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com
 npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --apply
 ```
 
-4. Sign in on the site with Google as `crispal94@gmail.com` (`email_verified` must be true). That sets `emailVerifiedAt` on the renamed account.
-5. Dry-run the Intervals cleanup, share the output, then apply.
+If the dry run or `--apply` aborts because the target account already has rows (onboarding, plan, training sessions, feedback, run logs, adaptation events, or an Intervals connection), stop and ask the dev team. Do not delete those rows by hand.
+
+4. After deploy and before that Google login, the account is unverified. Running adapt, or opening Settings and submitting an Intervals action, deletes the owner’s Intervals connection row. Run logs are kept. After the verified Google sign-in the owner must Connect again.
+5. Sign in on the site with Google as `crispal94@gmail.com` (`email_verified` must be true). That sets `emailVerifiedAt` on the renamed account. Do this only after step 3 `--apply`.
+6. Dry-run the Intervals cleanup, share the output, then apply.
 
 ```bash
 npm run cleanup:intervals-nonowners
 npm run cleanup:intervals-nonowners -- --apply
 ```
 
-Do not run step 5 before step 4. Until `emailVerifiedAt` is set, the allowlisted address is still a non-owner, and cleanup `--apply` would delete that account’s Intervals run logs.
+Do not run step 6 before step 5. Until `emailVerifiedAt` is set, the allowlisted address is still a non-owner, and cleanup `--apply` would delete that account’s Intervals run logs.
 
 ## One-off: reassign the owner email
 
@@ -89,10 +92,11 @@ npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --ap
 ```
 
 - FROM must already exist. If it does not, the script exits 1 and changes nothing.
-- TO is deleted only when it has no rows in any table keyed by `userId` (onboarding, plans, training `sessions`, feedbacks, run logs, adaptation events, Intervals connection, plus any later table that adds `userId`). If any of those exist, the script exits 1 and prints the counts. It does not move those rows onto FROM.
+- TO is deleted only when it has no rows in any table keyed by `userId` (onboarding, plans, training `sessions`, feedbacks, run logs, adaptation events, Intervals connection, plus any later table that adds `userId`). If any of those exist, the script exits 1, prints the counts, and tells you to stop and ask the dev team. Do not delete those rows manually. It does not move those rows onto FROM.
+- A dry run does not rewrite a database whose tables and columns are already present. If tables or columns are missing, opening the database applies that migration and the dry run prints a note.
 - Deleting TO also deletes magic-link tokens for that email. Auth sessions are stateless HMAC cookies checked against the user row, so removing the user invalidates them. There is no session table.
 - FROM’s email becomes the target address. `emailVerifiedAt` is set to null and is not backfilled. `passwordHash`, `googleId`, and every training row stay on that same user id.
-- Google accounts are stored on `users.googleId` (the provider subject), not on the email. This script does not change `googleId`. The next Google sign-in looks up that subject first, then the normalized email. A subject match sets `emailVerifiedAt` only when the Google email equals the stored email. If this row’s subject already matches and the Google email is the new address, that sign-in marks it verified, clears `passwordHash`, and invalidates older sessions. If the subject is new, the email lookup does the same and stores the subject on this row. If the subject matches a user whose stored email is different, that user is signed in and `emailVerifiedAt` is left unchanged; the account that already owns the Google email is not modified. Plans, sessions, feedback, run logs, adaptation events, onboarding, and the Intervals connection stay on the renamed user id.
+- Google accounts are stored on `users.googleId` (the provider subject), not on the email. This script does not change `googleId`. The next Google sign-in looks up that subject first, then the normalized email. A subject match sets `emailVerifiedAt` only when the Google email equals the stored email. If this row’s subject already matches and the Google email is the new address, that sign-in marks it verified, clears `passwordHash`, and invalidates older sessions. If the subject is new, the email lookup does the same and stores the subject on this row. If the email account is unverified and already has a different `googleId`, that sign-in replaces it and logs a warning with the user id only (no email). If the account is already verified and the `googleId` differs, the sign-in returns the generic Google error and does not overwrite. If the subject matches a user whose stored email is different, that user is signed in and `emailVerifiedAt` is left unchanged; the account that already owns the Google email is not modified. Plans, sessions, feedback, run logs, adaptation events, onboarding, and the Intervals connection stay on the renamed user id.
 
 ## One-off: remove non-owner Intervals imports
 

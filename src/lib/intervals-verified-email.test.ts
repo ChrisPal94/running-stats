@@ -6,7 +6,17 @@ import { DatabaseSync } from "node:sqlite";
 import { after, afterEach, describe, it, mock } from "node:test";
 import type { AstroCookies } from "astro";
 import { getCurrentUser, loginFromForm, setGoogleOAuthState, signupFromForm } from "./auth.ts";
-import { dbPath, getDb, getUserByEmail, getUserById, migrateAppDatabase } from "./db.ts";
+import {
+  dbPath,
+  getDb,
+  getUserByEmail,
+  getUserByGoogleId,
+  getUserById,
+  insertUser,
+  migrateAppDatabase,
+  verifyUserEmail,
+  withTransaction,
+} from "./db.ts";
 import { finishGoogleOAuth } from "./google-oauth.ts";
 import {
   canUseIntervals,
@@ -165,6 +175,69 @@ describe("email verification migration", () => {
     assert.equal(row.sessionEpoch, 0);
     assert.equal(getUserById("legacy-user")?.emailVerifiedAt, null);
     assert.equal(canUseIntervals(getUserById("legacy-user")), false);
+
+    const sql: string[] = [];
+    const originalExec = database.exec.bind(database);
+    database.exec = ((source: string) => {
+      sql.push(source);
+      return originalExec(source);
+    }) as typeof database.exec;
+    try {
+      migrateAppDatabase(database);
+    } finally {
+      database.exec = originalExec;
+    }
+    assert.equal(sql.some((source) => source.includes("CREATE") || source.includes("ALTER")), false);
+  });
+});
+
+describe("withTransaction reentrancy", () => {
+  it("issues one BEGIN when verifyUserEmail runs inside an open transaction", () => {
+    const id = "nested-verify-user";
+    insertUser({
+      id,
+      email: "nested-verify@example.com",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      passwordHash: "scrypt:nested",
+    });
+    const database = getDb();
+    const sql: string[] = [];
+    const originalExec = database.exec.bind(database);
+    database.exec = ((source: string) => {
+      sql.push(source);
+      return originalExec(source);
+    }) as typeof database.exec;
+    try {
+      withTransaction(() => {
+        verifyUserEmail(id, "2026-09-25T00:00:00.000Z", "nested-verify-sub");
+      });
+    } finally {
+      database.exec = originalExec;
+    }
+    assert.deepEqual(sql.filter((source) => source.includes("BEGIN")), ["BEGIN IMMEDIATE"]);
+    assert.deepEqual(sql.filter((source) => source === "COMMIT"), ["COMMIT"]);
+    const user = getUserById(id);
+    assert.equal(user?.emailVerifiedAt, "2026-09-25T00:00:00.000Z");
+    assert.equal(user?.googleId, "nested-verify-sub");
+    assert.equal(user?.passwordHash, undefined);
+  });
+
+  it("rolls back the outer transaction when a nested withTransaction throws", () => {
+    const id = "nested-rollback-user";
+    insertUser({
+      id,
+      email: "nested-rollback@example.com",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+    assert.throws(() => {
+      withTransaction(() => {
+        getDb().prepare("UPDATE users SET email = ? WHERE id = ?").run("changed-nested@example.com", id);
+        withTransaction(() => {
+          throw new Error("inner");
+        });
+      });
+    }, /inner/);
+    assert.equal(getUserById(id)?.email, "nested-rollback@example.com");
   });
 });
 
@@ -412,6 +485,70 @@ describe("Google callback verification", () => {
     assert.equal(canUseIntervals(accountA), false);
     assert.equal(canUseIntervals(accountB), false);
     assert.equal(countUsers(emailB), 1);
+  });
+
+  it("rejects a verified account whose googleId differs and does not overwrite it", async () => {
+    const email = "verified-other-google@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const signed = await signupFromForm(post("http://localhost/signup"), cookieJar().cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    const verifiedAt = "2026-09-19T00:00:00.000Z";
+    getDb()
+      .prepare("UPDATE users SET googleId = ?, emailVerifiedAt = ? WHERE id = ?")
+      .run("verified-old-sub", verifiedAt, signed.user.id);
+    const before = getUserById(signed.user.id);
+    assert.ok(before?.passwordHash);
+    const warnings: string[] = [];
+    mock.method(console, "warn", (line: string) => {
+      warnings.push(String(line));
+    });
+
+    const { location, jar } = await finishGoogle({
+      email: `  ${email.toUpperCase()}  `,
+      sub: "verified-new-sub",
+      emailVerified: true,
+    });
+    assert.match(location, /error=google/);
+    assert.equal(jar.get("rs_session"), undefined);
+    const user = getUserById(signed.user.id);
+    assert.equal(user?.googleId, "verified-old-sub");
+    assert.equal(user?.email, email);
+    assert.equal(user?.emailVerifiedAt, verifiedAt);
+    assert.equal(user?.passwordHash, before.passwordHash);
+    assert.equal(user?.sessionEpoch, before.sessionEpoch);
+    assert.equal(warnings.length, 0);
+    assert.equal(getUserByGoogleId("verified-new-sub"), null);
+  });
+
+  it("overwrites googleId on an unverified account and warns with the user id only", async () => {
+    const email = "unverified-other-google@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const signed = await signupFromForm(post("http://localhost/signup"), cookieJar().cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    getDb().prepare("UPDATE users SET googleId = ? WHERE id = ?").run("unverified-old-sub", signed.user.id);
+    const warnings: string[] = [];
+    mock.method(console, "warn", (line: string) => {
+      warnings.push(String(line));
+    });
+
+    const { jar } = await finishGoogle({
+      email: `  ${email.toUpperCase()}  `,
+      sub: "unverified-new-sub",
+      emailVerified: true,
+    });
+    const user = getUserById(signed.user.id);
+    assert.equal((await getCurrentUser(jar.cookies))?.id, signed.user.id);
+    assert.equal(user?.email, email);
+    assert.equal(user?.googleId, "unverified-new-sub");
+    assert.ok(user?.emailVerifiedAt);
+    assert.equal(user?.passwordHash, undefined);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0] ?? "", new RegExp(signed.user.id));
+    assert.equal((warnings[0] ?? "").includes(email), false);
+    assert.equal((warnings[0] ?? "").includes("@"), false);
+    assert.equal(getUserById(signed.user.id)?.googleId, "unverified-new-sub");
   });
 });
 
