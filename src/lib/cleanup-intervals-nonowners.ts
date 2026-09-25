@@ -1,9 +1,10 @@
 import { deleteIntervalsRunLogsExceptUsers, listIntervalsRunLogCounts, listUserEmails } from "./db";
-import { intervalsOwnerEmailAllowlist } from "./intervals";
+import { canUseIntervals, hasVerifiedEmail, intervalsOwnerEmailAllowlist } from "./intervals";
 
 export type IntervalsCleanupRow = {
   userId: string;
   email: string;
+  verified: boolean;
   wouldDelete: number;
 };
 
@@ -14,8 +15,10 @@ export type IntervalsCleanupResult = {
 };
 
 /**
- * Report Intervals RunLogs that belong to accounts outside `INTERVALS_OWNER_EMAILS`.
- * Default is a dry run (prints only). Pass `{ apply: true }` to delete those rows.
+ * Report Intervals RunLogs that belong to accounts that cannot use Intervals.
+ * An owner is an allowlisted email with `emailVerifiedAt` set. Unverified
+ * allowlisted accounts are non-owners. Default is a dry run (prints only).
+ * Pass `{ apply: true }` to delete those rows.
  * An unset or empty allowlist aborts in both modes and deletes nothing.
  */
 export function cleanupNonOwnerIntervalsRunLogs(
@@ -33,25 +36,29 @@ export function cleanupNonOwnerIntervalsRunLogs(
   const users = listUserEmails();
   const counts = new Map(listIntervalsRunLogCounts().map((row) => [row.userId, row.count]));
   const ownerIds = new Set(
-    users.filter((user) => allow.has(user.email.trim().toLowerCase())).map((user) => user.id),
+    users
+      .filter((user) => canUseIntervals({ email: user.email, emailVerifiedAt: user.emailVerifiedAt }))
+      .map((user) => user.id),
   );
 
   const rows: IntervalsCleanupRow[] = users.map((user) => ({
     userId: user.id,
     email: user.email.trim(),
+    verified: hasVerifiedEmail({ emailVerifiedAt: user.emailVerifiedAt }),
     wouldDelete: ownerIds.has(user.id) ? 0 : (counts.get(user.id) ?? 0),
   }));
   const known = new Set(users.map((user) => user.id));
   for (const [userId, count] of counts) {
     if (known.has(userId)) continue;
-    rows.push({ userId, email: "", wouldDelete: count });
+    rows.push({ userId, email: "", verified: false, wouldDelete: count });
   }
   rows.sort((a, b) => a.userId.localeCompare(b.userId));
 
   const mode = apply ? "apply" : "dry-run";
   for (const row of rows) {
+    const verified = row.verified ? "yes" : "no";
     console.log(
-      `[cleanup:intervals-nonowners] ${mode} userId=${row.userId} email=${row.email} wouldDelete=${row.wouldDelete}`,
+      `[cleanup:intervals-nonowners] ${mode} userId=${row.userId} email=${row.email} verified=${verified} wouldDelete=${row.wouldDelete}`,
     );
   }
   const total = rows.reduce((sum, row) => sum + row.wouldDelete, 0);

@@ -16,7 +16,7 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 
 Nixpacks already runs `npm run build` and `npm start`. Keep the start command as `npm start` (or the `HOST=0.0.0.0 node ./dist/server/entry.mjs` equivalent). Do not use `astro preview` in production.
 
-The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connection status, magic link tokens). Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot. The Intervals API key is env-only and is not stored in `app.db`. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
+The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connection status, magic link tokens). `users.emailVerifiedAt` is nullable and is not backfilled: existing accounts stay unverified until a Google sign-in (only when `email_verified === true`; false or missing does not count) or a consumed magic link sets it. Password signup does not. Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot and still start unverified. The Intervals API key is env-only and is not stored in `app.db`. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
 
 ## Environment
 
@@ -39,21 +39,72 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `ADAPT_LLM_MODEL` | No | Default `gpt-4o-mini`. Same variable for adapt and Generate feedback. |
 | `OLLAMA_API_KEY` | Fallback | One-release fallback when `ADAPT_LLM_API_KEY` is unset. Prefer `ADAPT_LLM_API_KEY`. Ignores `ADAPT_LLM_BASE_URL` and `ADAPT_LLM_MODEL`. Host is `https://ollama.com/v1`. |
 | `OLLAMA_MODEL` | Fallback | Model for the `OLLAMA_API_KEY` fallback. Default `gemma4:31b`. |
-| `INTERVALS_ICU_API_KEY` | For Connect | Intervals.icu personal API key. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`; athlete path `0`. Never stored in SQLite or shown in the UI. Only accounts listed in `INTERVALS_OWNER_EMAILS` may use it. |
+| `INTERVALS_ICU_API_KEY` | For Connect | Intervals.icu personal API key. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`; athlete path `0`. Never stored in SQLite or shown in the UI. Only a verified account listed in `INTERVALS_OWNER_EMAILS` may use it. |
 | `INTERVALS_ICU_ATHLETE_ID` | No | Display fallback (default `i704884`). HTTP paths use `0`. |
-| `INTERVALS_OWNER_EMAILS` | For Connect | Comma-separated emails allowed to use the shared Intervals key. Case-insensitive; whitespace around each address is ignored. Unset or empty: nobody can connect, sync, or read Intervals (fail closed). Production must set `crispal94@gmail.com`. |
+| `INTERVALS_OWNER_EMAILS` | For Connect | Comma-separated emails allowed to use the shared Intervals key. Case-insensitive; whitespace around each address is ignored. The account must also have `emailVerifiedAt` set. Unset or empty allowlist: nobody can connect, sync, or read Intervals (fail closed). Production must set `crispal94@gmail.com`. |
 
 Google Cloud Console: add the production authorized redirect URI before testing Continue with Google.
 
+After this deploy, Intervals is unavailable for everyone until the owner signs in once with Google (`email_verified === true` on the userinfo or id token; false or missing does not count) or a magic link. That sign-in sets `emailVerifiedAt`. Password signup and password login do not. If the account was unverified, that first verified sign-in clears the password hash and invalidates every existing session in one database transaction, then issues the new session. A later sign-in on an already-verified account does not clear the password.
+
+If the real training account is not already `crispal94@gmail.com`, follow the owner runbook below before expecting Intervals to work. Do not run the Intervals cleanup until that Google sign-in has set `emailVerifiedAt`.
+
 Do not commit a production `.env`. Railway variables are enough at runtime (`process.env`); no `.env` file is required on the host.
+
+## Owner runbook
+
+Run these on the **web** service (the service that mounts `.data` / `app.db`, workdir `/app`). Do not run them on the cron service; that service has no volume.
+
+1. Set `INTERVALS_OWNER_EMAILS=crispal94@gmail.com` on the web service.
+2. Deploy.
+3. Reassign **before any Google login**. Do not sign in with Google, and do not send the owner through Google, until `--apply` below has finished. `<realEmail>` is the account that already holds the plan and run history. Dry-run, share the output, then apply.
+
+```bash
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --apply
+```
+
+If the dry run or `--apply` aborts because the target account already has rows (onboarding, plan, training sessions, feedback, run logs, adaptation events, or an Intervals connection), stop and ask the dev team. Do not delete those rows by hand.
+
+4. After deploy and before that Google login, the account is unverified. Running adapt, or opening Settings and submitting an Intervals action, deletes the owner’s Intervals connection row. Run logs are kept. After the verified Google sign-in the owner must Connect again.
+5. Sign in on the site with Google as `crispal94@gmail.com` (`email_verified` must be true). That sets `emailVerifiedAt` on the renamed account. Do this only after step 3 `--apply`.
+6. Dry-run the Intervals cleanup, share the output, then apply.
+
+```bash
+npm run cleanup:intervals-nonowners
+npm run cleanup:intervals-nonowners -- --apply
+```
+
+Do not run step 6 before step 5. Until `emailVerifiedAt` is set, the allowlisted address is still a non-owner, and cleanup `--apply` would delete that account’s Intervals run logs.
+
+## One-off: reassign the owner email
+
+Default is a dry run. Addresses are trim + lowercase. It prints the FROM user (`id`, stored `email`, counts of onboarding, plans, training sessions, feedbacks, run logs, adaptation events, Intervals connection, magic-link tokens), the TO user (`id` or `none`, the same counts, `deletable=yes|no`), and the planned change. It does not write.
+
+```bash
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com
+```
+
+`--apply` deletes the TO user and renames FROM in one transaction:
+
+```bash
+npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --apply
+```
+
+- FROM must already exist. If it does not, the script exits 1 and changes nothing.
+- TO is deleted only when it has no rows in any table keyed by `userId` (onboarding, plans, training `sessions`, feedbacks, run logs, adaptation events, Intervals connection, plus any later table that adds `userId`). If any of those exist, the script exits 1, prints the counts, and tells you to stop and ask the dev team. Do not delete those rows manually. It does not move those rows onto FROM.
+- A dry run does not rewrite a database whose tables and columns are already present. If tables or columns are missing, opening the database applies that migration and the dry run prints a note.
+- Deleting TO also deletes magic-link tokens for that email. Auth sessions are stateless HMAC cookies checked against the user row, so removing the user invalidates them. There is no session table.
+- FROM’s email becomes the target address. `emailVerifiedAt` is set to null and is not backfilled. `passwordHash`, `googleId`, and every training row stay on that same user id.
+- Google accounts are stored on `users.googleId` (the provider subject), not on the email. This script does not change `googleId`. The next Google sign-in looks up that subject first, then the normalized email. A subject match sets `emailVerifiedAt` only when the Google email equals the stored email. If this row’s subject already matches and the Google email is the new address, that sign-in marks it verified, clears `passwordHash`, and invalidates older sessions. If the subject is new, the email lookup does the same and stores the subject on this row. If the email account is unverified and already has a different `googleId`, that sign-in replaces it and logs a warning with the user id only (no email). If the account is already verified and the `googleId` differs, the sign-in returns the generic Google error and does not overwrite. If the subject matches a user whose stored email is different, that user is signed in and `emailVerifiedAt` is left unchanged; the account that already owns the Google email is not modified. Plans, sessions, feedback, run logs, adaptation events, onboarding, and the Intervals connection stay on the renamed user id.
 
 ## One-off: remove non-owner Intervals imports
 
-Run this once on the **web** service (the service that mounts `.data` / `app.db`), after `INTERVALS_OWNER_EMAILS` is set to `crispal94@gmail.com`. Do not run it on the cron service; that service has no volume.
+Run this once on the **web** service, after the owner runbook’s Google sign-in. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` and that account’s `emailVerifiedAt` must be set. Do not run it on the cron service; that service has no volume.
 
 Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
 
-Default is a dry run. It prints each account (`userId`, `email`) and how many Intervals `RunLog`s it would delete, including owner accounts at `0`, plus a total. It does not delete.
+Default is a dry run. It prints each account (`userId`, `email`, `verified`, `wouldDelete`), including verified owners at `0`, plus a total. `verified=yes` only when `emailVerifiedAt` is set. An allowlisted address that is still unverified is a non-owner. It does not delete.
 
 ```bash
 npm run cleanup:intervals-nonowners
@@ -65,7 +116,7 @@ Share that output, then delete with:
 npm run cleanup:intervals-nonowners -- --apply
 ```
 
-`--apply` deletes `run_logs` with `source = intervals` whose account email is not in `INTERVALS_OWNER_EMAILS` (both sides trimmed and lowercased). The owner’s Intervals imports and every manual `RunLog` stay. If `INTERVALS_OWNER_EMAILS` is unset or empty, both the dry run and `--apply` log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
+`--apply` deletes `run_logs` with `source = intervals` except accounts whose email is in `INTERVALS_OWNER_EMAILS` (both sides trimmed and lowercased) and whose email is verified. Unverified allowlisted accounts are deleted like any other non-owner. Manual `RunLog`s stay. If `INTERVALS_OWNER_EMAILS` is unset or empty, both the dry run and `--apply` log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
 
 ## Reverse proxy / CSRF
 

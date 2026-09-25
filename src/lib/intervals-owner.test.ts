@@ -45,12 +45,16 @@ describe("canUseIntervals", () => {
     }
   });
 
-  it("matches allowlisted emails case-insensitively and trims whitespace", () => {
+  it("matches allowlisted emails case-insensitively and trims whitespace when verified", () => {
     process.env.INTERVALS_OWNER_EMAILS = "  CrisPal94@gmail.com , other@example.com  ";
-    assert.equal(canUseIntervals({ email: "crispal94@gmail.com" }), true);
-    assert.equal(canUseIntervals({ email: "  CRISPAL94@gmail.com  " }), true);
-    assert.equal(canUseIntervals({ email: "other@example.com" }), true);
-    assert.equal(canUseIntervals({ email: "nope@example.com" }), false);
+    const verified = "2026-09-25T12:00:00.000Z";
+    assert.equal(canUseIntervals({ email: "crispal94@gmail.com", emailVerifiedAt: verified }), true);
+    assert.equal(canUseIntervals({ email: "  CRISPAL94@gmail.com  ", emailVerifiedAt: verified }), true);
+    assert.equal(canUseIntervals({ email: "other@example.com", emailVerifiedAt: verified }), true);
+    assert.equal(canUseIntervals({ email: "nope@example.com", emailVerifiedAt: verified }), false);
+    assert.equal(canUseIntervals({ email: "crispal94@gmail.com" }), false);
+    assert.equal(canUseIntervals({ email: "crispal94@gmail.com", emailVerifiedAt: null }), false);
+    assert.equal(canUseIntervals({ email: "crispal94@gmail.com", emailVerifiedAt: "  " }), false);
   });
 });
 
@@ -194,8 +198,10 @@ describe("connect/sync route", () => {
     }
 
     assert.equal(fetched, false);
-    assert.equal(intervalsOwnerDeniedResponse({ email: "CrisPal94@gmail.com" }, "intervals-connect"), null);
-    assert.equal(intervalsOwnerDeniedResponse({ email: "CrisPal94@gmail.com" }, "intervals-sync"), null);
+    const verifiedOwner = { email: "CrisPal94@gmail.com", emailVerifiedAt: "2026-09-25T12:00:00.000Z" };
+    assert.ok(intervalsOwnerDeniedResponse({ email: "CrisPal94@gmail.com" }, "intervals-connect"));
+    assert.equal(intervalsOwnerDeniedResponse(verifiedOwner, "intervals-connect"), null);
+    assert.equal(intervalsOwnerDeniedResponse(verifiedOwner, "intervals-sync"), null);
   });
 
   it("does not import a RunLog from sync or Which run? pick/skip when the connection is stale", async () => {

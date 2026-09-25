@@ -165,10 +165,22 @@ export function intervalsOwnerEmailAllowlist(): Set<string> | null {
   return allow;
 }
 
-/** Shared Intervals key is owner-only. Email match is trim + lowercase on both sides. */
-export function canUseIntervals(user: { email?: string | null } | null | undefined): boolean {
+export function hasVerifiedEmail(
+  user: { emailVerifiedAt?: string | null } | null | undefined,
+): boolean {
+  return typeof user?.emailVerifiedAt === "string" && user.emailVerifiedAt.trim().length > 0;
+}
+
+/**
+ * Shared Intervals key is owner-only.
+ * Email match is trim + lowercase, and `emailVerifiedAt` must be set.
+ * Missing verification fails closed (password signup does not set it).
+ */
+export function canUseIntervals(
+  user: { email?: string | null; emailVerifiedAt?: string | null } | null | undefined,
+): boolean {
   const email = user?.email?.trim().toLowerCase() ?? "";
-  if (!email) return false;
+  if (!email || !hasVerifiedEmail(user)) return false;
   const allow = intervalsOwnerEmailAllowlist();
   if (!allow) return false;
   return allow.has(email);
@@ -215,7 +227,7 @@ export function intervalsSettingsControls(input: {
 
 /** 403 for Settings connect/sync (and Which run? follow-ups) when the account is not allowed. */
 export function intervalsOwnerDeniedResponse(
-  user: { email?: string | null } | null | undefined,
+  user: { email?: string | null; emailVerifiedAt?: string | null } | null | undefined,
   intent: string,
 ): Response | null {
   if (!GATED_INTERVALS_INTENTS.has(intent.trim())) return null;

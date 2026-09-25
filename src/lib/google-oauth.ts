@@ -7,6 +7,7 @@ import {
   setGoogleOAuthState,
   setSessionCookie,
   takeGoogleOAuthState,
+  GoogleAccountLinkError,
   upsertGoogleUser,
   type GoogleOAuthFrom,
 } from "./auth";
@@ -21,6 +22,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 
 type GoogleTokenResponse = {
   access_token?: string;
+  id_token?: string;
 };
 
 type GoogleUserInfo = {
@@ -53,8 +55,37 @@ function pkceChallenge(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
-function isEmailVerified(value: unknown): boolean {
-  return value === true || value === "true";
+/** `true` only for boolean true. Missing is null. Anything else, including `"true"`, is false. */
+function verifiedClaim(value: unknown): boolean | null {
+  if (value === undefined || value === null) return null;
+  return value === true;
+}
+
+/**
+ * Read `email_verified` from the id_token payload without checking the signature.
+ * The token was returned just now by Google's token endpoint over TLS; it is not
+ * a token accepted from the browser.
+ */
+function idTokenVerifiedClaim(idToken: string | undefined): boolean | null {
+  if (!idToken) return null;
+  const part = idToken.split(".")[1];
+  if (!part) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as {
+      email_verified?: unknown;
+    };
+    return verifiedClaim(claims.email_verified);
+  } catch {
+    return null;
+  }
+}
+
+/** True only when userinfo or the id token has `email_verified === true`. False or missing does not count. */
+export function googleEmailIsVerified(userinfo: GoogleUserInfo, idToken?: string): boolean {
+  const fromUserinfo = verifiedClaim(userinfo.email_verified);
+  const fromIdToken = idTokenVerifiedClaim(idToken);
+  if (fromUserinfo === false || fromIdToken === false) return false;
+  return fromUserinfo === true || fromIdToken === true;
 }
 
 async function fetchJson<T>(url: string, init: RequestInit): Promise<T> {
@@ -142,7 +173,7 @@ export async function finishGoogleOAuth(
       headers: { Authorization: `Bearer ${token.access_token}` },
     });
 
-    if (!profile.sub || !profile.email || !isEmailVerified(profile.email_verified)) {
+    if (!profile.sub || !profile.email || !googleEmailIsVerified(profile, token.id_token)) {
       return { location: errorLocation };
     }
 
@@ -150,6 +181,9 @@ export async function finishGoogleOAuth(
     setSessionCookie(cookies, result.user.id);
     return { location: result.created ? "/onboarding" : await postAuthPath(result.user.id) };
   } catch (error) {
+    if (error instanceof GoogleAccountLinkError) {
+      return { location: errorLocation };
+    }
     console.error("[auth] Google OAuth callback failed", error);
     return { location: errorLocation };
   }
