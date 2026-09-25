@@ -1,13 +1,21 @@
+import { readLlmConfig } from "./llm-config";
 import { loadLocalEnv } from "./load-env";
 
 loadLocalEnv();
 
-export const OLLAMA_CLOUD_BASE_URL = "https://ollama.com/v1";
 export const COACH_FEEDBACK_TITLE = "Feedback";
 export const COACH_FEEDBACK_UNAVAILABLE = "Couldn’t generate feedback. Try again.";
-export const COACH_FEEDBACK_UNAUTHORIZED = "Ollama rejected the API key.";
-export const COACH_FEEDBACK_KEY_MISSING = "Add OLLAMA_API_KEY to generate feedback.";
-export const COACH_FEEDBACK_MODEL_MISSING = "Add OLLAMA_MODEL to generate feedback.";
+export const COACH_FEEDBACK_UNCONFIGURED = "Feedback isn’t available right now. Try again later.";
+
+/** Strings the Today UI can show for Generate feedback. */
+export const COACH_FEEDBACK_USER_COPY = [
+  COACH_FEEDBACK_TITLE,
+  COACH_FEEDBACK_UNAVAILABLE,
+  COACH_FEEDBACK_UNCONFIGURED,
+] as const;
+
+const LLM_UNCONFIGURED_LOG =
+  "[feedback] LLM is not configured; ADAPT_LLM_API_KEY is unset and the OLLAMA_API_KEY fallback is unset";
 
 const TIMEOUT_MS = 25_000;
 const JARGON = /\b(CTL|ATL|TSB)\b/i;
@@ -38,19 +46,23 @@ export type CoachFeedback = {
 
 export type OllamaCloudConfig = {
   apiKey: string;
+  baseUrl: string;
   model: string;
 };
 
 export function ollamaCloudConfig(): OllamaCloudConfig | { error: string } {
-  const apiKey = process.env.OLLAMA_API_KEY?.trim() ?? "";
-  const model = process.env.OLLAMA_MODEL?.trim() ?? "";
-  if (!apiKey) return { error: COACH_FEEDBACK_KEY_MISSING };
-  if (!model) return { error: COACH_FEEDBACK_MODEL_MISSING };
-  return { apiKey, model };
+  const config = readLlmConfig();
+  if (!config) return { error: COACH_FEEDBACK_UNCONFIGURED };
+  return config;
 }
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function warnFeedback(reason: string, apiKey = ""): void {
+  const safe = apiKey ? reason.replaceAll(apiKey, "[redacted]") : reason;
+  console.warn(`[feedback] ${safe}`);
 }
 
 export function parseCoachFeedback(raw: string): CoachFeedback | null {
@@ -76,9 +88,13 @@ export async function requestCoachFeedback(
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: true; feedback: CoachFeedback } | { ok: false; error: string }> {
   const config = ollamaCloudConfig();
-  if ("error" in config) return { ok: false, error: config.error };
+  if ("error" in config) {
+    console.warn(LLM_UNCONFIGURED_LOG);
+    return { ok: false, error: config.error };
+  }
 
-  const response = await fetchImpl(`${OLLAMA_CLOUD_BASE_URL}/chat/completions`, {
+  let networkError = "";
+  const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
@@ -98,16 +114,27 @@ export async function requestCoachFeedback(
       ],
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
-  }).catch(() => null);
+  }).catch((error: unknown) => {
+    networkError = error instanceof Error ? error.message : "network error";
+    return null;
+  });
 
-  if (!response) return { ok: false, error: COACH_FEEDBACK_UNAVAILABLE };
-  if (response.status === 401) return { ok: false, error: COACH_FEEDBACK_UNAUTHORIZED };
-  if (!response.ok) return { ok: false, error: COACH_FEEDBACK_UNAVAILABLE };
+  if (!response) {
+    warnFeedback(`LLM request failed: ${networkError || "network error"}`, config.apiKey);
+    return { ok: false, error: COACH_FEEDBACK_UNAVAILABLE };
+  }
+  if (!response.ok) {
+    warnFeedback(`LLM request failed: ${response.status} from provider`);
+    return { ok: false, error: COACH_FEEDBACK_UNAVAILABLE };
+  }
   const body = (await response.json().catch(() => null)) as {
     choices?: Array<{ message?: { content?: string } }>;
   } | null;
   const content = body?.choices?.[0]?.message?.content;
   const feedback = content ? parseCoachFeedback(content) : null;
-  if (!feedback) return { ok: false, error: COACH_FEEDBACK_UNAVAILABLE };
+  if (!feedback) {
+    warnFeedback("LLM response was not usable feedback");
+    return { ok: false, error: COACH_FEEDBACK_UNAVAILABLE };
+  }
   return { ok: true, feedback };
 }

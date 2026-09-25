@@ -34,9 +34,11 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `MAIL_FROM` | For magic link mail | From address (verified in Resend). Prefer this name. |
 | `MAGIC_LINK_FROM` | Fallback | One-release fallback if `MAIL_FROM` is unset. |
 | `ADAPT_CRON_SECRET` | For `/api/adapt` | Bearer secret for the nightly job. 16+ characters. |
-| `ADAPT_LLM_API_KEY` | No | Unset = heuristic. If set and the LLM fails, the job logs and does not mutate the plan. |
-| `ADAPT_LLM_BASE_URL` | No | Default `https://api.openai.com/v1`. |
-| `ADAPT_LLM_MODEL` | No | Default `gpt-4o-mini`. |
+| `ADAPT_LLM_API_KEY` | No | Shared by the nightly adapt job and Generate feedback. Unset = adapt heuristic; Generate feedback shows a generic try-later message (no env names in the UI). If set and the adapt LLM fails, the job logs and does not mutate the plan. |
+| `ADAPT_LLM_BASE_URL` | No | Default `https://api.openai.com/v1`. Same variable for adapt and Generate feedback. |
+| `ADAPT_LLM_MODEL` | No | Default `gpt-4o-mini`. Same variable for adapt and Generate feedback. |
+| `OLLAMA_API_KEY` | Fallback | One-release fallback when `ADAPT_LLM_API_KEY` is unset. Prefer `ADAPT_LLM_API_KEY`. Ignores `ADAPT_LLM_BASE_URL` and `ADAPT_LLM_MODEL`. Host is `https://ollama.com/v1`. |
+| `OLLAMA_MODEL` | Fallback | Model for the `OLLAMA_API_KEY` fallback. Default `gemma4:31b`. |
 | `INTERVALS_ICU_API_KEY` | For Connect | Intervals.icu personal API key. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`; athlete path `0`. Never stored in SQLite or shown in the UI. Only accounts listed in `INTERVALS_OWNER_EMAILS` may use it. |
 | `INTERVALS_ICU_ATHLETE_ID` | No | Display fallback (default `i704884`). HTTP paths use `0`. |
 | `INTERVALS_OWNER_EMAILS` | For Connect | Comma-separated emails allowed to use the shared Intervals key. Case-insensitive; whitespace around each address is ignored. Unset or empty: nobody can connect, sync, or read Intervals (fail closed). Production must set `crispal94@gmail.com`. |

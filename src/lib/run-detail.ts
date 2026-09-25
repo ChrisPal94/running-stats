@@ -96,14 +96,20 @@ function stepRate(sample: RunSample): number | null {
   return Math.round(sample.cadenceRpm * 2);
 }
 
+/** Leftover shorter than this is not its own split. */
+const PARTIAL_MIN_KM = 0.05;
+/** Distances this close to an integer kilometre count as that boundary. */
+const KM_BOUNDARY_EPS = 1e-6;
+
 function splitsFromSamples(samples: RunSample[]): KmSplit[] {
   const end = samples[samples.length - 1];
   if (!end || !(end.distanceKm > 0)) return [];
+  const totalKm = end.distanceKm;
+  const fullKm = Math.floor(totalKm + KM_BOUNDARY_EPS);
   const marks: number[] = [];
-  for (let km = 1; km < end.distanceKm; km += 1) marks.push(km);
-  if (end.distanceKm - Math.floor(end.distanceKm) >= 0.05 || marks.length === 0) {
-    marks.push(end.distanceKm);
-  }
+  for (let km = 1; km <= fullKm; km += 1) marks.push(km);
+  const remainder = totalKm - fullKm;
+  if (remainder >= PARTIAL_MIN_KM - KM_BOUNDARY_EPS) marks.push(totalKm);
   const splits: KmSplit[] = [];
   let cursor = 0;
   let previousKm = 0;
@@ -117,12 +123,13 @@ function splitsFromSamples(samples: RunSample[]): KmSplit[] {
     }
     const last = bucket[bucket.length - 1] ?? samples[Math.max(0, cursor - 1)];
     if (!last) continue;
-    const distanceKm = Math.max(0.05, last.distanceKm - previousKm);
+    const distanceKm = last.distanceKm - previousKm;
+    if (!(distanceKm > KM_BOUNDARY_EPS)) continue;
     const seconds = Math.max(1, last.timeSec - previousTime);
     const hrs = bucket.map((sample) => sample.heartrate).filter((value): value is number => typeof value === "number");
     const steps = bucket.map(stepRate).filter((value): value is number => value !== null);
     const altitude = last.altitudeM;
-    const partial = mark < end.distanceKm - 0.02 ? false : distanceKm < 0.95;
+    const partial = mark < totalKm - 0.02 ? false : distanceKm < 0.95;
     splits.push({
       label: partial ? `${distanceKm.toFixed(2)} km` : String(splits.length + 1),
       distanceKm,

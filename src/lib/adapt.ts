@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { adaptRunLogLine, type AdaptRunCounts } from "./adapt-cron";
+import { readLlmConfig } from "./llm-config";
 import {
   getIntervalsConnection,
   loadRunEffort,
@@ -279,7 +280,7 @@ function effortEase(
 }
 
 function llmConfigured(): boolean {
-  return Boolean(process.env.ADAPT_LLM_API_KEY?.trim());
+  return readLlmConfig() !== null;
 }
 
 export function decideHeuristic(input: {
@@ -456,14 +457,9 @@ async function callLlmOnce(
   todaySession: Session | null,
   actual: LlmActual | null,
 ): Promise<LlmAdjustment | null> {
-  const apiKey = process.env.ADAPT_LLM_API_KEY?.trim();
-  if (!apiKey) return null;
-
-  const baseUrl = (process.env.ADAPT_LLM_BASE_URL?.trim() || "https://api.openai.com/v1").replace(
-    /\/$/,
-    "",
-  );
-  const model = process.env.ADAPT_LLM_MODEL?.trim() || "gpt-4o-mini";
+  const config = readLlmConfig();
+  if (!config) return null;
+  const { apiKey, baseUrl, model } = config;
   const payload = {
     model,
     temperature: 0.1,
