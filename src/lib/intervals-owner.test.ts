@@ -8,7 +8,6 @@ import {
   canUseIntervals,
   getIntervalsConnection,
   INTERVALS_NOT_FOR_ACCOUNT,
-  INTERVALS_UNAVAILABLE_STATUS,
   intervalsSettingsControls,
   revokeUnownedIntervals,
 } from "./intervals.ts";
@@ -59,31 +58,32 @@ describe("canUseIntervals", () => {
 });
 
 describe("Settings Intervals row", () => {
-  it("shows Not available for your account and no buttons when the account cannot use Intervals", () => {
+  it("keeps Connect and Sync when the account is not on the owner allowlist", () => {
     const hidden = intervalsSettingsControls({
       available: false,
       connection: {
         connected: true,
         athleteId: "i704884",
-        statusLabel: "Connected · i704884",
+        statusLabel: "Connected as i704884",
         lastSyncLabel: "Synced 2h ago",
       },
     });
-    assert.equal(hidden.statusLabel, "Not available for your account");
-    assert.equal(hidden.statusLabel, INTERVALS_UNAVAILABLE_STATUS);
+    assert.equal(hidden.statusLabel, "Connected as i704884");
+    assert.equal(hidden.statusLabel.includes("Not available for your account"), false);
     assert.equal(hidden.showConnect, false);
-    assert.equal(hidden.showSync, false);
+    assert.equal(hidden.showSync, true);
 
     const disconnected = intervalsSettingsControls({
       available: false,
       connection: { connected: false, statusLabel: "Not connected" },
     });
-    assert.equal(disconnected.statusLabel, INTERVALS_UNAVAILABLE_STATUS);
-    assert.equal(disconnected.showConnect, false);
+    assert.equal(disconnected.statusLabel, "Not connected");
+    assert.equal(disconnected.statusLabel.includes("Not available for your account"), false);
+    assert.equal(disconnected.showConnect, true);
     assert.equal(disconnected.showSync, false);
   });
 
-  it("shows Connect or Sync now only for an owner", () => {
+  it("shows Connect when disconnected and Sync now when connected", () => {
     const connect = intervalsSettingsControls({
       available: true,
       connection: { connected: false, statusLabel: "Not connected" },

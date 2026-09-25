@@ -571,7 +571,8 @@ describe("Intervals OAuth", () => {
     assert.equal(keyDisabled.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
     assert.equal(keyDisabled.includes('name="intervalsApiKey"'), false);
     assert.equal(keyDisabled.includes("Not available for your account"), false);
-    assert.match(keyDisabled, /<button[^>]*disabled[^>]*>[\s\S]*Connect[\s\S]*<\/button>/);
+    assert.equal(keyDisabled.includes("Connect Intervals.icu"), true);
+    assert.match(keyDisabled, /<button[^>]*disabled[^>]*>[\s\S]*Connect Intervals\.icu[\s\S]*<\/button>/);
     assert.equal(html.includes(CLIENT_SECRET), false);
     assert.equal(html.includes(TOKEN_A), false);
   });
@@ -693,6 +694,9 @@ describe("Intervals OAuth", () => {
     assert.equal(oauthHtml.includes(INTERVALS_OAUTH_CONNECT_LINE), true);
     assert.equal(oauthHtml.includes('href="/auth/intervals/start"'), true);
     assert.equal(oauthHtml.includes('name="intervalsApiKey"'), false);
+    assert.equal(oauthHtml.includes("Not available for your account"), false);
+    assert.equal(oauthHtml.includes('data-intervals-actions'), true);
+    assert.equal(oauthHtml.includes('data-intervals-helper'), true);
 
     const keyHtml = await renderConnectedApps({
       connection: { connected: false, statusLabel: "Not connected" },
@@ -709,6 +713,9 @@ describe("Intervals OAuth", () => {
       true,
     );
     assert.equal(keyHtml.includes("Couldn’t connect. Check your API key and athlete ID."), true);
+    assert.equal(keyHtml.includes("Not available for your account"), false);
+    assert.equal(keyHtml.includes('data-intervals-actions'), true);
+    assert.equal(keyHtml.includes('data-intervals-helper'), true);
     assert.equal(keyHtml.includes(CLIENT_SECRET), false);
 
     const connected = await renderConnectedApps({
@@ -727,6 +734,9 @@ describe("Intervals OAuth", () => {
     assert.equal(connected.includes(`Connected as ${NAME_A}`), true);
     assert.equal(connected.includes("Sync now"), true);
     assert.equal(connected.includes("Disconnect"), true);
+    assert.equal(connected.includes("Not available for your account"), false);
+    assert.equal(connected.includes('data-intervals-actions'), true);
+    assert.equal(connected.includes('data-intervals-helper'), true);
     assert.equal(connected.includes("Disconnect Intervals.icu?"), true);
     assert.equal(connected.includes(TOKEN_A), false);
 
@@ -758,6 +768,10 @@ describe("Intervals OAuth", () => {
     assert.equal(expired.includes("Intervals access expired"), true);
     assert.equal(expired.includes("Reconnect"), true);
     assert.equal(expired.includes('href="/auth/intervals/start"'), true);
+    assert.equal(expired.includes("Disconnect"), true);
+    assert.equal(expired.includes("Not available for your account"), false);
+    assert.equal(expired.includes('data-intervals-actions'), true);
+    assert.equal(expired.includes('data-intervals-helper'), true);
     assert.equal(expired.includes(TOKEN_A), false);
 
     const notice = await renderNotice({ show: true });
@@ -1052,8 +1066,11 @@ describe("Intervals OAuth", () => {
     });
     assert.equal(unavailable.includes("Not available for your account"), false);
     assert.equal(unavailable.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
-    assert.match(unavailable, /<button[^>]*disabled[^>]*>[\s\S]*Connect[\s\S]*<\/button>/);
+    assert.equal(unavailable.includes("Connect Intervals.icu"), true);
+    assert.match(unavailable, /<button[^>]*disabled[^>]*>[\s\S]*Connect Intervals\.icu[\s\S]*<\/button>/);
     assert.equal(unavailable.includes('name="intervalsApiKey"'), false);
+    assert.equal(unavailable.includes('data-intervals-actions'), true);
+    assert.equal(unavailable.includes('data-intervals-helper'), true);
 
     const connected = await renderConnectedApps({
       connection: {
@@ -1069,7 +1086,10 @@ describe("Intervals OAuth", () => {
     });
     assert.equal(connected.includes("Disconnect"), true);
     assert.equal(connected.includes("Sync now"), true);
+    assert.equal(connected.includes(`Connected as ${ATHLETE_A}`), true);
     assert.equal(connected.includes("Not available for your account"), false);
+    assert.equal(connected.includes('data-intervals-actions'), true);
+    assert.equal(connected.includes('data-intervals-helper'), true);
 
     const expired = await renderConnectedApps({
       connection: {
@@ -1084,10 +1104,15 @@ describe("Intervals OAuth", () => {
       encryptionReady: false,
       envFallbackConnect: false,
     });
+    assert.equal(expired.includes("Intervals access expired"), true);
     assert.equal(expired.includes("Reconnect"), true);
     assert.equal(expired.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
     assert.equal(expired.includes("Disconnect"), true);
-    assert.match(expired, /disabled/);
+    assert.equal(expired.includes("Not available for your account"), false);
+    assert.match(expired, /<button[^>]*disabled[^>]*>[\s\S]*Reconnect[\s\S]*<\/button>/);
+    assert.match(expired, /<button(?![^>]*disabled)[^>]*>\s*Disconnect\s*<\/button>/);
     assert.equal(expired.includes('href="/auth/intervals/start"'), false);
+    assert.equal(expired.includes('data-intervals-actions'), true);
+    assert.equal(expired.includes('data-intervals-helper'), true);
   });
 });

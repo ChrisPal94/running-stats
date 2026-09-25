@@ -45,8 +45,6 @@ export const INTERVALS_KEY_HELP = "Your API key and athlete ID are in Intervals 
 export const INTERVALS_KEY_HELP_URL = "https://intervals.icu/settings";
 export { INTERVALS_ENC_NOT_CONFIGURED, intervalsEncryptionReady };
 export type { IntervalsAuthType };
-/** Settings status line when the Intervals row is explicitly unavailable. No buttons. */
-export const INTERVALS_UNAVAILABLE_STATUS = "Not available for your account";
 /** 403 body when an Intervals action is not allowed for this account. No env names. */
 export const INTERVALS_NOT_FOR_ACCOUNT =
   "Intervals.icu import isn’t available for your account yet.";
@@ -238,18 +236,14 @@ export async function revokeUnownedIntervals(userId: string): Promise<void> {
   }
 }
 
-/** Which Settings controls to show. Non-owners get the unavailable status and no buttons. */
+/**
+ * Which Settings controls to show. Every signed-in user gets the same row.
+ * `available` does not change the status or hide buttons.
+ */
 export function intervalsSettingsControls(input: {
   available: boolean;
   connection: IntervalsConnectionView;
 }): { statusLabel: string; showConnect: boolean; showSync: boolean } {
-  if (!input.available) {
-    return {
-      statusLabel: INTERVALS_UNAVAILABLE_STATUS,
-      showConnect: false,
-      showSync: false,
-    };
-  }
   if (input.connection.connected) {
     return {
       statusLabel: input.connection.statusLabel,

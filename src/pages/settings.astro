@@ -92,7 +92,6 @@ const connection = await refreshIntervalsConnectionView(user.id);
 const oauthConfigured = isIntervalsOAuthConfigured();
 const encryptionReady = intervalsEncryptionReady();
 const fallbackEligible = ownerEnvFallbackAllowed(user.id);
-const intervalsAvailable = true;
 const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionReady;
 ---
 
@@ -162,7 +161,6 @@ const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionRe
     <ConnectedApps
       connection={connection}
       error={intervalsError}
-      intervalsAvailable={intervalsAvailable}
       envFallbackConnect={envFallbackConnect}
       athleteIdDraft={athleteIdDraft}
       oauthConfigured={oauthConfigured}
