@@ -34,8 +34,8 @@ export type UserRecord = {
   createdAt: string;
   passwordHash?: string;
   googleId?: string;
-  /** Set when Google or a magic link proves the address. Null means unverified. */
-  emailVerifiedAt?: string;
+  /** Set when Google or a magic link proves the address. Null from `getUserById` means unverified. */
+  emailVerifiedAt?: string | null;
   /** Bumped when an unverified account becomes verified so older session cookies fail. */
   sessionEpoch?: number;
 };
@@ -495,10 +495,10 @@ function userFromRow(row: UserRow): UserRecord {
     email: row.email,
     createdAt: row.createdAt,
     sessionEpoch: row.sessionEpoch ?? 0,
+    emailVerifiedAt: row.emailVerifiedAt,
   };
   if (row.passwordHash) user.passwordHash = row.passwordHash;
   if (row.googleId) user.googleId = row.googleId;
-  if (row.emailVerifiedAt) user.emailVerifiedAt = row.emailVerifiedAt;
   return user;
 }
 
@@ -842,25 +842,38 @@ export function getUserByGoogleId(googleId: string): UserRecord | null {
 }
 
 /**
- * Mark `emailVerifiedAt` when it is still null.
- * An account that was unverified loses its password hash and its session epoch
- * increments, so cookies issued before this call no longer match.
- * Already-verified accounts are left unchanged, including their password.
- * Returns whether this call performed that first verification.
+ * Mark `emailVerifiedAt` when it is still null, clear `passwordHash`, and bump
+ * `sessionEpoch` so every existing session cookie for this user stops matching.
+ * Those three writes are one transaction. The caller issues the new session after commit.
+ * Already-verified accounts keep their password and epoch. Optional `googleId` is linked
+ * in that same transaction.
+ * Returns whether this call performed the first verification.
  */
-export function verifyUserEmail(userId: string, verifiedAt: string): boolean {
+export function verifyUserEmail(userId: string, verifiedAt: string, googleId?: string): boolean {
   return withTransaction(() => {
     const row = getDb()
       .prepare("SELECT emailVerifiedAt FROM users WHERE id = ?")
       .get(userId) as { emailVerifiedAt: string | null } | undefined;
-    if (!row || row.emailVerifiedAt) return false;
-    const changed = getDb()
-      .prepare(
-        `UPDATE users
-         SET emailVerifiedAt = ?, passwordHash = NULL, sessionEpoch = COALESCE(sessionEpoch, 0) + 1
-         WHERE id = ? AND emailVerifiedAt IS NULL`,
-      )
-      .run(verifiedAt, userId);
+    if (!row) return false;
+    if (row.emailVerifiedAt) {
+      if (googleId) run("UPDATE users SET googleId = ? WHERE id = ?", googleId, userId);
+      return false;
+    }
+    const changed = googleId
+      ? getDb()
+          .prepare(
+            `UPDATE users
+             SET emailVerifiedAt = ?, passwordHash = NULL, sessionEpoch = COALESCE(sessionEpoch, 0) + 1, googleId = ?
+             WHERE id = ? AND emailVerifiedAt IS NULL`,
+          )
+          .run(verifiedAt, googleId, userId)
+      : getDb()
+          .prepare(
+            `UPDATE users
+             SET emailVerifiedAt = ?, passwordHash = NULL, sessionEpoch = COALESCE(sessionEpoch, 0) + 1
+             WHERE id = ? AND emailVerifiedAt IS NULL`,
+          )
+          .run(verifiedAt, userId);
     return changed.changes > 0;
   });
 }

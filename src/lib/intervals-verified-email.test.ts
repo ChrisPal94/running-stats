@@ -163,7 +163,7 @@ describe("email verification migration", () => {
     assert.equal(row.emailVerifiedAt, null);
     assert.equal(row.passwordHash, "scrypt:legacy");
     assert.equal(row.sessionEpoch, 0);
-    assert.equal(getUserById("legacy-user")?.emailVerifiedAt, undefined);
+    assert.equal(getUserById("legacy-user")?.emailVerifiedAt, null);
     assert.equal(canUseIntervals(getUserById("legacy-user")), false);
   });
 });
@@ -191,7 +191,7 @@ describe("password signup does not verify an owner email", () => {
 
     const stored = getUserByEmail(OWNER_EMAIL);
     assert.ok(stored?.passwordHash);
-    assert.equal(stored?.emailVerifiedAt, undefined);
+    assert.equal(stored?.emailVerifiedAt, null);
     assert.equal(canUseIntervals(stored), false);
     assert.equal(canUseIntervals(signed.user), false);
 
@@ -202,7 +202,7 @@ describe("password signup does not verify an owner email", () => {
     );
     assert.equal(logged.ok, true);
     if (logged.ok) assert.equal(logged.user.emailVerifiedAt, undefined);
-    assert.equal(getUserByEmail(OWNER_EMAIL)?.emailVerifiedAt, undefined);
+    assert.equal(getUserByEmail(OWNER_EMAIL)?.emailVerifiedAt, null);
 
     const controls = intervalsSettingsControls({
       available: canUseIntervals(stored),
@@ -278,7 +278,7 @@ describe("Google callback verification", () => {
     });
     assert.match(location, /error=google/);
     const user = getUserByEmail(email);
-    assert.equal(user?.emailVerifiedAt, undefined);
+    assert.equal(user?.emailVerifiedAt, null);
     assert.equal(user?.passwordHash, hash);
     assert.equal(canUseIntervals(user), false);
     assert.ok(await getCurrentUser(jar.cookies));
@@ -287,6 +287,37 @@ describe("Google callback verification", () => {
     const unseen = await finishGoogle({ email: missing, sub: "missing-sub", emailVerified: false });
     assert.match(unseen.location, /error=google/);
     assert.equal(getUserByEmail(missing), null);
+  });
+
+  it("does not mark verified when email_verified is missing or not boolean true", async () => {
+    const email = "google-missing-claim@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = email;
+    const jar = cookieJar();
+    const signed = await signupFromForm(post("http://localhost/signup"), jar.cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    const hash = getUserByEmail(email)?.passwordHash;
+    assert.ok(hash);
+
+    const missingClaim = await finishGoogle({
+      email,
+      sub: "google-missing-claim-sub",
+      omitUserinfoVerified: true,
+    });
+    assert.match(missingClaim.location, /error=google/);
+    assert.equal(getUserByEmail(email)?.emailVerifiedAt, null);
+    assert.equal(getUserByEmail(email)?.passwordHash, hash);
+    assert.equal(canUseIntervals(getUserByEmail(email)), false);
+    assert.ok(await getCurrentUser(jar.cookies));
+
+    const stringTrue = await finishGoogle({
+      email,
+      sub: "google-string-true-sub",
+      emailVerified: "true",
+    });
+    assert.match(stringTrue.location, /error=google/);
+    assert.equal(getUserByEmail(email)?.emailVerifiedAt, null);
+    assert.equal(getUserByEmail(email)?.passwordHash, hash);
+    assert.ok(await getCurrentUser(jar.cookies));
   });
 });
 

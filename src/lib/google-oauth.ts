@@ -54,9 +54,10 @@ function pkceChallenge(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
+/** `true` only for boolean true. Missing is null. Anything else, including `"true"`, is false. */
 function verifiedClaim(value: unknown): boolean | null {
   if (value === undefined || value === null) return null;
-  return value === true || value === "true";
+  return value === true;
 }
 
 function idTokenVerifiedClaim(idToken: string | undefined): boolean | null {
@@ -73,7 +74,7 @@ function idTokenVerifiedClaim(idToken: string | undefined): boolean | null {
   }
 }
 
-/** True only when Google reports `email_verified` and no present claim says otherwise. */
+/** True only when userinfo or the id token has `email_verified === true`. False or missing does not count. */
 export function googleEmailIsVerified(userinfo: GoogleUserInfo, idToken?: string): boolean {
   const fromUserinfo = verifiedClaim(userinfo.email_verified);
   const fromIdToken = idTokenVerifiedClaim(idToken);

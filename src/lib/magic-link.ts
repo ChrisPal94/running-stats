@@ -18,6 +18,7 @@ import {
   latestMagicTokenForEmail,
   markMagicTokenUsed,
   pruneMagicTokens,
+  withTransaction,
 } from "./db";
 import { loadLocalEnv } from "./load-env";
 import { publicOrigin } from "./public-origin";
@@ -258,9 +259,11 @@ export async function consumeMagicLink(
     if (stored.usedAt) return { ok: false as const, reason: "used" as const };
     if (stored.expiresAt <= nowIso) return { ok: false as const, reason: "expired" as const };
 
-    markMagicTokenUsed(stored.tokenHash, nowIso);
-    const result = upsertPasswordlessUser(stored.email);
-    return { ok: true as const, user: result.user, created: result.created };
+    return withTransaction(() => {
+      markMagicTokenUsed(stored.tokenHash, nowIso);
+      const result = upsertPasswordlessUser(stored.email);
+      return { ok: true as const, user: result.user, created: result.created };
+    });
   });
 }
 

@@ -7,8 +7,9 @@ import {
   getUserByGoogleId,
   getUserById,
   insertUser,
-  setUserGoogleId,
   verifyUserEmail,
+  withTransaction,
+  type UserRecord,
 } from "./db";
 import { loadLocalEnv } from "./load-env";
 import { isSameOrigin } from "./public-origin";
@@ -132,9 +133,11 @@ async function verifyPassword(password: string, stored: string | undefined): Pro
   return timingSafeEqual(actual, expected);
 }
 
-function publicUser(user: StoredUser): AuthUser {
+function publicUser(user: UserRecord): AuthUser {
   const auth: AuthUser = { id: user.id, email: user.email, createdAt: user.createdAt };
-  if (user.emailVerifiedAt) auth.emailVerifiedAt = user.emailVerifiedAt;
+  if (typeof user.emailVerifiedAt === "string" && user.emailVerifiedAt) {
+    auth.emailVerifiedAt = user.emailVerifiedAt;
+  }
   return auth;
 }
 
@@ -373,33 +376,34 @@ export async function upsertGoogleUser(
 
   return enqueueWrite(async () => {
     const verifiedAt = new Date().toISOString();
-    const byGoogle = getUserByGoogleId(googleId);
-    if (byGoogle) {
-      verifyUserEmail(byGoogle.id, verifiedAt);
-      const fresh = getUserById(byGoogle.id);
-      if (!fresh) throw new Error("Google account is missing a verified email.");
-      return { user: publicUser(fresh), created: false };
-    }
+    return withTransaction(() => {
+      const byGoogle = getUserByGoogleId(googleId);
+      if (byGoogle) {
+        verifyUserEmail(byGoogle.id, verifiedAt);
+        const fresh = getUserById(byGoogle.id);
+        if (!fresh) throw new Error("Google account is missing a verified email.");
+        return { user: publicUser(fresh), created: false };
+      }
 
-    const byEmail = getUserByEmail(normalized);
-    if (byEmail) {
-      setUserGoogleId(byEmail.id, googleId);
-      verifyUserEmail(byEmail.id, verifiedAt);
-      const fresh = getUserById(byEmail.id);
-      if (!fresh) throw new Error("Google account is missing a verified email.");
-      return { user: publicUser(fresh), created: false };
-    }
+      const byEmail = getUserByEmail(normalized);
+      if (byEmail) {
+        verifyUserEmail(byEmail.id, verifiedAt, googleId);
+        const fresh = getUserById(byEmail.id);
+        if (!fresh) throw new Error("Google account is missing a verified email.");
+        return { user: publicUser(fresh), created: false };
+      }
 
-    const user: StoredUser = {
-      id: randomBytes(16).toString("base64url"),
-      email: normalized,
-      googleId,
-      createdAt: verifiedAt,
-      emailVerifiedAt: verifiedAt,
-      sessionEpoch: 0,
-    };
-    insertUser(user);
-    return { user: publicUser(user), created: true };
+      const user: StoredUser = {
+        id: randomBytes(16).toString("base64url"),
+        email: normalized,
+        googleId,
+        createdAt: verifiedAt,
+        emailVerifiedAt: verifiedAt,
+        sessionEpoch: 0,
+      };
+      insertUser(user);
+      return { user: publicUser(user), created: true };
+    });
   });
 }
 
