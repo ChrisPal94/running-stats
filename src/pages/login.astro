@@ -50,6 +50,8 @@ if (Astro.request.method === "POST") {
 
 const error = authPageError(Astro.url, formError);
 const expiredToast = magicLinkExpiredToast(Astro.url);
+const signedOutNotice =
+  Astro.url.searchParams.get("signedOut") === "1" ? "You’re signed out on all your devices." : "";
 ---
 
 <PageLayout
@@ -57,6 +59,13 @@ const expiredToast = magicLinkExpiredToast(Astro.url);
   description="Welcome back. Sign in to continue today's run."
   heading="Welcome back"
 >
+  {
+    signedOutNotice ? (
+      <p role="status" class="text-cloud">
+        {signedOutNotice}
+      </p>
+    ) : null
+  }
   <p>Welcome back. Sign in with email and password, an email link, or continue with Google.</p>
   <AuthForm
     email={email}

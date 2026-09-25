@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { APIContext, AstroCookies } from "astro";
-import { GET, POST } from "../pages/logout.ts";
+import { GET, LOGGED_OUT_ALL_PATH, POST } from "../pages/logout.ts";
 import { postAuthPath, requireAppSession } from "./app-session.ts";
 import {
   getAuthPageUser,
@@ -26,41 +26,91 @@ process.env.AUTH_SECRET = "test-auth-secret-16chars";
 process.env.AUTH_COOKIE_SECURE = "false";
 
 const DUPLICATE_COPY =
-  "Couldn\u2019t create your account. If you already have one, log in or continue with Google.";
+  "Couldn\u2019t create your account. If you already have one, log in, sign in with an email link, or continue with Google.";
 const PASSWORD = "correct-horse";
 
 after(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-function cookieJar(): {
+type CookieAttrs = {
+  httpOnly?: boolean;
+  sameSite?: string | boolean;
+  path?: string;
+  secure?: boolean;
+  maxAge?: number;
+};
+
+/**
+ * Mirrors Astro's cookie jar: `has()` is true for an empty `name=` request
+ * cookie, while `get()` returns undefined for that same value. `set` and
+ * `delete` keep the attributes so a deletion can be compared to the set cookie.
+ */
+function cookieJar(requestCookie?: string): {
   cookies: AstroCookies;
   get(name: string): string | undefined;
   set(name: string, value: string): void;
   deletes: string[];
+  setAttrs: Map<string, CookieAttrs>;
+  deleteAttrs: Map<string, CookieAttrs | undefined>;
 } {
-  const values = new Map<string, string>();
+  const values = new Map<string, { value: string; fromRequest: boolean }>();
+  if (requestCookie) {
+    for (const part of requestCookie.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq < 1) continue;
+      const name = part.slice(0, eq).trim();
+      if (!name) continue;
+      values.set(name, { value: part.slice(eq + 1), fromRequest: true });
+    }
+  }
+  const setAttrs = new Map<string, CookieAttrs>();
+  const deleteAttrs = new Map<string, CookieAttrs | undefined>();
   const deletes: string[] = [];
   const cookies = {
+    has(name: string) {
+      return values.has(name);
+    },
     get(name: string) {
-      const value = values.get(name);
-      return value === undefined ? undefined : { value };
+      const stored = values.get(name);
+      if (!stored) return undefined;
+      if (stored.fromRequest && stored.value === "") return undefined;
+      return { value: stored.value };
     },
-    set(name: string, value: string) {
-      values.set(name, String(value));
+    set(name: string, value: string, options?: CookieAttrs) {
+      values.set(name, { value: String(value), fromRequest: false });
+      if (options) setAttrs.set(name, options);
+      deleteAttrs.delete(name);
+      const index = deletes.indexOf(name);
+      if (index >= 0) deletes.splice(index, 1);
     },
-    delete(name: string) {
+    delete(name: string, options?: CookieAttrs) {
       deletes.push(name);
+      deleteAttrs.set(name, options);
       values.delete(name);
     },
   };
   return {
     cookies: cookies as unknown as AstroCookies,
-    get: (name) => values.get(name),
+    get: (name) => {
+      const stored = values.get(name);
+      return stored?.value;
+    },
     set: (name, value) => {
-      values.set(name, value);
+      values.set(name, { value, fromRequest: false });
     },
     deletes,
+    setAttrs,
+    deleteAttrs,
+  };
+}
+
+function sharedCookieAttrs(options: CookieAttrs | undefined) {
+  return {
+    path: options?.path,
+    sameSite: options?.sameSite,
+    secure: options?.secure,
+    httpOnly: options?.httpOnly,
   };
 }
 
@@ -176,6 +226,11 @@ describe("signup duplicate email", () => {
     if (again.ok) return;
     assert.equal(again.error, DUPLICATE_COPY);
     assert.equal(again.error, SIGNUP_DUPLICATE_ERROR);
+    const authForm = readFileSync(join(process.cwd(), "src/components/AuthForm.astro"), "utf8");
+    assert.match(authForm, /error === SIGNUP_DUPLICATE_ERROR/);
+    assert.match(authForm, /href="\/login"/);
+    assert.match(authForm, /href="\/login\?method=link"/);
+    assert.match(authForm, /href=\{`\/auth\/google\?from=\$\{googleFrom\}`\}/);
     assert.equal(/already exists/i.test(again.error), false);
     assert.equal(jar.get("rs_session"), undefined);
     assert.equal(jar.deletes.length, 0);
@@ -229,7 +284,15 @@ describe("logout ends every session", () => {
 
     const response = await postLogout(deviceA.cookies);
     assert.equal(response.status, 302);
-    assert.equal(response.headers.get("Location"), "/login");
+    assert.equal(response.headers.get("Location"), LOGGED_OUT_ALL_PATH);
+    assert.deepEqual(
+      sharedCookieAttrs(deviceA.deleteAttrs.get("rs_session")),
+      sharedCookieAttrs(deviceA.setAttrs.get("rs_session")),
+    );
+    assert.equal(deviceA.setAttrs.get("rs_session")?.path, "/");
+    assert.equal(deviceA.setAttrs.get("rs_session")?.sameSite, "lax");
+    assert.equal(deviceA.setAttrs.get("rs_session")?.httpOnly, true);
+    assert.equal(deviceA.setAttrs.get("rs_session")?.secure, false);
     assert.equal(deviceA.get("rs_session"), undefined);
     assert.equal(getUserById(signed.user.id)?.sessionEpoch, before + 1);
     assert.equal(await getCurrentUser(deviceB.cookies), null);
@@ -263,7 +326,7 @@ describe("logout ends every session", () => {
     const empty = cookieJar();
     const missing = await postLogout(empty.cookies);
     assert.equal(missing.status, 302);
-    assert.equal(missing.headers.get("Location"), "/login");
+    assert.equal(missing.headers.get("Location"), LOGGED_OUT_ALL_PATH);
     assert.equal(empty.get("rs_session"), undefined);
     assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch);
 
@@ -298,8 +361,17 @@ describe("logout ends every session", () => {
     const settings = readFileSync(join(process.cwd(), "src/pages/settings.astro"), "utf8");
     assert.match(settings, /<form method="post" action="\/logout"/);
     assert.match(settings, />\s*Log out\s*</);
+    assert.match(settings, /id="logout-all-devices"/);
+    assert.match(settings, /aria-describedby="logout-all-devices"/);
+    assert.match(settings, /id="logout-all-devices" class="mt-1 /);
+    const helpAt = settings.indexOf('id="logout-all-devices"');
+    const labelAt = settings.indexOf("Log out");
+    assert.ok(helpAt !== -1 && labelAt !== -1 && helpAt < labelAt);
     assert.match(settings, /Signs you out on all your devices\./);
     assert.doesNotMatch(settings, /confirm\(/);
+    const login = readFileSync(join(process.cwd(), "src/pages/login.astro"), "utf8");
+    assert.match(login, /signedOut/);
+    assert.match(login, /You’re signed out on all your devices\./);
 
     const email = "logout-get-keeps-session@example.com";
     const jar = cookieJar();
@@ -367,8 +439,130 @@ describe("logout ends every session", () => {
       }),
     );
     assert.equal(proxied.status, 302);
+    assert.equal(proxied.headers.get("Location"), LOGGED_OUT_ALL_PATH);
     assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch + 1);
     assert.equal(jar.get("rs_session"), undefined);
+  });
+
+  it("logs out for PUBLIC_ORIGIN and ignores a spoofed X-Forwarded-Host", async () => {
+    const previousOrigin = process.env.PUBLIC_ORIGIN;
+    const previousSecure = process.env.AUTH_COOKIE_SECURE;
+    process.env.PUBLIC_ORIGIN = "https://running-stats-production.up.railway.app/";
+    process.env.AUTH_COOKIE_SECURE = "true";
+    try {
+      const email = "logout-public-origin@example.com";
+      const jar = cookieJar();
+      const signed = await signupFromForm(post("http://localhost/signup"), jar.cookies, passwordForm(email));
+      assert.equal(signed.ok, true);
+      if (!signed.ok) return;
+      const token = jar.get("rs_session");
+      const epoch = getUserById(signed.user.id)?.sessionEpoch ?? 0;
+
+      const foreign = await postLogout(
+        jar.cookies,
+        new Request("http://10.0.0.1:8080/logout", {
+          method: "POST",
+          headers: {
+            origin: "https://evil.example",
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "running-stats-production.up.railway.app",
+            host: "10.0.0.1:8080",
+          },
+        }),
+      );
+      assert.equal(foreign.status, 403);
+      assert.equal(jar.get("rs_session"), token);
+      assert.equal(jar.deletes.length, 0);
+      assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch);
+
+      const spoofedHost = await postLogout(
+        jar.cookies,
+        new Request("http://10.0.0.1:8080/logout", {
+          method: "POST",
+          headers: {
+            origin: "https://evil.example",
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "evil.example",
+            host: "evil.example",
+          },
+        }),
+      );
+      assert.equal(spoofedHost.status, 403);
+      assert.equal(jar.get("rs_session"), token);
+      assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch);
+
+      const good = await postLogout(
+        jar.cookies,
+        new Request("http://10.0.0.1:8080/logout", {
+          method: "POST",
+          headers: {
+            origin: "https://running-stats-production.up.railway.app",
+            "x-forwarded-proto": "http",
+            "x-forwarded-host": "evil.example",
+            host: "evil.example",
+          },
+        }),
+      );
+      assert.equal(good.status, 302);
+      assert.equal(good.headers.get("Location"), LOGGED_OUT_ALL_PATH);
+      assert.equal(jar.get("rs_session"), undefined);
+      assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch + 1);
+      assert.deepEqual(
+        sharedCookieAttrs(jar.deleteAttrs.get("rs_session")),
+        sharedCookieAttrs(jar.setAttrs.get("rs_session")),
+      );
+      assert.equal(jar.deleteAttrs.get("rs_session")?.secure, true);
+      assert.equal(jar.deleteAttrs.get("rs_session")?.httpOnly, true);
+      assert.equal(jar.deleteAttrs.get("rs_session")?.sameSite, "lax");
+      assert.equal(jar.deleteAttrs.get("rs_session")?.path, "/");
+    } finally {
+      if (previousOrigin === undefined) delete process.env.PUBLIC_ORIGIN;
+      else process.env.PUBLIC_ORIGIN = previousOrigin;
+      if (previousSecure === undefined) delete process.env.AUTH_COOKIE_SECURE;
+      else process.env.AUTH_COOKIE_SECURE = previousSecure;
+    }
+  });
+
+  it("rejects logout in production when Origin is missing or PUBLIC_ORIGIN is unset", async () => {
+    const previousOrigin = process.env.PUBLIC_ORIGIN;
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    delete process.env.PUBLIC_ORIGIN;
+    try {
+      const email = "logout-prod-closed@example.com";
+      const jar = cookieJar();
+      const signed = await signupFromForm(post("http://localhost/signup"), jar.cookies, passwordForm(email));
+      assert.equal(signed.ok, true);
+      if (!signed.ok) return;
+      const token = jar.get("rs_session");
+      const epoch = getUserById(signed.user.id)?.sessionEpoch ?? 0;
+
+      const missing = await postLogout(jar.cookies, new Request("http://10.0.0.1:8080/logout", { method: "POST" }));
+      assert.equal(missing.status, 403);
+
+      const forwarded = await postLogout(
+        jar.cookies,
+        new Request("http://10.0.0.1:8080/logout", {
+          method: "POST",
+          headers: {
+            origin: "https://running-stats-production.up.railway.app",
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "running-stats-production.up.railway.app",
+            host: "10.0.0.1:8080",
+          },
+        }),
+      );
+      assert.equal(forwarded.status, 403);
+      assert.equal(jar.get("rs_session"), token);
+      assert.equal(jar.deletes.length, 0);
+      assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch);
+      assert.equal((await getCurrentUser(jar.cookies))?.id, signed.user.id);
+    } finally {
+      if (previousOrigin === undefined) delete process.env.PUBLIC_ORIGIN;
+      else process.env.PUBLIC_ORIGIN = previousOrigin;
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
   });
 
   it("invalidates a Google session and a magic-link session", async () => {
@@ -523,7 +717,23 @@ describe("invalid rs_session on login and signup", () => {
       assert.equal(jar.get("rs_session"), undefined, label);
       assert.deepEqual(jar.deletes, ["rs_session"], label);
       assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch, label);
+      assert.deepEqual(
+        sharedCookieAttrs(jar.deleteAttrs.get("rs_session")),
+        {
+          path: "/",
+          sameSite: "lax",
+          secure: false,
+          httpOnly: true,
+        },
+        label,
+      );
     }
+
+    const blank = cookieJar("rs_session=");
+    assert.equal(blank.cookies.has("rs_session"), true);
+    assert.equal(blank.cookies.get("rs_session"), undefined);
+    assert.equal(await getAuthPageUser(blank.cookies), null);
+    assert.deepEqual(blank.deletes, ["rs_session"]);
 
     getDb().prepare("UPDATE users SET sessionEpoch = sessionEpoch + 4 WHERE id = ?").run(signed.user.id);
     const staleDb = cookieJar();

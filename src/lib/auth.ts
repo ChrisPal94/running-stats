@@ -35,7 +35,7 @@ export const GOOGLE_AUTH_ERROR =
 
 /** Duplicate password signup. Does not say whether the address is registered. */
 export const SIGNUP_DUPLICATE_ERROR =
-  "Couldn’t create your account. If you already have one, log in or continue with Google.";
+  "Couldn’t create your account. If you already have one, log in, sign in with an email link, or continue with Google.";
 
 /** Shown on /login for Google and magic-link sign-in failures. No account or address details. */
 export const SIGN_IN_ERROR = "Couldn’t sign in. Try again or use another method.";
@@ -183,19 +183,30 @@ function readSession(token: string | undefined): SessionPayload | null {
   }
 }
 
-export function setSessionCookie(cookies: AstroCookies, userId: string): void {
-  const epoch = getUserById(userId)?.sessionEpoch ?? 0;
-  cookies.set(SESSION_COOKIE, signSession(userId, epoch), {
+function sessionCookieAttributes(): {
+  httpOnly: true;
+  sameSite: "lax";
+  path: "/";
+  secure: boolean;
+} {
+  return {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
     secure: cookieSecure(),
+  };
+}
+
+export function setSessionCookie(cookies: AstroCookies, userId: string): void {
+  const epoch = getUserById(userId)?.sessionEpoch ?? 0;
+  cookies.set(SESSION_COOKIE, signSession(userId, epoch), {
+    ...sessionCookieAttributes(),
     maxAge: SESSION_DAYS * 24 * 60 * 60,
   });
 }
 
 export function clearSessionCookie(cookies: AstroCookies): void {
-  cookies.delete(SESSION_COOKIE, { path: "/" });
+  cookies.delete(SESSION_COOKIE, sessionCookieAttributes());
 }
 
 export async function getCurrentUser(cookies: AstroCookies): Promise<AuthUser | null> {
@@ -209,11 +220,12 @@ export async function getCurrentUser(cookies: AstroCookies): Promise<AuthUser | 
 
 /**
  * /login and /signup. A present but rejected `rs_session` (bad signature,
- * expired, stale epoch, or garbage) is removed so the form can render.
+ * expired, stale epoch, garbage, or an empty `rs_session=`) is removed so the
+ * form can render. `cookies.has()` sees an empty value; `cookies.get()` does not.
  * A still-valid session is left in place for the page to redirect.
  */
 export async function getAuthPageUser(cookies: AstroCookies): Promise<AuthUser | null> {
-  const hadCookie = cookies.get(SESSION_COOKIE)?.value !== undefined;
+  const hadCookie = cookies.has(SESSION_COOKIE);
   const user = await getCurrentUser(cookies);
   if (hadCookie && !user) clearSessionCookie(cookies);
   return user;

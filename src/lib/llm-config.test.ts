@@ -50,16 +50,6 @@ describe("readLlmConfig", () => {
     });
   });
 
-  it("uses https://ollama.com/v1 and gemma4:31b when only OLLAMA_API_KEY is set", () => {
-    clearLlmEnv();
-    process.env.OLLAMA_API_KEY = " ollama-key ";
-    assert.deepEqual(readLlmConfig(), {
-      apiKey: "ollama-key",
-      baseUrl: "https://ollama.com/v1",
-      model: "gemma4:31b",
-    });
-  });
-
   it("uses OLLAMA_MODEL when it overrides the default on the Ollama path", () => {
     clearLlmEnv();
     process.env.OLLAMA_API_KEY = "ollama-key";
@@ -133,11 +123,6 @@ describe("readLlmConfig", () => {
       baseUrl: "https://ollama.com/v1",
       model: "gemma4:31b",
     });
-  });
-
-  it("returns null when neither key is set", () => {
-    clearLlmEnv();
-    assert.equal(readLlmConfig(), null);
   });
 
   it("returns null when both keys are missing or blank", () => {
