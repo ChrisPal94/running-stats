@@ -1,15 +1,18 @@
 ---
 import {
   INTERVALS_CONNECT_COPY,
+  intervalsSettingsControls,
   type IntervalsConnectionView,
 } from "../lib/intervals";
 
 interface Props {
   connection: IntervalsConnectionView;
   error?: string;
+  intervalsAvailable?: boolean;
 }
 
-const { connection, error = "" } = Astro.props;
+const { connection, error = "", intervalsAvailable = true } = Astro.props;
+const controls = intervalsSettingsControls({ available: intervalsAvailable, connection });
 const secondaryClass =
   "inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]";
 const primaryClass =
@@ -23,7 +26,7 @@ const primaryClass =
   <div class="mt-6 flex items-start justify-between gap-4">
     <div class="min-w-0">
       <p class="text-sm font-semibold text-cloud">Intervals.icu</p>
-      <p class="mt-1 text-xs leading-5 text-mist">{connection.statusLabel}</p>
+      <p class="mt-1 text-xs leading-5 text-mist">{controls.statusLabel}</p>
     </div>
   </div>
 
@@ -39,7 +42,7 @@ const primaryClass =
   }
 
   {
-    connection.connected ? (
+    controls.showSync && connection.connected ? (
       <>
         {connection.lastSyncLabel ? (
           <p
@@ -67,7 +70,7 @@ const primaryClass =
           </form>
         </div>
       </>
-    ) : (
+    ) : controls.showConnect ? (
       <>
         <p class="mt-4 text-xs leading-5 text-mist">{INTERVALS_CONNECT_COPY}</p>
         <form method="post" class="mt-5">
@@ -77,6 +80,6 @@ const primaryClass =
           </button>
         </form>
       </>
-    )
+    ) : null
   }
 </article>

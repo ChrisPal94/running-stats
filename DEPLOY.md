@@ -37,12 +37,33 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `ADAPT_LLM_API_KEY` | No | Unset = heuristic. If set and the LLM fails, the job logs and does not mutate the plan. |
 | `ADAPT_LLM_BASE_URL` | No | Default `https://api.openai.com/v1`. |
 | `ADAPT_LLM_MODEL` | No | Default `gpt-4o-mini`. |
-| `INTERVALS_ICU_API_KEY` | For Connect | Intervals.icu personal API key. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`; athlete path `0`. Never stored in SQLite or shown in the UI. |
+| `INTERVALS_ICU_API_KEY` | For Connect | Intervals.icu personal API key. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`; athlete path `0`. Never stored in SQLite or shown in the UI. Only accounts listed in `INTERVALS_OWNER_EMAILS` may use it. |
 | `INTERVALS_ICU_ATHLETE_ID` | No | Display fallback (default `i704884`). HTTP paths use `0`. |
+| `INTERVALS_OWNER_EMAILS` | For Connect | Comma-separated emails allowed to use the shared Intervals key. Case-insensitive; whitespace around each address is ignored. Unset or empty: nobody can connect, sync, or read Intervals (fail closed). Production must set `crispal94@gmail.com`. |
 
 Google Cloud Console: add the production authorized redirect URI before testing Continue with Google.
 
 Do not commit a production `.env`. Railway variables are enough at runtime (`process.env`); no `.env` file is required on the host.
+
+## One-off: remove non-owner Intervals imports
+
+Run this once on the **web** service (the service that mounts `.data` / `app.db`), after `INTERVALS_OWNER_EMAILS` is set to `crispal94@gmail.com`. Do not run it on the cron service; that service has no volume.
+
+Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
+
+Default is a dry run. It prints each account (`userId`, `email`) and how many Intervals `RunLog`s it would delete, including owner accounts at `0`, plus a total. It does not delete.
+
+```bash
+npm run cleanup:intervals-nonowners
+```
+
+Share that output, then delete with:
+
+```bash
+npm run cleanup:intervals-nonowners -- --apply
+```
+
+`--apply` deletes `run_logs` with `source = intervals` whose account email is not in `INTERVALS_OWNER_EMAILS` (both sides trimmed and lowercased). The owner’s Intervals imports and every manual `RunLog` stay. If `INTERVALS_OWNER_EMAILS` is unset or empty, both the dry run and `--apply` log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
 
 ## Reverse proxy / CSRF
 

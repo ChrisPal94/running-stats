@@ -3,6 +3,7 @@ import {
   deleteIntervalsConnection,
   enqueueWrite,
   getIntervalsConnection as getStoredIntervalsConnection,
+  getUserById,
   upsertIntervalsConnection,
   type IntervalsConnection,
 } from "./db";
@@ -20,6 +21,18 @@ export const INTERVALS_CONNECT_COPY = "API key stays on the server";
 export const INTERVALS_SYNC_ERROR = "Couldn’t sync. Try again.";
 export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
 export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
+/** Shown when this account is not allowed to use the shared Intervals key. No env names. */
+export const INTERVALS_NOT_FOR_ACCOUNT =
+  "Intervals.icu import isn’t available for your account yet.";
+/** Settings status line for an account that cannot use Intervals. No buttons. */
+export const INTERVALS_UNAVAILABLE_STATUS = "Not available for your account";
+
+const GATED_INTERVALS_INTENTS = new Set([
+  "intervals-connect",
+  "intervals-sync",
+  "intervals-pick-run",
+  "intervals-skip-pick",
+]);
 export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
 export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
 export const INTERVALS_COOPER_SYNC_TOAST = "Cooper test result synced — plan updated.";
@@ -133,6 +146,84 @@ export type IntervalsConnectionView =
 
 function envValue(name: string): string {
   return process.env[name]?.trim() ?? "";
+}
+
+/**
+ * Allowlist from `INTERVALS_OWNER_EMAILS`, trimmed and lowercased.
+ * `null` when unset, blank, or with no addresses (fail closed).
+ */
+export function intervalsOwnerEmailAllowlist(): Set<string> | null {
+  const raw = process.env.INTERVALS_OWNER_EMAILS;
+  if (raw === undefined || raw.trim() === "") return null;
+  const allow = new Set(
+    raw
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0),
+  );
+  if (allow.size === 0) return null;
+  return allow;
+}
+
+/** Shared Intervals key is owner-only. Email match is trim + lowercase on both sides. */
+export function canUseIntervals(user: { email?: string | null } | null | undefined): boolean {
+  const email = user?.email?.trim().toLowerCase() ?? "";
+  if (!email) return false;
+  const allow = intervalsOwnerEmailAllowlist();
+  if (!allow) return false;
+  return allow.has(email);
+}
+
+export function userCanUseIntervals(userId: string): boolean {
+  return canUseIntervals(getUserById(userId));
+}
+
+/** Drop a stored connection when this account cannot use the shared key. */
+export async function revokeUnownedIntervals(userId: string): Promise<void> {
+  if (userCanUseIntervals(userId)) return;
+  if (!getStoredIntervalsConnection(userId)) return;
+  await enqueueWrite(() => {
+    deleteIntervalsConnection(userId);
+  });
+}
+
+/** Which Settings controls to show. Non-owners get the unavailable status and no buttons. */
+export function intervalsSettingsControls(input: {
+  available: boolean;
+  connection: IntervalsConnectionView;
+}): { statusLabel: string; showConnect: boolean; showSync: boolean } {
+  if (!input.available) {
+    return {
+      statusLabel: INTERVALS_UNAVAILABLE_STATUS,
+      showConnect: false,
+      showSync: false,
+    };
+  }
+  if (input.connection.connected) {
+    return {
+      statusLabel: input.connection.statusLabel,
+      showConnect: false,
+      showSync: true,
+    };
+  }
+  return {
+    statusLabel: input.connection.statusLabel,
+    showConnect: true,
+    showSync: false,
+  };
+}
+
+/** 403 for Settings connect/sync (and Which run? follow-ups) when the account is not allowed. */
+export function intervalsOwnerDeniedResponse(
+  user: { email?: string | null } | null | undefined,
+  intent: string,
+): Response | null {
+  if (!GATED_INTERVALS_INTENTS.has(intent.trim())) return null;
+  if (canUseIntervals(user)) return null;
+  return new Response(INTERVALS_NOT_FOR_ACCOUNT, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
 }
 
 export function intervalsApiKey(): string | null {
@@ -529,7 +620,11 @@ export function formatSyncedAgo(iso: string, now = new Date()): string {
 }
 
 export function getIntervalsConnection(userId: string): IntervalsConnection | null {
-  return getStoredIntervalsConnection(userId);
+  const stored = getStoredIntervalsConnection(userId);
+  if (!stored) return null;
+  if (userCanUseIntervals(userId)) return stored;
+  revokeUnownedIntervals(userId).catch((err) => console.error("[intervals] revoke unowned failed", err));
+  return null;
 }
 
 export function getIntervalsConnectionView(userId: string, now = new Date()): IntervalsConnectionView {
@@ -690,6 +785,10 @@ export async function fetchIntervalsActivities(
 }
 
 export async function connectIntervals(userId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!userCanUseIntervals(userId)) {
+    await revokeUnownedIntervals(userId);
+    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT };
+  }
   const apiKey = intervalsApiKey();
   if (!apiKey) return { ok: false, error: INTERVALS_API_KEY_NOT_CONFIGURED };
 

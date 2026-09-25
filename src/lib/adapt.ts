@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { adaptRunLogLine, type AdaptRunCounts } from "./adapt-cron";
 import {
+  getIntervalsConnection,
   loadRunEffort,
   upsertPlannedRuns,
   type PlannedRunUpload,
@@ -651,7 +652,15 @@ function adaptCounts(
   return { processed, written, skipped, patched, llmFailed, uploaded, uploadFailed };
 }
 
-export async function runNocturnalAdaptation(now = new Date()): Promise<AdaptRunCounts> {
+export async function runNocturnalAdaptation(
+  now = new Date(),
+  deps: {
+    loadRunEffort?: typeof loadRunEffort;
+    upsertPlannedRuns?: typeof upsertPlannedRuns;
+  } = {},
+): Promise<AdaptRunCounts> {
+  const readEffort = deps.loadRunEffort ?? loadRunEffort;
+  const uploadRuns = deps.upsertPlannedRuns ?? upsertPlannedRuns;
   const snapshot = await getAdaptationJobSnapshot();
   const planned = planDecisions(snapshot, now);
   const decisions: AdaptationDecision[] = [];
@@ -673,7 +682,10 @@ export async function runNocturnalAdaptation(now = new Date()): Promise<AdaptRun
       plannedDecision.draft.sourceDate,
       todaySession,
     );
-    const effort = log ? await loadRunEffort(plannedDecision.draft.sourceDate, log.distanceKm) : null;
+    const effort =
+      log && getIntervalsConnection(plannedDecision.draft.userId)
+        ? await readEffort(plannedDecision.draft.sourceDate, log.distanceKm)
+        : null;
     const actual = llmActualFromRunLog(log, effort);
     let decision = applyEffortToDecision(
       plannedDecision,
@@ -704,9 +716,12 @@ export async function runNocturnalAdaptation(now = new Date()): Promise<AdaptRun
 
   let uploaded = 0;
   let uploadFailed = 0;
-  const uploads = written.length > 0 ? plannedUploads(snapshot, decisions) : [];
+  const uploads = (written.length > 0 ? plannedUploads(snapshot, decisions) : []).filter((upload) => {
+    const session = snapshot.sessions.find((entry) => entry.id === upload.externalId);
+    return Boolean(session && getIntervalsConnection(session.userId));
+  });
   if (uploads.length > 0) {
-    const result = await upsertPlannedRuns(uploads);
+    const result = await uploadRuns(uploads);
     uploaded = result.uploaded;
     uploadFailed = result.failed;
   }
