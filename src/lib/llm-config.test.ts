@@ -50,6 +50,27 @@ describe("readLlmConfig", () => {
     });
   });
 
+  it("uses https://ollama.com/v1 and gemma4:31b when only OLLAMA_API_KEY is set", () => {
+    clearLlmEnv();
+    process.env.OLLAMA_API_KEY = " ollama-key ";
+    assert.deepEqual(readLlmConfig(), {
+      apiKey: "ollama-key",
+      baseUrl: "https://ollama.com/v1",
+      model: "gemma4:31b",
+    });
+  });
+
+  it("uses OLLAMA_MODEL when it overrides the default on the Ollama path", () => {
+    clearLlmEnv();
+    process.env.OLLAMA_API_KEY = "ollama-key";
+    process.env.OLLAMA_MODEL = "  custom-model  ";
+    assert.deepEqual(readLlmConfig(), {
+      apiKey: "ollama-key",
+      baseUrl: "https://ollama.com/v1",
+      model: "custom-model",
+    });
+  });
+
   it("uses the ollama base URL and OLLAMA_MODEL when only OLLAMA_API_KEY is set", () => {
     clearLlmEnv();
     process.env.OLLAMA_API_KEY = " legacy-key ";
@@ -86,6 +107,25 @@ describe("readLlmConfig", () => {
       baseUrl: "https://ollama.com/v1",
       model: "gemma4:31b",
     });
+  });
+
+  it("falls through to Ollama when ADAPT_LLM_API_KEY is whitespace only", () => {
+    clearLlmEnv();
+    process.env.ADAPT_LLM_API_KEY = "   ";
+    process.env.ADAPT_LLM_BASE_URL = "https://api.openai.com/v1/";
+    process.env.ADAPT_LLM_MODEL = "gpt-4o-mini";
+    process.env.OLLAMA_API_KEY = " ollama-key ";
+    process.env.OLLAMA_MODEL = "gemma4:31b";
+    assert.deepEqual(readLlmConfig(), {
+      apiKey: "ollama-key",
+      baseUrl: "https://ollama.com/v1",
+      model: "gemma4:31b",
+    });
+  });
+
+  it("returns null when neither key is set", () => {
+    clearLlmEnv();
+    assert.equal(readLlmConfig(), null);
   });
 
   it("returns null when both keys are missing or blank", () => {

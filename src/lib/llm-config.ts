@@ -1,8 +1,8 @@
 export const DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_LLM_MODEL = "gpt-4o-mini";
-/** Prior Generate feedback host. Used only for the one-release Ollama key fallback. */
+/** Official Ollama host for `OLLAMA_API_KEY` (`https://ollama.com/v1`). */
 export const OLLAMA_CLOUD_BASE_URL = "https://ollama.com/v1";
-/** Prior Generate feedback model (`OLLAMA_MODEL` in the coach tests). */
+/** Default `OLLAMA_MODEL` when unset (`gemma4:31b`). */
 export const DEFAULT_OLLAMA_MODEL = "gemma4:31b";
 
 export type LlmConfig = {
@@ -20,9 +20,11 @@ function withoutTrailingSlash(url: string): string {
 }
 
 /** OpenAI-compatible chat config for the adapt job and Generate feedback.
- *  `ADAPT_LLM_API_KEY` uses `ADAPT_LLM_BASE_URL` / `ADAPT_LLM_MODEL`.
- *  `OLLAMA_API_KEY` is a one-release fallback and ignores those adapt vars,
- *  because `.env.example` ships the OpenAI host and model.
+ *  Precedence: `ADAPT_LLM_API_KEY`, when set, wins and uses `ADAPT_LLM_BASE_URL`
+ *  / `ADAPT_LLM_MODEL` (defaults `https://api.openai.com/v1` and `gpt-4o-mini`).
+ *  Otherwise `OLLAMA_API_KEY` is the official supported path: host
+ *  `https://ollama.com/v1` and `OLLAMA_MODEL` (default `gemma4:31b`), ignoring
+ *  `ADAPT_LLM_BASE_URL` and `ADAPT_LLM_MODEL`.
  */
 export function readLlmConfig(): LlmConfig | null {
   const adaptKey = trimmedEnv("ADAPT_LLM_API_KEY");
