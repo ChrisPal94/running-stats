@@ -41,6 +41,7 @@ export type AuthUser = {
 type StoredUser = AuthUser & {
   passwordHash?: string;
   googleId?: string;
+  sessionEpoch?: number;
 };
 
 type SessionPayload = {
