@@ -45,6 +45,7 @@ const {
 const {
   INTERVALS_ACCESS_EXPIRED,
   INTERVALS_ATHLETE_ID_INVALID,
+  INTERVALS_ATHLETE_ID_PLACEHOLDER,
   INTERVALS_CONNECT_REJECTED,
   INTERVALS_CONNECT_UNAVAILABLE,
   INTERVALS_RECONNECT_LINK_LABEL,
@@ -722,14 +723,34 @@ describe("Intervals OAuth", () => {
       true,
     );
     assert.equal(keyHtml.includes("Couldn’t connect. Check your API key and athlete ID."), true);
+    assert.equal(INTERVALS_ATHLETE_ID_PLACEHOLDER, "i123456");
     assert.equal(INTERVALS_ATHLETE_ID_INVALID, "Enter an athlete ID like i123456.");
-    assert.equal(keyHtml.includes(`placeholder="${INTERVALS_ATHLETE_ID_INVALID}"`), true);
+    assert.equal(keyHtml.includes(`placeholder="${INTERVALS_ATHLETE_ID_PLACEHOLDER}"`), true);
+    assert.equal(keyHtml.includes(`placeholder="${INTERVALS_ATHLETE_ID_INVALID}"`), false);
+    assert.equal(keyHtml.includes(INTERVALS_ATHLETE_ID_INVALID), false);
     assert.equal(keyHtml.includes("i704884"), false);
     assert.match(keyHtml, /role="alert"/);
     assert.equal(keyHtml.includes("Not available for your account"), false);
     assert.equal(keyHtml.includes('data-intervals-actions'), true);
     assert.equal(keyHtml.includes('data-intervals-helper'), true);
     assert.equal(keyHtml.includes(CLIENT_SECRET), false);
+
+    const invalidAthlete = await renderConnectedApps({
+      connection: { connected: false, statusLabel: "Not connected" },
+      intervalsAvailable: true,
+      oauthConfigured: false,
+      encryptionReady: true,
+      athleteIdDraft: "nope",
+      error: INTERVALS_ATHLETE_ID_INVALID,
+    });
+    const athleteInputAt = invalidAthlete.indexOf('name="intervalsAthleteId"');
+    const athleteMessageAt = invalidAthlete.indexOf(INTERVALS_ATHLETE_ID_INVALID);
+    assert.equal(invalidAthlete.includes(`placeholder="${INTERVALS_ATHLETE_ID_PLACEHOLDER}"`), true);
+    assert.equal(invalidAthlete.includes(`placeholder="${INTERVALS_ATHLETE_ID_INVALID}"`), false);
+    assert.equal(athleteInputAt >= 0 && athleteMessageAt > athleteInputAt, true);
+    assert.equal(invalidAthlete.includes('id="intervals-athlete-error"'), true);
+    assert.equal(invalidAthlete.includes('aria-describedby="intervals-athlete-error"'), true);
+    assert.equal(invalidAthlete.slice(0, athleteInputAt).includes(INTERVALS_ATHLETE_ID_INVALID), false);
 
     const connected = await renderConnectedApps({
       connection: {

@@ -2,6 +2,7 @@
 import {
   INTERVALS_ACCESS_EXPIRED,
   INTERVALS_ATHLETE_ID_INVALID,
+  INTERVALS_ATHLETE_ID_PLACEHOLDER,
   INTERVALS_CONNECT_COPY,
   INTERVALS_CONNECT_UNAVAILABLE,
   INTERVALS_UNAVAILABLE_HELPER_ID,
@@ -47,6 +48,8 @@ const connectLabel = reconnecting
   : oauthConfigured || connectDisabled
     ? INTERVALS_OAUTH_CONNECT_BUTTON
     : "Connect";
+const athleteFieldError = error === INTERVALS_ATHLETE_ID_INVALID;
+const rowError = athleteFieldError ? "" : error;
 const statusLabel = reconnecting ? INTERVALS_ACCESS_EXPIRED : controls.statusLabel;
 let helper = "";
 let helperIsError = false;
@@ -79,13 +82,13 @@ const disabledClass =
   </div>
 
   {
-    error && (
+    rowError && (
       <p
         class="mt-4 rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
         role="alert"
       >
         {
-          error === INTERVALS_SYNC_NEEDS_CONNECT ? (
+          rowError === INTERVALS_SYNC_NEEDS_CONNECT ? (
             <>
               <a href={`/settings#${INTERVALS_ROW_ID}`} class="underline underline-offset-2">
                 Connect Intervals.icu
@@ -93,7 +96,7 @@ const disabledClass =
               {" to import your runs."}
             </>
           ) : (
-            error
+            rowError
           )
         }
       </p>
@@ -122,13 +125,22 @@ const disabledClass =
               type="text"
               name="intervalsAthleteId"
               value={athleteIdDraft}
-              placeholder={INTERVALS_ATHLETE_ID_INVALID}
+              placeholder={INTERVALS_ATHLETE_ID_PLACEHOLDER}
               autocomplete="off"
               autocapitalize="off"
               spellcheck="false"
               maxlength="16"
+              aria-invalid={athleteFieldError ? "true" : undefined}
+              aria-describedby={athleteFieldError ? "intervals-athlete-error" : undefined}
               class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
             />
+            {
+              athleteFieldError ? (
+                <p id="intervals-athlete-error" class="text-sm leading-6 text-[#ffb4aa]" role="alert">
+                  {INTERVALS_ATHLETE_ID_INVALID}
+                </p>
+              ) : null
+            }
           </label>
         </form>
       ) : null

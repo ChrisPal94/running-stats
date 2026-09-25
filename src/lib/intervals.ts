@@ -27,6 +27,8 @@ export const INTERVALS_CONNECT_COPY = "Your API key is encrypted and never shown
 export const INTERVALS_SYNC_ERROR = "Couldn’t sync. Try again.";
 export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
 export const INTERVALS_CONNECT_INPUT = "Enter your Intervals API key and athlete ID.";
+/** Example shown in the empty athlete ID field. Not the validation message. */
+export const INTERVALS_ATHLETE_ID_PLACEHOLDER = "i123456";
 export const INTERVALS_ATHLETE_ID_INVALID = "Enter an athlete ID like i123456.";
 export const INTERVALS_CONNECT_REJECTED = "Couldn’t connect. Check your API key and athlete ID.";
 export const INTERVALS_ACCESS_EXPIRED = "Intervals access expired";
