@@ -99,7 +99,7 @@ npm run cleanup:intervals-nonowners
 npm run cleanup:intervals-nonowners -- --apply
 ```
 
-Do not run step 6 before step 5. Until `emailVerifiedAt` is set, the allowlisted address is still a non-owner, and cleanup `--apply` would delete that account’s Intervals run logs.
+Do not run step 6 before step 5. Until `emailVerifiedAt` is set, cleanup `--apply` aborts and deletes no RunLogs.
 
 ## One-off: reassign the owner email
 
@@ -128,7 +128,7 @@ Run this once on the **web** service, after the owner runbook’s Google sign-in
 
 Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
 
-Default is a dry run. It prints each account (`userId`, `email`, `verified`, `wouldDelete`), including verified owners at `0`, plus a total. `verified=yes` only when `emailVerifiedAt` is set. An allowlisted address that is still unverified is a non-owner. It does not delete.
+Default is a dry run. It prints each account (`userId`, `email`, `verified`, `wouldDelete`), including verified owners at `0`, plus a total. `verified=yes` only when `emailVerifiedAt` is set. It does not delete.
 
 ```bash
 npm run cleanup:intervals-nonowners
@@ -147,7 +147,7 @@ npm run cleanup:intervals-nonowners -- --before 2026-09-25T00:00:00.000Z
 npm run cleanup:intervals-nonowners -- --apply --before 2026-09-25T00:00:00.000Z
 ```
 
-A row is deleted only when all of these are true: `source = intervals`, the account is not an owner (`canUseIntervals` is false: not on the allowlist, or allowlisted but unverified), the account has no encrypted Intervals token or API key of its own, and `createdAt` is strictly before the cutoff. Verified owners, accounts that connected their own Intervals (OAuth or API key), logs at or after the cutoff, and every manual `RunLog` stay. An allowlisted address that is still unverified is a non-owner. The dry run logs `email=`, `verified=`, and `wouldDelete=`. `--apply` logs `wouldDelete=` before the delete and `deleted=` after, with `userId` only (no email). If `INTERVALS_OWNER_EMAILS` is unset or empty, or `--before` is not an ISO timestamp, both modes log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
+A row is deleted only when all of these are true: `source = intervals`, the account is not a verified owner (`canUseIntervals` is false), the account has no encrypted Intervals token or API key of its own, and `createdAt` is strictly before the cutoff. Verified owners, accounts that connected their own Intervals (OAuth or API key), logs at or after the cutoff, and every manual `RunLog` stay. The dry run logs `email=`, `verified=`, and `wouldDelete=`. `--apply` logs `wouldDelete=` before the delete and `deleted=` after, with `userId` only (no email). If an allowlisted email matches an account with no `emailVerifiedAt`, the dry run warns and omits that account, and `--apply` exits 1 without deleting any RunLogs until that account is verified; an allowlisted email with no account does not abort. If `INTERVALS_OWNER_EMAILS` is unset or empty, or `--before` is not an ISO timestamp, both modes log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
 
 ## Reverse proxy / CSRF
 

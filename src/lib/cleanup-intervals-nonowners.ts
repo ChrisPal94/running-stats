@@ -31,12 +31,23 @@ function resolveCutoff(before: string | undefined): string | null {
   return before;
 }
 
+function pendingOwnerAbortLine(userId: string): string {
+  return `[cleanup:intervals-nonowners] aborted: allowlisted account userId=${userId} is not verified yet. Sign in with Google first. No RunLogs deleted.`;
+}
+
+function pendingOwnerWarningLine(userId: string): string {
+  return `[cleanup:intervals-nonowners] warning: allowlisted account userId=${userId} is not verified yet. --apply will abort until that account is verified.`;
+}
+
 /**
  * Report old shared-key Intervals RunLogs that are safe to remove.
  * An owner is an allowlisted email with `emailVerifiedAt` set (`canUseIntervals`).
- * A row is eligible only when source is intervals, the account is not an owner,
- * the account has no encrypted token or API key, and `createdAt` is strictly
- * before the cutoff. Default cutoff is `PER_USER_INTERVALS_SINCE`.
+ * An allowlisted account with no `emailVerifiedAt` is a pending owner: dry-run
+ * warns and omits them; `--apply` aborts and deletes nothing. An allowlisted
+ * email with no account does not abort.
+ * A row is eligible only when source is intervals, the account is not an owner
+ * and not a pending owner, the account has no encrypted token or API key, and
+ * `createdAt` is strictly before the cutoff. Default cutoff is `PER_USER_INTERVALS_SINCE`.
  * Default is a dry run. Pass `{ apply: true }` to delete the eligible rows.
  * An unset or empty allowlist, or an invalid cutoff, aborts and deletes nothing.
  */
@@ -52,7 +63,8 @@ export function cleanupNonOwnerIntervalsRunLogs(
     return { aborted: true, apply, rows: [] };
   }
 
-  if (!intervalsOwnerEmailAllowlist()) {
+  const allowlist = intervalsOwnerEmailAllowlist();
+  if (!allowlist) {
     console.error(
       "[cleanup:intervals-nonowners] aborted: INTERVALS_OWNER_EMAILS is unset or empty; no RunLogs deleted",
     );
@@ -62,10 +74,25 @@ export function cleanupNonOwnerIntervalsRunLogs(
   const cutoffMs = Date.parse(cutoff);
   const users = listUserEmails();
   const usersById = new Map(users.map((user) => [user.id, user]));
+  const pendingOwners = users
+    .filter(
+      (user) =>
+        allowlist.has(user.email.trim().toLowerCase()) &&
+        !hasVerifiedEmail({ emailVerifiedAt: user.emailVerifiedAt }),
+    )
+    .sort((a, b) => a.id.localeCompare(b.id));
+  if (apply && pendingOwners.length > 0) {
+    for (const user of pendingOwners) console.error(pendingOwnerAbortLine(user.id));
+    return { aborted: true, apply: true, rows: [] };
+  }
+  for (const user of pendingOwners) console.error(pendingOwnerWarningLine(user.id));
+  const pendingIds = new Set(pendingOwners.map((user) => user.id));
+
   const secretUsers = new Set(listIntervalsSecretUserIds());
   const idsByUser = new Map<string, string[]>();
 
   for (const log of listIntervalsRunLogs()) {
+    if (pendingIds.has(log.userId)) continue;
     const user = usersById.get(log.userId);
     if (user && canUseIntervals({ email: user.email, emailVerifiedAt: user.emailVerifiedAt })) continue;
     if (secretUsers.has(log.userId)) continue;
@@ -76,13 +103,15 @@ export function cleanupNonOwnerIntervalsRunLogs(
     idsByUser.set(log.userId, ids);
   }
 
-  const rows: IntervalsCleanupRow[] = users.map((user) => ({
-    userId: user.id,
-    email: user.email.trim(),
-    verified: hasVerifiedEmail({ emailVerifiedAt: user.emailVerifiedAt }),
-    wouldDelete: idsByUser.get(user.id)?.length ?? 0,
-    ids: idsByUser.get(user.id) ?? [],
-  }));
+  const rows: IntervalsCleanupRow[] = users
+    .filter((user) => !pendingIds.has(user.id))
+    .map((user) => ({
+      userId: user.id,
+      email: user.email.trim(),
+      verified: hasVerifiedEmail({ emailVerifiedAt: user.emailVerifiedAt }),
+      wouldDelete: idsByUser.get(user.id)?.length ?? 0,
+      ids: idsByUser.get(user.id) ?? [],
+    }));
   const known = new Set(users.map((user) => user.id));
   for (const [userId, ids] of idsByUser) {
     if (known.has(userId)) continue;

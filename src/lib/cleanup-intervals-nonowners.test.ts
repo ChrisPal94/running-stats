@@ -10,6 +10,7 @@ import {
   loadTrainingSnapshot,
   saveTrainingSnapshot,
   upsertIntervalsConnection,
+  verifyUserEmail,
 } from "./db.ts";
 import type { RunLog } from "./training.ts";
 
@@ -128,7 +129,7 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
 
   it("dry run reports per-user counts and --apply deletes only non-owner intervals RunLogs", () => {
     seedLogs();
-    process.env.INTERVALS_OWNER_EMAILS = "CRISPAL94@gmail.com, second-owner@example.com";
+    process.env.INTERVALS_OWNER_EMAILS = "CRISPAL94@gmail.com";
     const before = ids();
     const lines = captureLogs();
 
@@ -271,4 +272,106 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
     assert.equal(lines.some((line) => line.includes("--before") && line.includes("no RunLogs deleted")), true);
     assert.deepEqual(ids(), before);
   });
+
+  it("aborts apply when an allowlisted account is unverified and deletes nothing", () => {
+    seedPendingOwner();
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com, pending-owner@example.com";
+    const before = ids();
+    const lines = captureLogs();
+    const applied = cleanupNonOwnerIntervalsRunLogs({ apply: true });
+    assert.equal(applied.aborted, true);
+    assert.equal(applied.apply, true);
+    assert.deepEqual(applied.rows, []);
+    assert.deepEqual(lines, [
+      `[cleanup:intervals-nonowners] aborted: allowlisted account userId=${PENDING_ID} is not verified yet. Sign in with Google first. No RunLogs deleted.`,
+    ]);
+    assert.equal(lines.some((line) => line.includes("@")), false);
+    assert.equal(lines.some((line) => line.includes("wouldDelete=") || line.includes("deleted=")), false);
+    assert.deepEqual(ids(), before);
+    assert.equal(before.includes("other-intervals-a"), true);
+    assert.equal(before.includes("pending-intervals"), true);
+  });
+
+  it("dry-run warns and omits a pending owner's logs", () => {
+    seedPendingOwner();
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com, pending-owner@example.com";
+    const before = ids();
+    const lines = captureLogs();
+    const dry = cleanupNonOwnerIntervalsRunLogs();
+    assert.equal(dry.aborted, false);
+    assert.equal(dry.apply, false);
+    assert.equal(dry.rows.some((row) => row.userId === PENDING_ID), false);
+    assert.equal(dry.rows.find((row) => row.userId === OTHER_ID)?.wouldDelete, 2);
+    assert.equal(dry.rows.find((row) => row.userId === UNVERIFIED_ID)?.wouldDelete, 1);
+    assert.equal(dry.rows.find((row) => row.userId === OWNER_ID)?.wouldDelete, 0);
+    assert.equal(dry.rows.reduce((sum, row) => sum + row.wouldDelete, 0), 3);
+    const warningAt = lines.findIndex((line) => line.startsWith("[cleanup:intervals-nonowners] warning:"));
+    const rowAt = lines.findIndex((line) => line.includes("dry-run userId="));
+    assert.equal(
+      lines[warningAt],
+      `[cleanup:intervals-nonowners] warning: allowlisted account userId=${PENDING_ID} is not verified yet. --apply will abort until that account is verified.`,
+    );
+    assert.equal(warningAt >= 0 && rowAt > warningAt, true);
+    assert.equal(lines.some((line) => line.includes(PENDING_ID) && line.includes("wouldDelete=")), false);
+    assert.equal(lines[warningAt]?.includes("@"), false);
+    assert.equal(lines.includes("[cleanup:intervals-nonowners] dry-run total=3"), true);
+    assert.equal(lines.includes("[cleanup:intervals-nonowners] dry-run: nothing deleted"), true);
+    assert.deepEqual(ids(), before);
+  });
+
+  it("does not abort when an allowlisted email has no account", () => {
+    seedLogs();
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com, missing-owner@example.com";
+    const lines = captureLogs();
+    const applied = cleanupNonOwnerIntervalsRunLogs({ apply: true });
+    assert.equal(applied.aborted, false);
+    assert.equal(applied.apply, true);
+    assert.equal(lines.some((line) => line.includes("not verified yet")), false);
+    assert.equal(lines.some((line) => line.includes("missing-owner@example.com")), false);
+    assert.equal(applied.rows.find((row) => row.userId === OTHER_ID)?.wouldDelete, 2);
+    assert.equal(applied.rows.find((row) => row.userId === UNVERIFIED_ID)?.wouldDelete, 1);
+    assert.equal(lines.includes("[cleanup:intervals-nonowners] apply total=3"), true);
+    assert.deepEqual(ids(), ["other-manual", "owner-intervals", "owner-manual"]);
+  });
+
+  it("applies normally after the pending owner is verified", () => {
+    seedPendingOwner();
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com, pending-owner@example.com";
+    assert.equal(verifyUserEmail(PENDING_ID, "2026-09-25T12:00:00.000Z"), true);
+    const lines = captureLogs();
+    const applied = cleanupNonOwnerIntervalsRunLogs({ apply: true });
+    assert.equal(applied.aborted, false);
+    assert.equal(applied.apply, true);
+    assert.equal(applied.rows.find((row) => row.userId === PENDING_ID)?.wouldDelete, 0);
+    assert.equal(applied.rows.find((row) => row.userId === PENDING_ID)?.verified, true);
+    assert.equal(applied.rows.find((row) => row.userId === OTHER_ID)?.wouldDelete, 2);
+    assert.equal(applied.rows.find((row) => row.userId === UNVERIFIED_ID)?.wouldDelete, 1);
+    assert.equal(lines.includes("[cleanup:intervals-nonowners] apply total=3"), true);
+    assert.equal(lines.some((line) => line.includes("not verified yet")), false);
+    assert.equal(ids().includes("pending-intervals"), true);
+    assert.equal(ids().includes("owner-intervals"), true);
+    assert.equal(ids().includes("other-intervals-a"), false);
+    assert.equal(ids().includes("unverified-intervals"), false);
+  });
 });
+
+const PENDING_ID = "cleanup-pending";
+
+function seedPendingOwner(): void {
+  seedLogs();
+  if (!getUserById(PENDING_ID)) {
+    insertUser({
+      id: PENDING_ID,
+      email: "  Pending-Owner@Example.com ",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+  }
+  const snapshot = loadTrainingSnapshot();
+  saveTrainingSnapshot(
+    {
+      ...snapshot,
+      runLogs: [...snapshot.runLogs, runLog("pending-intervals", PENDING_ID, "intervals")],
+    },
+    "replace",
+  );
+}
