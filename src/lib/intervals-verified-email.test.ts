@@ -28,7 +28,8 @@ import {
 import { finishGoogleOAuth } from "./google-oauth.ts";
 import {
   canUseIntervals,
-  INTERVALS_NOT_FOR_ACCOUNT,
+  INTERVALS_CONNECT_INPUT,
+  INTERVALS_CONNECT_UNAVAILABLE,
 } from "./intervals.ts";
 import { consumeMagicLink, finishMagicLink, issueMagicLinkToken } from "./magic-link.ts";
 import { handleSettingsPost } from "./training.ts";
@@ -288,8 +289,14 @@ describe("password signup does not verify an owner email", () => {
       const result = await handleSettingsPost(stored!.id, form);
       assert.equal(result.ok, false);
       if (!result.ok) {
-        assert.equal(result.status, 403);
-        assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
+        if (intent === "intervals-connect") {
+          assert.equal(result.status, undefined);
+          assert.equal(result.error, INTERVALS_CONNECT_INPUT);
+        } else {
+          assert.equal(result.status, 403);
+          assert.equal(result.error, INTERVALS_CONNECT_UNAVAILABLE);
+        }
+        assert.equal(result.error.includes("for your account"), false);
       }
     }
     assert.equal(fetched, false);

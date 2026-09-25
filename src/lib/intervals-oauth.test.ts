@@ -78,9 +78,11 @@ const {
   INTERVALS_OAUTH_STATE_TTL_SEC,
   INTERVALS_TOKEN_URL,
   finishIntervalsOAuth,
+  intervalsOAuthCallbackUrl,
   isIntervalsOAuthConfigured,
   startIntervalsOAuth,
 } = await import("./intervals-oauth.ts");
+const { astroBuild, isProductionRuntime } = await import("./public-origin.ts");
 const { setSessionCookie } = await import("./auth.ts");
 const { GET: startRoute } = await import("../pages/auth/intervals/start.ts");
 const { GET: callbackRoute } = await import("../pages/auth/intervals/callback.ts");
@@ -985,6 +987,71 @@ describe("Intervals OAuth", () => {
     );
     assert.equal(started.location, "/settings");
     assert.equal(started.location.includes("evil.example"), false);
+  });
+
+  it("fails closed on a built server without NODE_ENV or PUBLIC_ORIGIN", () => {
+    delete process.env.NODE_ENV;
+    delete process.env.PUBLIC_ORIGIN;
+    mock.method(astroBuild, "isProd", () => true);
+    assert.equal(isProductionRuntime(), true);
+    assert.equal(isIntervalsOAuthConfigured(), false);
+    const userId = "oauth-built-no-origin";
+    insertUser({ id: userId, email: "built-no-origin@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    const request = new Request("http://127.0.0.1:4321/auth/intervals/start", {
+      headers: {
+        host: "evil.example",
+        "x-forwarded-host": "evil.example",
+        "x-forwarded-proto": "https",
+      },
+    });
+    const callback = intervalsOAuthCallbackUrl(request);
+    assert.equal(callback, "/auth/intervals/callback");
+    assert.equal(callback.includes("evil.example"), false);
+    const started = startIntervalsOAuth(request, cookieJar().cookies, userId);
+    assert.equal(started.location, "/settings");
+    assert.equal(started.location.includes("intervals.icu"), false);
+    assert.equal(started.location.includes("redirect_uri"), false);
+    assert.equal(started.location.includes("evil.example"), false);
+  });
+
+  it("sends a missing-encryption callback to the unavailable line", async () => {
+    const userId = "oauth-callback-no-enc";
+    insertUser({ id: userId, email: "callback-no-enc@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    const jar = cookieJar();
+    setSessionCookie(jar.cookies, userId);
+    const started = startIntervalsOAuth(prodRequest("/auth/intervals/start"), jar.cookies, userId);
+    const state = new URL(started.location).searchParams.get("state") ?? "";
+    assert.equal(state.length > 0, true);
+    delete process.env.INTERVALS_KEY_ENC_SECRET;
+    let fetched = false;
+    mock.method(globalThis, "fetch", async () => {
+      fetched = true;
+      return tokenResponse(TOKEN_A, ATHLETE_A, NAME_A);
+    });
+    const response = await callbackRoute({
+      request: prodRequest(`/auth/intervals/callback?code=enc-gone&state=${state}`),
+      cookies: jar.cookies,
+      redirect: redirectTo,
+    } as Parameters<typeof callbackRoute>[0]);
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get("location"), "/settings?toast=intervals-unavailable");
+    assert.equal(intervalsOAuthSettingsError("intervals-unavailable"), INTERVALS_CONNECT_UNAVAILABLE);
+    assert.equal(
+      INTERVALS_CONNECT_UNAVAILABLE,
+      "Connecting Intervals.icu isn’t available right now. Try again later.",
+    );
+    assert.equal(intervalsOAuthSettingsError("intervals-unavailable") === INTERVALS_OAUTH_CONNECT_ERROR, false);
+    const row = await renderConnectedApps({
+      connection: { connected: false, statusLabel: "Not connected" },
+      oauthConfigured: true,
+      encryptionReady: false,
+      error: intervalsOAuthSettingsError("intervals-unavailable"),
+    });
+    assert.match(row, /role="alert"/);
+    assert.equal(row.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
+    assert.equal(row.includes("Couldn’t connect to Intervals"), false);
+    assert.equal(fetched, false);
+    assert.equal(getStoredConnection(userId), null);
   });
 
   it("prefixes a numeric OAuth athlete id and rejects anything else", async () => {

@@ -27,6 +27,36 @@ export type IntervalsCleanupResult = {
   rows: IntervalsCleanupRow[];
 };
 
+export type CleanupCliArgs = { ok: true; apply: boolean; before?: string } | { ok: false };
+
+/** `--before YYYY-MM-DD` and `--before=YYYY-MM-DD`. Any other flag aborts. */
+export function parseCleanupCliArgs(argv: readonly string[]): CleanupCliArgs {
+  let apply = false;
+  let before: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index] ?? "";
+    if (arg === "--apply") {
+      apply = true;
+      continue;
+    }
+    if (arg === "--before") {
+      const value = argv[index + 1];
+      if (value === undefined || value.startsWith("-")) return { ok: false };
+      before = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--before=")) {
+      const value = arg.slice("--before=".length);
+      if (!value) return { ok: false };
+      before = value;
+      continue;
+    }
+    return { ok: false };
+  }
+  return { ok: true, apply, before };
+}
+
 function invalidBeforeLine(): string {
   return "[cleanup:intervals-nonowners] aborted: --before must be a real YYYY-MM-DD or an ISO timestamp like 2026-09-25T00:00:00.000Z; no RunLogs deleted";
 }

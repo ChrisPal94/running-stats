@@ -151,14 +151,17 @@ npm run cleanup:intervals-nonowners
 npm run cleanup:intervals-nonowners -- --apply
 ```
 
-Optional cutoff (`YYYY-MM-DD`, or an ISO timestamp). Impossible dates such as `2026-02-30` and any cutoff in the future abort with exit code 1. The default is `2026-09-25T00:00:00.000Z` (`PER_USER_INTERVALS_SINCE`):
+Optional cutoff (`YYYY-MM-DD`, or an ISO timestamp). `--before YYYY-MM-DD` and `--before=YYYY-MM-DD` are the same flag. Impossible dates such as `2026-02-30` and any cutoff in the future abort with exit code 1. The default is `2026-09-25T00:00:00.000Z` (`PER_USER_INTERVALS_SINCE`):
 
 ```bash
 npm run cleanup:intervals-nonowners -- --before 2026-09-25T00:00:00.000Z
+npm run cleanup:intervals-nonowners -- --before=2026-09-25
 npm run cleanup:intervals-nonowners -- --apply --before 2026-09-25T00:00:00.000Z
 ```
 
-A row is deleted only when all of these are true: `source = intervals`, the account is not a verified owner (`canUseIntervals` is false), the account has no encrypted Intervals token or API key of its own, and `createdAt` is strictly before the cutoff. Verified owners, accounts that connected their own Intervals (OAuth or API key), logs at or after the cutoff, and every manual `RunLog` stay. The dry run logs `email=`, `verified=`, and `wouldDelete=`. `--apply` logs `wouldDelete=` before the delete and `deleted=` after, with `userId` only (no email). If an allowlisted email matches an account with no `emailVerifiedAt`, the dry run warns and omits that account, and `--apply` exits 1 without deleting any RunLogs until that account is verified; an allowlisted email with no account does not abort. If `INTERVALS_OWNER_EMAILS` is unset or empty, or `--before` is not a real `YYYY-MM-DD` (or ISO timestamp) that round-trips and is not in the future, both modes log why and delete nothing (exit code 1). `--apply` logs `deleted=` from the rows SQLite actually removed, which can be lower than `wouldDelete=` if a sync races. Safe to run again; a second `--apply` deletes zero rows.
+An unknown flag, `--before` with no value, or an empty `--before=` exits 1 and deletes nothing. Those arguments do not fall through to the default cutoff.
+
+A row is deleted only when all of these are true: `source = intervals`, the account is not a verified owner (`canUseIntervals` is false), the account has no encrypted Intervals token or API key of its own, and `createdAt` is strictly before the cutoff. Verified owners, accounts that connected their own Intervals (OAuth or API key), logs at or after the cutoff, and every manual `RunLog` stay. RunLogs whose user row no longer exists are removed when they are before the cutoff: that account is not a verified owner and has no stored secret. The dry run logs `email=`, `verified=`, and `wouldDelete=`. `--apply` logs `wouldDelete=` before the delete and `deleted=` after, with `userId` only (no email). If an allowlisted email matches an account with no `emailVerifiedAt`, the dry run warns and omits that account, and `--apply` exits 1 without deleting any RunLogs until that account is verified; an allowlisted email with no account does not abort. If `INTERVALS_OWNER_EMAILS` is unset or empty, or `--before` is not a real `YYYY-MM-DD` (or ISO timestamp) that round-trips and is not in the future, both modes log why and delete nothing (exit code 1). `--apply` logs `deleted=` from the rows SQLite actually removed, which can be lower than `wouldDelete=` if a sync races. Safe to run again; a second `--apply` deletes zero rows.
 
 ## Reverse proxy / CSRF
 

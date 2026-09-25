@@ -21,7 +21,9 @@ import {
   withTransaction,
 } from "./db";
 import { loadLocalEnv } from "./load-env";
-import { configuredPublicOrigin, publicOrigin } from "./public-origin";
+import { isProductionRuntime, requestPublicOrigin } from "./public-origin";
+
+export { isProductionRuntime };
 
 loadLocalEnv();
 
@@ -63,13 +65,6 @@ export function mailFromAddress(): string {
   return process.env.MAIL_FROM?.trim() || process.env.MAGIC_LINK_FROM?.trim() || "";
 }
 
-export function isProductionRuntime(): boolean {
-  const nodeEnv = process.env.NODE_ENV;
-  if (nodeEnv === "production") return true;
-  if (nodeEnv === "development" || nodeEnv === "test") return false;
-  return import.meta.env.PROD === true;
-}
-
 export function isMagicMailConfigured(): boolean {
   return Boolean(resendApiKey() && mailFromAddress());
 }
@@ -90,10 +85,7 @@ export function hashMagicToken(raw: string): string {
  * that origin fails closed. Dev falls back to the request origin (localhost).
  */
 export function magicLinkOrigin(request: Request): string | null {
-  const configured = configuredPublicOrigin();
-  if (configured) return configured;
-  if (isProductionRuntime()) return null;
-  return publicOrigin(request);
+  return requestPublicOrigin(request);
 }
 
 export function magicSignInUrl(request: Request, token: string): string | null {

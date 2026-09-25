@@ -7,6 +7,8 @@ import { getUserById, insertUser } from "./db.ts";
 import {
   connectIntervals,
   INTERVALS_API_KEY_NOT_CONFIGURED,
+  INTERVALS_CONNECT_UNAVAILABLE,
+  intervalsConnectUserError,
   INTERVALS_ATHLETE_ID_INVALID,
   INTERVALS_CONNECT_ERROR,
   INTERVALS_CONNECT_INPUT,
@@ -78,7 +80,7 @@ describe("connectIntervals errors", () => {
     assert.equal(fetchCalled, false);
   });
 
-  it("returns API key not configured when owner fallback is on and the env key is missing", async () => {
+  it("hides a missing owner env key behind the unavailable line", async () => {
     allowOwner("user-connect-test");
     process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
     process.env.INTERVALS_ICU_ATHLETE_ID = "i123456";
@@ -93,8 +95,10 @@ describe("connectIntervals errors", () => {
       };
 
       const result = await connectIntervals("user-connect-test");
-      assert.deepEqual(result, { ok: false, error: INTERVALS_API_KEY_NOT_CONFIGURED });
-      assert.equal(INTERVALS_API_KEY_NOT_CONFIGURED, "API key not configured");
+      assert.deepEqual(result, { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE });
+      assert.equal(intervalsConnectUserError(INTERVALS_API_KEY_NOT_CONFIGURED), INTERVALS_CONNECT_UNAVAILABLE);
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.includes("API key not configured"), false);
       assert.equal(fetchCalled, false);
     }
   });
@@ -145,7 +149,9 @@ describe("connectIntervals errors", () => {
       apiKey: "dummy-intervals-key",
       athleteId: "i123456",
     });
-    assert.deepEqual(result, { ok: false, error: INTERVALS_ENC_NOT_CONFIGURED });
+    assert.deepEqual(result, { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE });
+    assert.equal(intervalsConnectUserError(INTERVALS_ENC_NOT_CONFIGURED), INTERVALS_CONNECT_UNAVAILABLE);
+    if (!result.ok) assert.equal(result.error.includes("encryption is not configured"), false);
     assert.equal(fetchCalled, false);
   });
 
@@ -190,7 +196,8 @@ describe("connectIntervals errors", () => {
       apiKey: "dummy-intervals-key",
       athleteId: "i123456",
     });
-    assert.deepEqual(result, { ok: false, error: INTERVALS_ENC_NOT_CONFIGURED });
+    assert.deepEqual(result, { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE });
+    if (!result.ok) assert.equal(result.error.includes("encryption is not configured"), false);
     assert.equal(fetchCalled, false);
     mock.restoreAll();
   });

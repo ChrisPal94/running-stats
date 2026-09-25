@@ -8,7 +8,7 @@ import {
   INTERVALS_USER_AGENT,
 } from "./intervals";
 import { intervalsEncryptionReady } from "./intervals-crypto";
-import { configuredPublicOrigin, publicOrigin } from "./public-origin";
+import { configuredPublicOrigin, isProductionRuntime, requestPublicOrigin } from "./public-origin";
 
 /**
  * Intervals.icu OAuth2 authorization-code flow.
@@ -57,7 +57,7 @@ function configuredIntervalsOrigin(): string | null {
 export function isIntervalsOAuthConfigured(): boolean {
   if (!envValue("INTERVALS_CLIENT_ID") || !envValue("INTERVALS_CLIENT_SECRET")) return false;
   if (configuredIntervalsOrigin()) return true;
-  if (process.env.NODE_ENV === "production") {
+  if (isProductionRuntime()) {
     if (!loggedMissingPublicOrigin) {
       loggedMissingPublicOrigin = true;
       console.error("[intervals] PUBLIC_ORIGIN is not configured");
@@ -68,10 +68,9 @@ export function isIntervalsOAuthConfigured(): boolean {
 }
 
 export function intervalsOAuthCallbackUrl(request: Request): string {
-  const origin = configuredIntervalsOrigin();
-  if (origin) return `${origin}${INTERVALS_OAUTH_CALLBACK_PATH}`;
-  if (process.env.NODE_ENV === "production") return INTERVALS_OAUTH_CALLBACK_PATH;
-  return `${publicOrigin(request)}${INTERVALS_OAUTH_CALLBACK_PATH}`;
+  const origin = requestPublicOrigin(request);
+  if (!origin) return INTERVALS_OAUTH_CALLBACK_PATH;
+  return `${origin}${INTERVALS_OAUTH_CALLBACK_PATH}`;
 }
 
 function cookieSecure(): boolean {

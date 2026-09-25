@@ -56,9 +56,6 @@ export const INTERVALS_KEY_HELP = "Your API key and athlete ID are in Intervals 
 export const INTERVALS_KEY_HELP_URL = "https://intervals.icu/settings";
 export { INTERVALS_ENC_NOT_CONFIGURED, intervalsEncryptionReady };
 export type { IntervalsAuthType };
-/** 403 body when an Intervals action is not allowed for this account. No env names. */
-export const INTERVALS_NOT_FOR_ACCOUNT =
-  "Intervals.icu import isn’t available for your account yet.";
 export const INTERVALS_CSRF_ERROR = "This request could not be verified. Try again.";
 export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
 export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
@@ -82,6 +79,27 @@ export function intervalsSyncUserError(error: string): string {
   return INTERVALS_SYNC_PUBLIC_ERRORS.has(error) ? error : INTERVALS_SYNC_ERROR;
 }
 
+const INTERVALS_CONNECT_PUBLIC_ERRORS = new Set<string>([
+  INTERVALS_CONNECT_INPUT,
+  INTERVALS_ATHLETE_ID_INVALID,
+  INTERVALS_CONNECT_REJECTED,
+  INTERVALS_CONNECT_ERROR,
+  INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_OAUTH_CONNECT_ERROR,
+  INTERVALS_OAUTH_CALENDAR_SCOPE,
+]);
+
+/**
+ * Connect copy safe to show. A missing encryption secret or shared API key
+ * becomes the unavailable line. Other internal strings are not shown.
+ */
+export function intervalsConnectUserError(error: string): string {
+  if (error === INTERVALS_ENC_NOT_CONFIGURED || error === INTERVALS_API_KEY_NOT_CONFIGURED) {
+    return INTERVALS_CONNECT_UNAVAILABLE;
+  }
+  return INTERVALS_CONNECT_PUBLIC_ERRORS.has(error) ? error : INTERVALS_CONNECT_UNAVAILABLE;
+}
+
 /**
  * Toast after Sync now when the Which run? picker is not shown.
  * Cooper wins when its result was applied. A successful import stays on the
@@ -102,6 +120,7 @@ export function intervalsSyncToast(input: {
 /** Settings copy for an Intervals OAuth redirect toast. Empty when the toast is unrelated. */
 export function intervalsOAuthSettingsError(toast: string | null): string {
   if (toast === "intervals-calendar") return INTERVALS_OAUTH_CALENDAR_SCOPE;
+  if (toast === "intervals-unavailable") return INTERVALS_CONNECT_UNAVAILABLE;
   if (toast === "intervals-error") return INTERVALS_OAUTH_CONNECT_ERROR;
   return "";
 }
@@ -1021,7 +1040,7 @@ export async function connectIntervals(
     try {
       encryptIntervalsApiKey("probe", userId);
     } catch (error) {
-      if (error instanceof IntervalsEncryptionError) return { ok: false, error: INTERVALS_ENC_NOT_CONFIGURED };
+      if (error instanceof IntervalsEncryptionError) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
       throw error;
     }
     const rejected = await rejectInvalidAthlete(apiKey, athleteId);
@@ -1041,7 +1060,7 @@ async function connectWithOwnerEnvFallback(
   if (!ownerEnvFallbackAllowed(userId)) return { ok: false, error: INTERVALS_CONNECT_INPUT };
   const apiKey = envValue("INTERVALS_ICU_API_KEY");
   const athleteId = normalizeIntervalsAthleteId(envValue("INTERVALS_ICU_ATHLETE_ID"));
-  if (!apiKey || !athleteId) return { ok: false, error: INTERVALS_API_KEY_NOT_CONFIGURED };
+  if (!apiKey || !athleteId) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
   const rejected = await rejectInvalidAthlete(apiKey, athleteId);
   if (rejected) return rejected;
   await saveIntervalsConnection(userId, { athleteId, authType: "apikey" });

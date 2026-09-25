@@ -205,7 +205,11 @@ const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionRe
 }
 
 {
-  syncToast || intervalsConnected || toastParam === "intervals-error" || toastParam === "intervals-calendar" ? (
+  syncToast ||
+  intervalsConnected ||
+  toastParam === "intervals-error" ||
+  toastParam === "intervals-calendar" ||
+  toastParam === "intervals-unavailable" ? (
     <script>
       const toast = document.querySelector("[data-sync-toast]");
       window.setTimeout(() => {

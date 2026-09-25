@@ -4,7 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
-import { cleanupNonOwnerIntervalsRunLogs, PER_USER_INTERVALS_SINCE } from "./cleanup-intervals-nonowners.ts";
+import {
+  cleanupNonOwnerIntervalsRunLogs,
+  parseCleanupCliArgs,
+  PER_USER_INTERVALS_SINCE,
+} from "./cleanup-intervals-nonowners.ts";
 import {
   getDb,
   getUserById,
@@ -325,6 +329,56 @@ describe("cleanupNonOwnerIntervalsRunLogs", () => {
     assert.match(`${cli.stderr}`, /YYYY-MM-DD/);
     assert.match(`${cli.stderr}`, /no RunLogs deleted/);
     assert.deepEqual(ids(), before);
+  });
+
+  it("accepts --before=YYYY-MM-DD and exits 1 on an unknown or malformed flag", () => {
+    assert.deepEqual(parseCleanupCliArgs(["--before", "2026-01-01"]), {
+      ok: true,
+      apply: false,
+      before: "2026-01-01",
+    });
+    assert.deepEqual(parseCleanupCliArgs(["--apply", "--before=2026-09-25T00:00:00.000Z"]), {
+      ok: true,
+      apply: true,
+      before: "2026-09-25T00:00:00.000Z",
+    });
+    assert.deepEqual(parseCleanupCliArgs([]), { ok: true, apply: false, before: undefined });
+    for (const argv of [["--before"], ["--before="], ["--before", "--apply"], ["--bogus"], ["--apply", "--bogus"]]) {
+      assert.deepEqual(parseCleanupCliArgs(argv), { ok: false });
+    }
+
+    seedLogs();
+    process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com";
+    const before = ids();
+    const spawnCli = (args: string[]) =>
+      spawnSync(process.execPath, ["--import", "tsx", "src/jobs/cleanup-intervals-nonowners.ts", ...args], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          AUTH_DATA_DIR: dataDir,
+          INTERVALS_OWNER_EMAILS: "crispal94@gmail.com",
+        },
+        encoding: "utf8",
+      });
+
+    const accepted = spawnCli(["--apply", "--before=2026-01-01"]);
+    assert.equal(accepted.status, 0);
+    assert.deepEqual(ids(), before);
+
+    const impossible = spawnCli(["--apply", "--before=2026-02-30"]);
+    assert.equal(impossible.status, 1);
+    assert.match(`${impossible.stderr}`, /YYYY-MM-DD/);
+    assert.match(`${impossible.stderr}`, /no RunLogs deleted/);
+    assert.equal(`${impossible.stderr}`.includes("unknown or malformed"), false);
+    assert.deepEqual(ids(), before);
+
+    for (const args of [["--before"], ["--before="], ["--bogus"], ["--apply", "--not-a-flag"]]) {
+      const rejected = spawnCli(args);
+      assert.equal(rejected.status, 1);
+      assert.match(`${rejected.stderr}`, /unknown or malformed/);
+      assert.match(`${rejected.stderr}`, /no RunLogs deleted/);
+      assert.deepEqual(ids(), before);
+    }
   });
 
   it("logs deleted= from sqlite changes when a planned row is not removed", () => {

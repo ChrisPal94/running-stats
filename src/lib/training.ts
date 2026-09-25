@@ -19,10 +19,11 @@ import {
   loadRunEffort,
   disconnectIntervals,
   getIntervalsConnection,
+  INTERVALS_CONNECT_INPUT,
   INTERVALS_CONNECT_UNAVAILABLE,
-  INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_RECONNECT_ERROR,
   INTERVALS_SYNC_NEEDS_CONNECT,
+  intervalsConnectUserError,
   intervalsSyncUserError,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
@@ -2169,7 +2170,7 @@ export async function handleSettingsPost(
     } catch (error) {
       const name = error instanceof Error ? error.name : "Error";
       console.error(`[intervals] settings failed ${name}`);
-      return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
+      return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE, section: "intervals", status: 403 };
     }
   }
 
@@ -2189,6 +2190,16 @@ async function postIntervalsSettings(
   formData: FormData,
   intent: string,
 ): Promise<SettingsFormResult> {
+  if (intent === "intervals-connect") {
+    const apiKey = String(formData.get("intervalsApiKey") ?? "").trim();
+    const athleteId = String(formData.get("intervalsAthleteId") ?? "").trim();
+    const complete = Boolean(apiKey && athleteId);
+    const empty = !apiKey && !athleteId;
+    if (!complete && !(empty && ownerEnvFallbackAllowed(userId))) {
+      return { ok: false, error: INTERVALS_CONNECT_INPUT, section: "intervals" };
+    }
+  }
+
   const gated =
     intent === "intervals-connect" ||
     intent === "intervals-sync" ||
@@ -2201,7 +2212,7 @@ async function postIntervalsSettings(
     if (intent === "intervals-sync" && (intervalsEncryptionReady() || isIntervalsOAuthConfigured())) {
       return { ok: false, error: INTERVALS_SYNC_NEEDS_CONNECT, section: "intervals" };
     }
-    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
+    return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE, section: "intervals", status: 403 };
   }
 
   if (intent === "intervals-connect") {
@@ -2209,7 +2220,7 @@ async function postIntervalsSettings(
       apiKey: String(formData.get("intervalsApiKey") ?? ""),
       athleteId: String(formData.get("intervalsAthleteId") ?? ""),
     });
-    if (!result.ok) return { ok: false, error: result.error, section: "intervals" };
+    if (!result.ok) return { ok: false, error: intervalsConnectUserError(result.error), section: "intervals" };
     return { ok: true, redirect: "/settings" };
   }
 
@@ -2277,5 +2288,5 @@ async function postIntervalsSettings(
     return { ok: true, redirect: "/settings" };
   }
 
-  return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
+  return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE, section: "intervals", status: 403 };
 }

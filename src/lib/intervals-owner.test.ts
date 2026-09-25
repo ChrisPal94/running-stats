@@ -8,11 +8,11 @@ import {
   canUseIntervals,
   getIntervalsConnection,
   INTERVALS_API_KEY_NOT_CONFIGURED,
+  INTERVALS_CONNECT_INPUT,
+  INTERVALS_CONNECT_UNAVAILABLE,
   INTERVALS_ENC_NOT_CONFIGURED,
-  INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_SYNC_ERROR,
   INTERVALS_SYNC_NEEDS_CONNECT,
-  INTERVALS_CONNECT_UNAVAILABLE,
   getIntervalsConnectionView,
   intervalsSyncUserError,
   intervalsBasicAuthHeader,
@@ -214,8 +214,14 @@ describe("connect/sync route", () => {
       const result = await handleSettingsPost(userId, formData);
       assert.equal(result.ok, false);
       if (result.ok) continue;
-      assert.equal(result.status, 403);
-      assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
+      if (intent === "intervals-connect") {
+        assert.equal(result.status, undefined);
+        assert.equal(result.error, INTERVALS_CONNECT_INPUT);
+      } else {
+        assert.equal(result.status, 403);
+        assert.equal(result.error, INTERVALS_CONNECT_UNAVAILABLE);
+      }
+      assert.equal(result.error.includes("for your account"), false);
       assert.equal(result.section, "intervals");
     }
 
@@ -329,7 +335,8 @@ describe("connect/sync route", () => {
       assert.equal(result.ok, false);
       if (!result.ok) {
         assert.equal(result.status, 403);
-        assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
+        assert.equal(result.error, INTERVALS_CONNECT_UNAVAILABLE);
+        assert.equal(result.error.includes("for your account"), false);
       }
     }
 
@@ -369,8 +376,15 @@ describe("connect/sync route", () => {
         const result = await handleSettingsPost(user, formData);
         assert.equal(result.ok, false);
         if (result.ok) continue;
-        assert.equal(result.status, 403);
-        assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
+        const intent = String(formData.get("intent"));
+        if (intent === "intervals-connect") {
+          assert.equal(result.status, undefined);
+          assert.equal(result.error, INTERVALS_CONNECT_INPUT);
+        } else {
+          assert.equal(result.status, 403);
+          assert.equal(result.error, INTERVALS_CONNECT_UNAVAILABLE);
+        }
+        assert.equal(result.error.includes("for your account"), false);
         assert.equal(result.error.includes("INTERVALS_"), false);
         assert.equal(result.error.includes(envKey), false);
       }
@@ -382,8 +396,15 @@ describe("connect/sync route", () => {
       const result = await handleSettingsPost(ownerId, formData);
       assert.equal(result.ok, false);
       if (result.ok) continue;
-      assert.equal(result.status, 403);
-      assert.equal(result.error, INTERVALS_NOT_FOR_ACCOUNT);
+      const intent = String(formData.get("intent"));
+      if (intent === "intervals-connect") {
+        assert.equal(result.status, undefined);
+        assert.equal(result.error, INTERVALS_CONNECT_INPUT);
+      } else {
+        assert.equal(result.status, 403);
+        assert.equal(result.error, INTERVALS_CONNECT_UNAVAILABLE);
+      }
+      assert.equal(result.error.includes("for your account"), false);
       assert.equal(JSON.stringify(result).includes(envKey), false);
     }
     assert.equal(auths.length, 0);
@@ -487,6 +508,68 @@ describe("connect/sync route", () => {
     if (!view.connected) return;
     assert.equal(view.lastSyncLabel, INTERVALS_SYNC_ERROR);
     assert.equal(view.lastSyncLabel.includes("API key"), false);
+  });
+
+  it("shows the key prompt in the row and hides a missing encryption secret", async () => {
+    const previousSecret = process.env.INTERVALS_KEY_ENC_SECRET;
+    delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
+    delete process.env.INTERVALS_ICU_API_KEY;
+    delete process.env.INTERVALS_KEY_ENC_SECRET;
+    const userId = "connect-form-copy";
+    if (!getUserById(userId)) {
+      insertUser({ id: userId, email: "form-copy@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    }
+    let fetched = false;
+    mock.method(globalThis, "fetch", async () => {
+      fetched = true;
+      return new Response("{}", { status: 200 });
+    });
+    try {
+      const partials: Array<{ key?: string; athlete?: string }> = [
+        {},
+        { key: "only-key" },
+        { athlete: "i123456" },
+        { key: "   ", athlete: "i123456" },
+      ];
+      for (const fields of partials) {
+        const form = new FormData();
+        form.set("intent", "intervals-connect");
+        if (fields.key !== undefined) form.set("intervalsApiKey", fields.key);
+        if (fields.athlete !== undefined) form.set("intervalsAthleteId", fields.athlete);
+        const result = await handleSettingsPost(userId, form);
+        assert.equal(result.ok, false);
+        if (result.ok) continue;
+        assert.equal(result.status, undefined);
+        assert.equal(result.error, INTERVALS_CONNECT_INPUT);
+        assert.equal(result.error, "Enter your Intervals API key and athlete ID.");
+        assert.equal(result.section, "intervals");
+        assert.equal(JSON.stringify(result).includes("for your account"), false);
+      }
+
+      const full = new FormData();
+      full.set("intent", "intervals-connect");
+      full.set("intervalsApiKey", "user-key-do-not-leak");
+      full.set("intervalsAthleteId", "i123456");
+      const missingSecret = await handleSettingsPost(userId, full);
+      assert.equal(missingSecret.ok, false);
+      if (!missingSecret.ok) {
+        assert.equal(missingSecret.status, undefined);
+        assert.equal(missingSecret.error, INTERVALS_CONNECT_UNAVAILABLE);
+        assert.equal(
+          missingSecret.error,
+          "Connecting Intervals.icu isn’t available right now. Try again later.",
+        );
+        const dumped = JSON.stringify(missingSecret);
+        assert.equal(dumped.includes("encryption is not configured"), false);
+        assert.equal(dumped.includes("API key not configured"), false);
+        assert.equal(dumped.includes("for your account"), false);
+        assert.equal(dumped.includes("user-key-do-not-leak"), false);
+      }
+      assert.equal(fetched, false);
+    } finally {
+      if (previousSecret === undefined) delete process.env.INTERVALS_KEY_ENC_SECRET;
+      else process.env.INTERVALS_KEY_ENC_SECRET = previousSecret;
+    }
   });
 });
 
