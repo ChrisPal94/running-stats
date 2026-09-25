@@ -27,6 +27,25 @@ function originFrom(protocol: string, host: string): string | undefined {
   return new URL(href).origin;
 }
 
+/**
+ * Configured public site origin (`PUBLIC_ORIGIN`, then Astro `site`).
+ * Does not read `Host` or `X-Forwarded-Host`. Returns the origin only.
+ */
+export function configuredPublicOrigin(): string | null {
+  const site = (import.meta.env as { SITE?: unknown } | undefined)?.SITE;
+  const candidates = [process.env.PUBLIC_ORIGIN?.trim() ?? "", typeof site === "string" ? site.trim() : ""];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    try {
+      const url = new URL(raw);
+      if (url.protocol === "http:" || url.protocol === "https:") return url.origin;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 /** Canonical public origin (`https://host`) for this request. */
 export function publicOrigin(request: Request): string {
   const url = new URL(request.url);

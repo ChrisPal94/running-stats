@@ -8,7 +8,7 @@ import {
   INTERVALS_USER_AGENT,
 } from "./intervals";
 import { intervalsEncryptionReady } from "./intervals-crypto";
-import { publicOrigin } from "./public-origin";
+import { configuredPublicOrigin, publicOrigin } from "./public-origin";
 
 /**
  * Intervals.icu OAuth2 authorization-code flow.
@@ -51,18 +51,7 @@ function envValue(name: string): string {
 }
 
 function configuredIntervalsOrigin(): string | null {
-  const site = (import.meta.env as { SITE?: unknown } | undefined)?.SITE;
-  const candidates = [envValue("PUBLIC_ORIGIN"), site];
-  for (const raw of candidates) {
-    if (typeof raw !== "string" || !raw.trim()) continue;
-    try {
-      const url = new URL(raw.trim());
-      if (url.protocol === "http:" || url.protocol === "https:") return url.origin;
-    } catch {
-      continue;
-    }
-  }
-  return null;
+  return configuredPublicOrigin();
 }
 
 export function isIntervalsOAuthConfigured(): boolean {
