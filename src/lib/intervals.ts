@@ -24,6 +24,8 @@ export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
 /** Shown when this account is not allowed to use the shared Intervals key. No env names. */
 export const INTERVALS_NOT_FOR_ACCOUNT =
   "Intervals.icu import isn’t available for your account yet.";
+/** Settings status line for an account that cannot use Intervals. No buttons. */
+export const INTERVALS_UNAVAILABLE_STATUS = "Not available for your account";
 
 const GATED_INTERVALS_INTENTS = new Set([
   "intervals-connect",
@@ -183,6 +185,32 @@ export async function revokeUnownedIntervals(userId: string): Promise<void> {
   await enqueueWrite(() => {
     deleteIntervalsConnection(userId);
   });
+}
+
+/** Which Settings controls to show. Non-owners get the unavailable status and no buttons. */
+export function intervalsSettingsControls(input: {
+  available: boolean;
+  connection: IntervalsConnectionView;
+}): { statusLabel: string; showConnect: boolean; showSync: boolean } {
+  if (!input.available) {
+    return {
+      statusLabel: INTERVALS_UNAVAILABLE_STATUS,
+      showConnect: false,
+      showSync: false,
+    };
+  }
+  if (input.connection.connected) {
+    return {
+      statusLabel: input.connection.statusLabel,
+      showConnect: false,
+      showSync: true,
+    };
+  }
+  return {
+    statusLabel: input.connection.statusLabel,
+    showConnect: true,
+    showSync: false,
+  };
 }
 
 /** 403 for Settings connect/sync (and Which run? follow-ups) when the account is not allowed. */

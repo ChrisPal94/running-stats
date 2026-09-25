@@ -7,7 +7,9 @@ import { getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, up
 import {
   canUseIntervals,
   INTERVALS_NOT_FOR_ACCOUNT,
+  INTERVALS_UNAVAILABLE_STATUS,
   intervalsOwnerDeniedResponse,
+  intervalsSettingsControls,
 } from "./intervals.ts";
 import { handleSettingsPost, type Plan, type Session } from "./training.ts";
 
@@ -48,6 +50,55 @@ describe("canUseIntervals", () => {
     assert.equal(canUseIntervals({ email: "  CRISPAL94@gmail.com  " }), true);
     assert.equal(canUseIntervals({ email: "other@example.com" }), true);
     assert.equal(canUseIntervals({ email: "nope@example.com" }), false);
+  });
+});
+
+describe("Settings Intervals row", () => {
+  it("shows Not available for your account and no buttons when the account cannot use Intervals", () => {
+    const hidden = intervalsSettingsControls({
+      available: false,
+      connection: {
+        connected: true,
+        athleteId: "i704884",
+        statusLabel: "Connected · i704884",
+        lastSyncLabel: "Synced 2h ago",
+      },
+    });
+    assert.equal(hidden.statusLabel, "Not available for your account");
+    assert.equal(hidden.statusLabel, INTERVALS_UNAVAILABLE_STATUS);
+    assert.equal(hidden.showConnect, false);
+    assert.equal(hidden.showSync, false);
+
+    const disconnected = intervalsSettingsControls({
+      available: false,
+      connection: { connected: false, statusLabel: "Not connected" },
+    });
+    assert.equal(disconnected.statusLabel, INTERVALS_UNAVAILABLE_STATUS);
+    assert.equal(disconnected.showConnect, false);
+    assert.equal(disconnected.showSync, false);
+  });
+
+  it("shows Connect or Sync now only for an owner", () => {
+    const connect = intervalsSettingsControls({
+      available: true,
+      connection: { connected: false, statusLabel: "Not connected" },
+    });
+    assert.equal(connect.statusLabel, "Not connected");
+    assert.equal(connect.showConnect, true);
+    assert.equal(connect.showSync, false);
+
+    const sync = intervalsSettingsControls({
+      available: true,
+      connection: {
+        connected: true,
+        athleteId: "i704884",
+        statusLabel: "Connected · i704884",
+        lastSyncLabel: null,
+      },
+    });
+    assert.equal(sync.statusLabel, "Connected · i704884");
+    assert.equal(sync.showConnect, false);
+    assert.equal(sync.showSync, true);
   });
 });
 
