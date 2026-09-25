@@ -1,13 +1,15 @@
+import { readLlmConfig } from "./llm-config";
 import { loadLocalEnv } from "./load-env";
 
 loadLocalEnv();
 
-export const OLLAMA_CLOUD_BASE_URL = "https://ollama.com/v1";
 export const COACH_FEEDBACK_TITLE = "Feedback";
 export const COACH_FEEDBACK_UNAVAILABLE = "Couldn’t generate feedback. Try again.";
 export const COACH_FEEDBACK_UNAUTHORIZED = "Ollama rejected the API key.";
-export const COACH_FEEDBACK_KEY_MISSING = "Add OLLAMA_API_KEY to generate feedback.";
-export const COACH_FEEDBACK_MODEL_MISSING = "Add OLLAMA_MODEL to generate feedback.";
+export const COACH_FEEDBACK_UNCONFIGURED = "Feedback isn’t available right now. Try again later.";
+
+const LLM_UNCONFIGURED_LOG =
+  "[feedback] LLM is not configured; ADAPT_LLM_API_KEY is unset and the OLLAMA_API_KEY fallback is unset";
 
 const TIMEOUT_MS = 25_000;
 const JARGON = /\b(CTL|ATL|TSB)\b/i;
@@ -38,15 +40,14 @@ export type CoachFeedback = {
 
 export type OllamaCloudConfig = {
   apiKey: string;
+  baseUrl: string;
   model: string;
 };
 
 export function ollamaCloudConfig(): OllamaCloudConfig | { error: string } {
-  const apiKey = process.env.OLLAMA_API_KEY?.trim() ?? "";
-  const model = process.env.OLLAMA_MODEL?.trim() ?? "";
-  if (!apiKey) return { error: COACH_FEEDBACK_KEY_MISSING };
-  if (!model) return { error: COACH_FEEDBACK_MODEL_MISSING };
-  return { apiKey, model };
+  const config = readLlmConfig();
+  if (!config) return { error: COACH_FEEDBACK_UNCONFIGURED };
+  return config;
 }
 
 function oneLine(value: string): string {
@@ -76,9 +77,12 @@ export async function requestCoachFeedback(
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: true; feedback: CoachFeedback } | { ok: false; error: string }> {
   const config = ollamaCloudConfig();
-  if ("error" in config) return { ok: false, error: config.error };
+  if ("error" in config) {
+    console.warn(LLM_UNCONFIGURED_LOG);
+    return { ok: false, error: config.error };
+  }
 
-  const response = await fetchImpl(`${OLLAMA_CLOUD_BASE_URL}/chat/completions`, {
+  const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
