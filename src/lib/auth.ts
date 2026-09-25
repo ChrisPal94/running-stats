@@ -14,6 +14,7 @@ import {
 } from "./db";
 import { loadLocalEnv } from "./load-env";
 import { isSameOrigin } from "./public-origin";
+import { readFormData } from "./safe-form-data";
 
 export { isSameOrigin, publicOrigin } from "./public-origin";
 
@@ -235,7 +236,8 @@ export async function signupFromForm(
   cookies: AstroCookies,
   formData?: FormData,
 ): Promise<AuthFormResult> {
-  const data = formData ?? (await request.formData());
+  const data = formData ?? (await readFormData(request));
+  if (!data) return { ok: false, error: "Expected a form submission.", email: "" };
   const email = normalizeEmail(data.get("email"));
   const password = readPassword(data.get("password"));
 
@@ -277,7 +279,8 @@ export async function loginFromForm(
   cookies: AstroCookies,
   formData?: FormData,
 ): Promise<AuthFormResult> {
-  const data = formData ?? (await request.formData());
+  const data = formData ?? (await readFormData(request));
+  if (!data) return { ok: false, error: "Expected a form submission.", email: "" };
   const email = normalizeEmail(data.get("email"));
   const password = readPassword(data.get("password"));
 

@@ -82,7 +82,10 @@ function redirect(path: string): Response {
 function logoutRequest(headers?: HeadersInit): Request {
   return new Request("http://localhost/logout", {
     method: "POST",
-    headers: headers ?? { origin: "http://localhost" },
+    headers: headers ?? {
+      origin: "http://localhost",
+      "content-type": "application/x-www-form-urlencoded",
+    },
   });
 }
 
@@ -360,6 +363,7 @@ describe("logout ends every session", () => {
         method: "POST",
         headers: {
           origin: "https://running-stats-production.up.railway.app",
+          "content-type": "application/x-www-form-urlencoded",
           "x-forwarded-proto": "https",
           "x-forwarded-host": "running-stats-production.up.railway.app",
           host: "10.0.0.1:8080",
@@ -443,7 +447,7 @@ describe("logout ends every session", () => {
     assert.match(today, /return Astro\.redirect\(gate\.redirect\)/);
     assert.match(settings, /requireAppSession\(Astro\.cookies\)/);
     assert.match(settings, /return Astro\.redirect\(gate\.redirect\)/);
-    assert.ok(settings.indexOf("requireAppSession") < settings.indexOf("handleSettingsPost"));
+    assert.ok(settings.indexOf("requireAppSession") < settings.indexOf("applySettingsPost"));
     assert.ok(settings.includes("intervals-"));
   });
 });
