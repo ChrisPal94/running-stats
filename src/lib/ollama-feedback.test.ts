@@ -157,7 +157,7 @@ describe("requestCoachFeedback", () => {
     assert.equal(result.ok, true);
   });
 
-  it("uses the OLLAMA_API_KEY fallback when the adapt key is unset", async () => {
+  it("uses OLLAMA_API_KEY when ADAPT_LLM_API_KEY is unset", async () => {
     clearLlmEnv();
     process.env.OLLAMA_API_KEY = "legacy-key";
     process.env.OLLAMA_MODEL = "gemma4:31b";
@@ -208,8 +208,9 @@ describe("requestCoachFeedback", () => {
       console.warn = original;
     }
     const logged = warnings.join("\n");
-    assert.match(logged, /ADAPT_LLM_API_KEY/);
     assert.match(logged, /OLLAMA_API_KEY/);
+    assert.match(logged, /ADAPT_LLM_API_KEY/);
+    assert.equal(/fallback/i.test(logged), false);
     assert.equal(logged.includes("super-secret"), false);
   });
 

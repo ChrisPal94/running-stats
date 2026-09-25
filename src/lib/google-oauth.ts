@@ -11,6 +11,7 @@ import {
   upsertGoogleUser,
   type GoogleOAuthFrom,
 } from "./auth";
+import { isGoogleLoginConfigured } from "./auth-methods";
 import { loadLocalEnv } from "./load-env";
 
 loadLocalEnv();
@@ -44,7 +45,7 @@ function googleCallbackUrl(): string {
 }
 
 export function isGoogleOAuthConfigured(): boolean {
-  return Boolean(googleClientId() && googleClientSecret() && googleCallbackUrl());
+  return isGoogleLoginConfigured();
 }
 
 function pkceVerifier(): string {
