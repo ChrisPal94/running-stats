@@ -7,37 +7,100 @@ import {
   upsertIntervalsConnection,
   type IntervalsConnection,
 } from "./db";
+import {
+  decryptIntervalsApiKey,
+  encryptIntervalsApiKey,
+  INTERVALS_ENC_NOT_CONFIGURED,
+  intervalsEncryptionReady,
+  IntervalsEncryptionError,
+} from "./intervals-crypto";
+import type { IntervalsAuthType } from "./db";
 import { loadLocalEnv } from "./load-env";
+import { isSameOrigin } from "./public-origin";
 
 loadLocalEnv();
 
 export const INTERVALS_ICU_BASE_URL = "https://intervals.icu/api/v1";
 /** Cloudflare 1010 without a stable UA. Must be sent on every Intervals HTTP call. */
 export const INTERVALS_USER_AGENT = "RunningStatsMVP/0.1";
-/** HTTP paths use `0` (athlete of the API key). Display fallback is Christian. */
-export const INTERVALS_ATHLETE_PATH = "0";
-export const DEFAULT_INTERVALS_ATHLETE_ID = "i704884";
-export const INTERVALS_CONNECT_COPY = "API key stays on the server";
+export const INTERVALS_CONNECT_COPY = "Your API key is encrypted and never shown again.";
 export const INTERVALS_SYNC_ERROR = "Couldn’t sync. Try again.";
 export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
+export const INTERVALS_CONNECT_INPUT = "Enter your Intervals API key and athlete ID.";
+/** Example shown in the empty athlete ID field. Not the validation message. */
+export const INTERVALS_ATHLETE_ID_PLACEHOLDER = "i123456";
+export const INTERVALS_ATHLETE_ID_INVALID = "Enter an athlete ID like i123456.";
+export const INTERVALS_CONNECT_REJECTED = "Couldn’t connect. Check your API key and athlete ID.";
+export const INTERVALS_ACCESS_EXPIRED = "Intervals access expired";
+/** 401/403 and a stored secret that will not decrypt. Same copy as the Settings status. */
+export const INTERVALS_RECONNECT_ERROR = INTERVALS_ACCESS_EXPIRED;
+/** Today notice. The link wraps `INTERVALS_RECONNECT_LINK_LABEL` and goes to `#intervals`. */
+export const INTERVALS_RECONNECT_LINK_LABEL = "Reconnect";
+export const INTERVALS_RECONNECT_NOTICE =
+  `Intervals access expired. ${INTERVALS_RECONNECT_LINK_LABEL} to keep your runs and plan in sync.`;
 export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
-/** Shown when this account is not allowed to use the shared Intervals key. No env names. */
-export const INTERVALS_NOT_FOR_ACCOUNT =
-  "Intervals.icu import isn’t available for your account yet.";
-/** Settings status line for an account that cannot use Intervals. No buttons. */
-export const INTERVALS_UNAVAILABLE_STATUS = "Not available for your account";
-
-const GATED_INTERVALS_INTENTS = new Set([
-  "intervals-connect",
-  "intervals-sync",
-  "intervals-pick-run",
-  "intervals-skip-pick",
-]);
+export const INTERVALS_OAUTH_CONNECT_ERROR = "Couldn’t connect to Intervals. Try again.";
+/** OAuth callback when the grant omits CALENDAR:WRITE. Nothing is stored. */
+export const INTERVALS_OAUTH_CALENDAR_SCOPE =
+  "Couldn’t connect. Stride Lab needs permission to add workouts to your Intervals calendar. Try again and allow calendar access.";
+/** Sync before this user has connected, when Connect is available. Shown in the Intervals row. */
+export const INTERVALS_SYNC_NEEDS_CONNECT = "Connect Intervals.icu to import your runs.";
+export const INTERVALS_ROW_ID = "intervals";
+export const INTERVALS_CONNECTED_TOAST = "Intervals connected";
+export const INTERVALS_CONNECT_UNAVAILABLE =
+  "Connecting Intervals.icu isn’t available right now. Try again later.";
+/** `aria-describedby` target for the disabled Connect/Reconnect control. */
+export const INTERVALS_UNAVAILABLE_HELPER_ID = "intervals-unavailable";
+export const INTERVALS_OAUTH_CONNECT_BUTTON = "Connect Intervals.icu";
+export const INTERVALS_OAUTH_CONNECT_LINE =
+  "We import your runs and add planned workouts to your Intervals calendar.";
+export const INTERVALS_KEY_HELP = "Your API key and athlete ID are in Intervals Settings > Developer.";
+export const INTERVALS_KEY_HELP_URL = "https://intervals.icu/settings";
+export { INTERVALS_ENC_NOT_CONFIGURED, intervalsEncryptionReady };
+export type { IntervalsAuthType };
+export const INTERVALS_CSRF_ERROR = "This request could not be verified. Try again.";
 export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
 export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
 export const INTERVALS_COOPER_SYNC_TOAST = "Cooper test result synced — plan updated.";
 
 export type IntervalsSyncToast = "no-session" | "no-new-runs" | "cooper" | null;
+
+const INTERVALS_SYNC_PUBLIC_ERRORS = new Set<string>([
+  INTERVALS_SYNC_ERROR,
+  INTERVALS_RECONNECT_ERROR,
+  INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_SYNC_NEEDS_CONNECT,
+]);
+
+/**
+ * Sync copy safe to show. Config failures (`encryption is not configured`,
+ * `API key not configured`, and anything else internal) become the generic sync error.
+ * A missing encryption secret on the Settings row stays the unavailable line.
+ */
+export function intervalsSyncUserError(error: string): string {
+  return INTERVALS_SYNC_PUBLIC_ERRORS.has(error) ? error : INTERVALS_SYNC_ERROR;
+}
+
+const INTERVALS_CONNECT_PUBLIC_ERRORS = new Set<string>([
+  INTERVALS_CONNECT_INPUT,
+  INTERVALS_ATHLETE_ID_INVALID,
+  INTERVALS_CONNECT_REJECTED,
+  INTERVALS_CONNECT_ERROR,
+  INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_OAUTH_CONNECT_ERROR,
+  INTERVALS_OAUTH_CALENDAR_SCOPE,
+]);
+
+/**
+ * Connect copy safe to show. A missing encryption secret or shared API key
+ * becomes the unavailable line. Other internal strings are not shown.
+ */
+export function intervalsConnectUserError(error: string): string {
+  if (error === INTERVALS_ENC_NOT_CONFIGURED || error === INTERVALS_API_KEY_NOT_CONFIGURED) {
+    return INTERVALS_CONNECT_UNAVAILABLE;
+  }
+  return INTERVALS_CONNECT_PUBLIC_ERRORS.has(error) ? error : INTERVALS_CONNECT_UNAVAILABLE;
+}
 
 /**
  * Toast after Sync now when the Which run? picker is not shown.
@@ -54,6 +117,14 @@ export function intervalsSyncToast(input: {
   if (input.imported > 0) return null;
   if (input.skippedNoSession > 0) return "no-session";
   return "no-new-runs";
+}
+
+/** Settings copy for an Intervals OAuth redirect toast. Empty when the toast is unrelated. */
+export function intervalsOAuthSettingsError(toast: string | null): string {
+  if (toast === "intervals-calendar") return INTERVALS_OAUTH_CALENDAR_SCOPE;
+  if (toast === "intervals-unavailable") return INTERVALS_CONNECT_UNAVAILABLE;
+  if (toast === "intervals-error") return INTERVALS_OAUTH_CONNECT_ERROR;
+  return "";
 }
 
 export function intervalsSyncToastRedirect(toast: IntervalsSyncToast): string {
@@ -134,10 +205,14 @@ export type IntervalsConnectionView =
   | {
       connected: false;
       statusLabel: "Not connected";
+      needsReconnect?: false;
     }
   | {
       connected: true;
       athleteId: string;
+      athleteName?: string;
+      authType?: IntervalsAuthType;
+      needsReconnect?: boolean;
       statusLabel: string;
       lastSyncAt?: string;
       lastSyncError?: string;
@@ -190,27 +265,40 @@ export function userCanUseIntervals(userId: string): boolean {
   return canUseIntervals(getUserById(userId));
 }
 
-/** Drop a stored connection when this account cannot use the shared key. */
-export async function revokeUnownedIntervals(userId: string): Promise<void> {
-  if (userCanUseIntervals(userId)) return;
-  if (!getStoredIntervalsConnection(userId)) return;
-  await enqueueWrite(() => {
-    deleteIntervalsConnection(userId);
-  });
+/**
+ * Shared env key (`INTERVALS_ICU_API_KEY` + `INTERVALS_ICU_ATHLETE_ID`) is off unless
+ * `INTERVALS_OWNER_ENV_FALLBACK=true` and `canUseIntervals` allows the account
+ * (allowlist and verified email). A stored OAuth token or pasted key does not use this.
+ */
+export function ownerEnvFallbackAllowed(userId: string): boolean {
+  if (envValue("INTERVALS_OWNER_ENV_FALLBACK").toLowerCase() !== "true") return false;
+  return canUseIntervals(getUserById(userId));
 }
 
-/** Which Settings controls to show. Non-owners get the unavailable status and no buttons. */
+/**
+ * Drop a legacy shared-key row (no stored ciphertext) when this account cannot
+ * use the env fallback. Personal keys are left alone. Call from sync, not from getters.
+ */
+export async function revokeUnownedIntervals(userId: string): Promise<void> {
+  const stored = getStoredIntervalsConnection(userId);
+  if (!stored || stored.apiKeyEnc || ownerEnvFallbackAllowed(userId)) return;
+  try {
+    await enqueueWrite(() => {
+      deleteIntervalsConnection(userId);
+    });
+  } catch (error) {
+    logIntervals("revoke unowned failed", error);
+  }
+}
+
+/**
+ * Which Settings controls to show. Every signed-in user gets the same row.
+ * `available` does not change the status or hide buttons.
+ */
 export function intervalsSettingsControls(input: {
   available: boolean;
   connection: IntervalsConnectionView;
 }): { statusLabel: string; showConnect: boolean; showSync: boolean } {
-  if (!input.available) {
-    return {
-      statusLabel: INTERVALS_UNAVAILABLE_STATUS,
-      showConnect: false,
-      showSync: false,
-    };
-  }
   if (input.connection.connected) {
     return {
       statusLabel: input.connection.statusLabel,
@@ -225,36 +313,29 @@ export function intervalsSettingsControls(input: {
   };
 }
 
-/** 403 for Settings connect/sync (and Which run? follow-ups) when the account is not allowed. */
-export function intervalsOwnerDeniedResponse(
-  user: { email?: string | null; emailVerifiedAt?: string | null } | null | undefined,
-  intent: string,
-): Response | null {
-  if (!GATED_INTERVALS_INTENTS.has(intent.trim())) return null;
-  if (canUseIntervals(user)) return null;
-  return new Response(INTERVALS_NOT_FOR_ACCOUNT, {
+/** 403 for a cross-site Intervals settings POST or OAuth state failure. No secrets. */
+export function intervalsCsrfDeniedResponse(): Response {
+  return new Response(INTERVALS_CSRF_ERROR, {
     status: 403,
     headers: { "content-type": "text/plain; charset=utf-8" },
   });
 }
 
-export function intervalsApiKey(): string | null {
-  const key = envValue("INTERVALS_ICU_API_KEY");
-  return key || null;
-}
-
-/** HTTP path athlete id. Always `0` with the personal API key. */
-export function intervalsAthletePathId(): string {
-  return INTERVALS_ATHLETE_PATH;
-}
-
-function displayAthleteId(resolved: string): string {
-  if (resolved && resolved !== "0") return resolved;
-  return envValue("INTERVALS_ICU_ATHLETE_ID") || DEFAULT_INTERVALS_ATHLETE_ID;
+/** 403 when an Intervals settings POST Origin/Referer does not match this site. */
+export function denyIntervalsPostCsrf(request: Request, intent: string): Response | null {
+  if (!intent.trim().startsWith("intervals-")) return null;
+  if (isSameOrigin(request)) return null;
+  return intervalsCsrfDeniedResponse();
 }
 
 export function intervalsBasicAuthHeader(apiKey: string): string {
   return `Basic ${Buffer.from(`API_KEY:${apiKey}`, "utf8").toString("base64")}`;
+}
+
+/** Bearer for OAuth access tokens, Basic `API_KEY:<key>` for a pasted key. */
+export function intervalsAuthorizationHeader(authType: IntervalsAuthType, secret: string): string {
+  if (authType === "oauth") return `Bearer ${secret}`;
+  return intervalsBasicAuthHeader(secret);
 }
 
 function asFiniteNumber(value: unknown): number | null {
@@ -510,32 +591,48 @@ export function routeFromIntervalsStreams(value: unknown): IntervalsStreamRoute 
   return { coords: [], samples: series };
 }
 
-export async function loadIntervalsRoute(activityId: string): Promise<IntervalsStreamRoute | null> {
-  const apiKey = intervalsApiKey();
-  if (!apiKey || !activityId.trim()) return null;
+export async function loadIntervalsRoute(
+  userId: string,
+  activityId: string,
+  opened?: IntervalsCredentials,
+): Promise<IntervalsStreamRoute | null> {
+  const creds = opened ?? (await openIntervalsCredentials(userId));
+  if (!creds.ok || !activityId.trim()) return null;
   try {
     const payload = await intervalsGet(
-      apiKey,
+      { authType: creds.authType, secret: creds.apiKey },
       `/activity/${encodeURIComponent(activityId)}/streams?types=time,latlng,heartrate,cadence,altitude,distance`,
     );
     return routeFromIntervalsStreams(payload);
   } catch (error) {
-    console.error("[intervals] stream fetch failed", error instanceof Error ? error.message : error);
+    await noteIntervalsAuthFailure(userId, error);
+    logIntervals("stream fetch failed", error, [creds.apiKey]);
     return null;
   }
 }
 
-export async function loadRunEffort(date: string, distanceKm: number): Promise<RunEffort | null> {
-  const apiKey = intervalsApiKey();
-  if (!apiKey || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+export async function loadRunEffort(
+  userId: string,
+  date: string,
+  distanceKm: number,
+  opened?: IntervalsCredentials,
+): Promise<RunEffort | null> {
+  const creds = opened ?? (await openIntervalsCredentials(userId));
+  if (!creds.ok || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   try {
-    const activities = await fetchIntervalsActivities(apiKey, intervalsAthletePathId(), date, date);
+    const activities = await fetchIntervalsActivities(
+      { authType: creds.authType, secret: creds.apiKey },
+      creds.athleteId,
+      date,
+      date,
+    );
     const runs = activities
       .map(intervalsActivityStats)
       .filter((entry): entry is IntervalsRunStats => Boolean(entry));
     return effortForDistance(runs, distanceKm);
   } catch (error) {
-    console.error("[intervals] effort fetch failed", error instanceof Error ? error.message : error);
+    await noteIntervalsAuthFailure(userId, error);
+    logIntervals("effort fetch failed", error, [creds.apiKey]);
     return null;
   }
 }
@@ -631,30 +728,57 @@ export function formatSyncedAgo(iso: string, now = new Date()): string {
   return `Synced ${days}d ago`;
 }
 
+/** Stored connection with the ciphertext removed. No writes. */
+/** True when this user stored their own encrypted token or API key. */
+export function userHasOwnIntervalsConnection(userId: string): boolean {
+  return Boolean(getStoredIntervalsConnection(userId)?.apiKeyEnc?.trim());
+}
+
 export function getIntervalsConnection(userId: string): IntervalsConnection | null {
   const stored = getStoredIntervalsConnection(userId);
   if (!stored) return null;
-  if (userCanUseIntervals(userId)) return stored;
-  revokeUnownedIntervals(userId).catch((err) => console.error("[intervals] revoke unowned failed", err));
-  return null;
+  return connectionWithoutSecret(stored);
+}
+
+function connectionWithoutSecret(stored: IntervalsConnection): IntervalsConnection {
+  const connection: IntervalsConnection = {
+    userId: stored.userId,
+    athleteId: stored.athleteId,
+    connectedAt: stored.connectedAt,
+    needsReconnect: stored.needsReconnect === true,
+    authType: stored.authType === "oauth" ? "oauth" : "apikey",
+  };
+  if (stored.lastSyncAt) connection.lastSyncAt = stored.lastSyncAt;
+  if (stored.lastSyncError) connection.lastSyncError = stored.lastSyncError;
+  if (stored.scope) connection.scope = stored.scope;
+  if (stored.athleteName) connection.athleteName = stored.athleteName;
+  return connection;
 }
 
 export function getIntervalsConnectionView(userId: string, now = new Date()): IntervalsConnectionView {
   const connection = getStoredIntervalsConnection(userId);
-  if (!connection) {
+  const usable = Boolean(connection && (connection.apiKeyEnc || ownerEnvFallbackAllowed(userId)));
+  if (!connection || !usable) {
     return { connected: false, statusLabel: "Not connected" };
   }
-  const lastSyncLabel = connection.lastSyncError
-    ? INTERVALS_SYNC_ERROR
-    : connection.lastSyncAt
-      ? formatSyncedAgo(connection.lastSyncAt, now)
-      : null;
+  const needsReconnect = connection.needsReconnect === true;
+  const athleteName = connection.athleteName?.trim() || "";
+  const lastSyncLabel = needsReconnect
+    ? null
+    : connection.lastSyncError
+      ? INTERVALS_SYNC_ERROR
+      : connection.lastSyncAt
+        ? formatSyncedAgo(connection.lastSyncAt, now)
+        : null;
   return {
     connected: true,
     athleteId: connection.athleteId,
-    statusLabel: `Connected · ${connection.athleteId}`,
+    athleteName: athleteName || undefined,
+    authType: connection.authType === "oauth" ? "oauth" : "apikey",
+    needsReconnect,
+    statusLabel: needsReconnect ? INTERVALS_ACCESS_EXPIRED : `Connected as ${athleteName || connection.athleteId}`,
     lastSyncAt: connection.lastSyncAt,
-    lastSyncError: connection.lastSyncError,
+    lastSyncError: needsReconnect ? INTERVALS_ACCESS_EXPIRED : connection.lastSyncError,
     lastSyncLabel,
   };
 }
@@ -689,72 +813,88 @@ export async function upsertPlannedRuns(
   workouts: PlannedRunUpload[],
   options: {
     apiKey?: string | null;
+    authType?: IntervalsAuthType;
     fetchImpl?: typeof fetch;
     athletePathId?: string;
   } = {},
-): Promise<{ uploaded: number; failed: number }> {
+): Promise<{ uploaded: number; failed: number; status?: number }> {
   const events = workouts
     .map(plannedRunEvent)
     .filter((event): event is Record<string, unknown> => Boolean(event));
   if (events.length === 0) return { uploaded: 0, failed: 0 };
 
-  const apiKey = options.apiKey === undefined ? intervalsApiKey() : options.apiKey;
+  const apiKey = options.apiKey?.trim() || null;
   if (!apiKey) return { uploaded: 0, failed: 0 };
 
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const athletePathId = options.athletePathId ?? intervalsAthletePathId();
+  const authType = options.authType === "oauth" ? "oauth" : "apikey";
+  const athletePathId = options.athletePathId?.trim() ?? "";
+  if (!athletePathId) return { uploaded: 0, failed: 0 };
   try {
-    const response = await fetchImpl(
-      `${INTERVALS_ICU_BASE_URL}/athlete/${athletePathId}/events/bulk?upsert=true`,
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          Authorization: intervalsBasicAuthHeader(apiKey),
-          "User-Agent": INTERVALS_USER_AGENT,
-        },
-        body: JSON.stringify(events),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      },
+    await intervalsGet(
+      { authType, secret: apiKey },
+      `/athlete/${encodeURIComponent(athletePathId)}/events/bulk?upsert=true`,
+      { method: "POST", body: JSON.stringify(events), fetchImpl: options.fetchImpl },
     );
-    if (!response.ok) {
-      console.error(`[intervals] planned workout upsert HTTP ${response.status}`);
-      return { uploaded: 0, failed: events.length };
-    }
     return { uploaded: events.length, failed: 0 };
   } catch (error) {
-    console.error(
-      "[intervals] planned workout upsert failed",
-      error instanceof Error ? error.message : error,
-    );
+    if (error instanceof IntervalsHttpError) {
+      console.error(`[intervals] planned workout upsert HTTP ${error.status}`);
+      return { uploaded: 0, failed: events.length, status: error.status };
+    }
+    logIntervals("planned workout upsert failed", error, [apiKey]);
     return { uploaded: 0, failed: events.length };
   }
 }
 
-async function intervalsGet(apiKey: string, path: string): Promise<unknown> {
-  const url = `${INTERVALS_ICU_BASE_URL}${path}`;
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-      Authorization: intervalsBasicAuthHeader(apiKey),
-      "User-Agent": INTERVALS_USER_AGENT,
-    },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    const error = new Error(`Intervals.icu ${response.status}`);
-    (error as Error & { status?: number }).status = response.status;
-    throw error;
+class IntervalsHttpError extends Error {
+  status: number;
+  constructor(status: number) {
+    super(`Intervals.icu ${status}`);
+    this.name = "IntervalsHttpError";
+    this.status = status;
   }
-  return response.json() as Promise<unknown>;
 }
 
-function pickAthleteId(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const record = payload as Record<string, unknown>;
-  return asId(record.id) ?? pickAthleteId(record.athlete);
+function isIntervalsAuthFailure(error: unknown): boolean {
+  return error instanceof IntervalsHttpError && (error.status === 401 || error.status === 403);
+}
+
+function logIntervals(scope: string, error: unknown, secrets: readonly string[] = []): void {
+  let message = error instanceof Error ? error.message : "request failed";
+  for (const secret of secrets) {
+    if (secret.length < 4) continue;
+    message = message.split(secret).join("[redacted]");
+  }
+  console.error(`[intervals] ${scope}`, message);
+}
+
+type IntervalsHttpAuth = { authType: IntervalsAuthType; secret: string };
+
+/** One client for sync, pick, effort, route, upload, and connect checks. */
+async function intervalsGet(
+  auth: IntervalsHttpAuth,
+  path: string,
+  init: { method?: "GET" | "POST"; body?: string; fetchImpl?: typeof fetch } = {},
+): Promise<unknown> {
+  const fetchImpl = init.fetchImpl ?? fetch;
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: intervalsAuthorizationHeader(auth.authType, auth.secret),
+    "User-Agent": INTERVALS_USER_AGENT,
+  };
+  if (init.body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetchImpl(`${INTERVALS_ICU_BASE_URL}${path}`, {
+    method: init.method ?? "GET",
+    headers,
+    body: init.body,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new IntervalsHttpError(response.status);
+  try {
+    return (await response.json()) as unknown;
+  } catch {
+    throw new Error("Intervals response was not JSON");
+  }
 }
 
 export function parseIntervalsActivities(payload: unknown): IntervalsActivity[] {
@@ -768,68 +908,277 @@ export function parseIntervalsActivities(payload: unknown): IntervalsActivity[] 
     .filter((entry): entry is IntervalsActivity => Boolean(entry));
 }
 
-async function resolveAthleteId(apiKey: string, pathId: string): Promise<string> {
-  const paths = [`/athlete/${encodeURIComponent(pathId)}`, `/athlete/${encodeURIComponent(pathId)}/profile`];
-  for (const path of paths) {
-    try {
-      const payload = await intervalsGet(apiKey, path);
-      const id = pickAthleteId(payload);
-      if (id && id !== "0") return id;
-    } catch {
-      // Try the next probe; listing activities still validates the key.
-    }
-  }
-  return displayAthleteId(pathId);
-}
-
 export async function fetchIntervalsActivities(
-  apiKey: string,
+  auth: IntervalsHttpAuth,
   athleteId: string,
   oldest: string,
   newest: string,
 ): Promise<IntervalsActivity[]> {
   const params = new URLSearchParams({ oldest, newest });
   const payload = await intervalsGet(
-    apiKey,
+    auth,
     `/athlete/${encodeURIComponent(athleteId)}/activities?${params.toString()}`,
   );
   return parseIntervalsActivities(payload);
 }
 
-export async function connectIntervals(userId: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (!userCanUseIntervals(userId)) {
-    await revokeUnownedIntervals(userId);
-    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT };
-  }
-  const apiKey = intervalsApiKey();
-  if (!apiKey) return { ok: false, error: INTERVALS_API_KEY_NOT_CONFIGURED };
+const ATHLETE_ID_PATTERN = /^i\d{1,12}$/;
 
-  const pathId = intervalsAthletePathId();
+export function normalizeIntervalsAthleteId(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!ATHLETE_ID_PATTERN.test(trimmed)) return null;
+  return trimmed;
+}
+
+export type IntervalsCredentials =
+  | { ok: true; apiKey: string; athleteId: string; authType: IntervalsAuthType; source: "stored" | "env" }
+  | { ok: false; error: string };
+
+/** Stored only on a decrypt failure, so a corrected secret can clear needsReconnect. Not shown in the UI. */
+const INTERVALS_DECRYPT_FAILURE = "decrypt";
+
+type ReadIntervalsCredentials = IntervalsCredentials & {
+  decryptFailed?: boolean;
+  clearDecryptReconnect?: boolean;
+};
+
+/** This user's decrypted secret and athlete, or the owner env fallback. Never another user's secret. */
+function readIntervalsCredentials(userId: string): ReadIntervalsCredentials {
+  const stored = getStoredIntervalsConnection(userId);
+  if (stored?.apiKeyEnc) {
+    try {
+      const apiKey = decryptIntervalsApiKey(stored.apiKeyEnc, userId);
+      if (!apiKey || !stored.athleteId) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
+      const decryptReconnect =
+        stored.needsReconnect === true && stored.lastSyncError === INTERVALS_DECRYPT_FAILURE;
+      if (stored.needsReconnect && !decryptReconnect) {
+        return { ok: false, error: INTERVALS_RECONNECT_ERROR };
+      }
+      return {
+        ok: true,
+        apiKey,
+        athleteId: stored.athleteId,
+        authType: stored.authType === "oauth" ? "oauth" : "apikey",
+        source: "stored",
+        clearDecryptReconnect: decryptReconnect,
+      };
+    } catch (error) {
+      if (error instanceof IntervalsEncryptionError) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
+      return { ok: false, error: INTERVALS_RECONNECT_ERROR, decryptFailed: true };
+    }
+  }
+  if (stored?.needsReconnect) return { ok: false, error: INTERVALS_RECONNECT_ERROR };
+  if (stored && ownerEnvFallbackAllowed(userId)) {
+    const apiKey = envValue("INTERVALS_ICU_API_KEY");
+    const athleteId = stored.athleteId.trim() || envValue("INTERVALS_ICU_ATHLETE_ID");
+    if (!apiKey || !athleteId) return { ok: false, error: INTERVALS_API_KEY_NOT_CONFIGURED };
+    return { ok: true, apiKey, athleteId, authType: "apikey", source: "env" };
+  }
+  return { ok: false, error: INTERVALS_SYNC_ERROR };
+}
+
+/**
+ * Opens the stored secret for an Intervals call. A decrypt failure marks the
+ * connection reconnect-needed and does not throw. A missing encryption secret
+ * leaves the stored row unchanged.
+ */
+export async function openIntervalsCredentials(userId: string): Promise<IntervalsCredentials> {
+  const read = readIntervalsCredentials(userId);
+  if (read.decryptFailed) {
+    console.error("[intervals] stored connection could not be read");
+    try {
+      await markIntervalsDecryptFailure(userId);
+    } catch {
+      console.error("[intervals] could not mark reconnect");
+    }
+    return { ok: false, error: INTERVALS_RECONNECT_ERROR };
+  }
+  if (read.ok && read.clearDecryptReconnect) {
+    try {
+      await clearDecryptNeedsReconnect(userId);
+    } catch {
+      console.error("[intervals] could not clear reconnect");
+    }
+  }
+  const { decryptFailed: _decryptFailed, clearDecryptReconnect: _clearDecryptReconnect, ...creds } = read;
+  return creds;
+}
+
+/** Settings and Today call this so a bad ciphertext becomes reconnect-needed before render. */
+export async function refreshIntervalsConnectionView(
+  userId: string,
+  now = new Date(),
+): Promise<IntervalsConnectionView> {
+  await openIntervalsCredentials(userId);
+  return getIntervalsConnectionView(userId, now);
+}
+
+async function noteIntervalsAuthFailure(userId: string, error: unknown): Promise<void> {
+  if (!isIntervalsAuthFailure(error)) return;
   try {
-    const today = calendarTodayYmd();
-    await fetchIntervalsActivities(apiKey, pathId, today, today);
-    const athleteId = displayAthleteId(await resolveAthleteId(apiKey, pathId));
-    const connectedAt = new Date().toISOString();
-    await enqueueWrite(() => {
-      const existing = getStoredIntervalsConnection(userId);
-      upsertIntervalsConnection({
-        userId,
-        athleteId,
-        connectedAt: existing?.connectedAt ?? connectedAt,
-        lastSyncAt: existing?.lastSyncAt,
-        lastSyncError: undefined,
-      });
-    });
+    await markIntervalsNeedsReconnect(userId);
+  } catch (markError) {
+    const name = markError instanceof Error ? markError.name : "Error";
+    console.error(`[intervals] ${name}`);
+  }
+}
+
+export type IntervalsConnectInput = {
+  apiKey?: string;
+  athleteId?: string;
+};
+
+export async function connectIntervals(
+  userId: string,
+  input: IntervalsConnectInput = {},
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const apiKey = input.apiKey?.trim() ?? "";
+  const athleteRaw = input.athleteId?.trim() ?? "";
+  try {
+    if (!apiKey && !athleteRaw) return connectWithOwnerEnvFallback(userId);
+    if (!apiKey || !athleteRaw) return { ok: false, error: INTERVALS_CONNECT_INPUT };
+    const athleteId = normalizeIntervalsAthleteId(athleteRaw);
+    if (!athleteId) return { ok: false, error: INTERVALS_ATHLETE_ID_INVALID };
+    try {
+      encryptIntervalsApiKey("probe", userId);
+    } catch (error) {
+      if (error instanceof IntervalsEncryptionError) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
+      throw error;
+    }
+    const rejected = await rejectInvalidAthlete(apiKey, athleteId);
+    if (rejected) return rejected;
+    const apiKeyEnc = encryptIntervalsApiKey(apiKey, userId);
+    await saveIntervalsConnection(userId, { athleteId, apiKeyEnc, authType: "apikey" });
     return { ok: true };
   } catch (error) {
-    console.error("[intervals] connect failed", error instanceof Error ? error.message : error);
+    logIntervals("connect failed", error, [apiKey]);
     return { ok: false, error: INTERVALS_CONNECT_ERROR };
   }
 }
 
+async function connectWithOwnerEnvFallback(
+  userId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!ownerEnvFallbackAllowed(userId)) return { ok: false, error: INTERVALS_CONNECT_INPUT };
+  const apiKey = envValue("INTERVALS_ICU_API_KEY");
+  const athleteId = normalizeIntervalsAthleteId(envValue("INTERVALS_ICU_ATHLETE_ID"));
+  if (!apiKey || !athleteId) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
+  const rejected = await rejectInvalidAthlete(apiKey, athleteId);
+  if (rejected) return rejected;
+  await saveIntervalsConnection(userId, { athleteId, authType: "apikey" });
+  return { ok: true };
+}
+
+async function rejectInvalidAthlete(
+  apiKey: string,
+  athleteId: string,
+): Promise<{ ok: false; error: string } | null> {
+  try {
+    await intervalsGet({ authType: "apikey", secret: apiKey }, `/athlete/${encodeURIComponent(athleteId)}`);
+    return null;
+  } catch (error) {
+    logIntervals("connect failed", error, [apiKey]);
+    if (isIntervalsAuthFailure(error) || (error instanceof IntervalsHttpError && error.status === 404)) {
+      return { ok: false, error: INTERVALS_CONNECT_REJECTED };
+    }
+    return { ok: false, error: INTERVALS_CONNECT_ERROR };
+  }
+}
+
+async function saveIntervalsConnection(
+  userId: string,
+  input: {
+    athleteId: string;
+    apiKeyEnc?: string;
+    authType: IntervalsAuthType;
+    scope?: string;
+    athleteName?: string;
+  },
+): Promise<void> {
+  const connectedAt = new Date().toISOString();
+  await enqueueWrite(() => {
+    const existing = getStoredIntervalsConnection(userId);
+    upsertIntervalsConnection({
+      userId,
+      athleteId: input.athleteId,
+      connectedAt: existing?.connectedAt ?? connectedAt,
+      lastSyncAt: existing?.lastSyncAt,
+      lastSyncError: undefined,
+      apiKeyEnc: input.apiKeyEnc,
+      needsReconnect: false,
+      authType: input.authType,
+      scope: input.scope,
+      athleteName: input.athleteName,
+    });
+  });
+}
+
+export async function connectIntervalsOAuth(
+  userId: string,
+  input: { accessToken: string; athleteId: string; athleteName?: string; scope?: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const accessToken = input.accessToken.trim();
+  const athleteId = input.athleteId.trim();
+  if (!accessToken || !athleteId) return { ok: false, error: INTERVALS_OAUTH_CONNECT_ERROR };
+  if (!intervalsEncryptionReady()) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
+  try {
+    const apiKeyEnc = encryptIntervalsApiKey(accessToken, userId);
+    await saveIntervalsConnection(userId, {
+      athleteId,
+      apiKeyEnc,
+      authType: "oauth",
+      scope: input.scope,
+      athleteName: input.athleteName?.trim() || undefined,
+    });
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof IntervalsEncryptionError) return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE };
+    logIntervals("oauth connect failed", new Error("connect failed"), [accessToken]);
+    return { ok: false, error: INTERVALS_OAUTH_CONNECT_ERROR };
+  }
+}
+
+/** Deletes the stored token row. Does not decrypt, even when the secret is missing or the ciphertext will not open. */
 export async function disconnectIntervals(userId: string): Promise<void> {
   await enqueueWrite(() => {
     deleteIntervalsConnection(userId);
+  });
+}
+
+export async function markIntervalsNeedsReconnect(userId: string): Promise<void> {
+  await enqueueWrite(() => {
+    const existing = getStoredIntervalsConnection(userId);
+    if (!existing) return;
+    upsertIntervalsConnection({
+      ...existing,
+      needsReconnect: true,
+      lastSyncError: INTERVALS_RECONNECT_ERROR,
+    });
+  });
+}
+
+/** Decrypt failed with a configured secret. A later successful decrypt clears this. */
+async function markIntervalsDecryptFailure(userId: string): Promise<void> {
+  await enqueueWrite(() => {
+    const existing = getStoredIntervalsConnection(userId);
+    if (!existing) return;
+    upsertIntervalsConnection({
+      ...existing,
+      needsReconnect: true,
+      lastSyncError: INTERVALS_DECRYPT_FAILURE,
+    });
+  });
+}
+
+async function clearDecryptNeedsReconnect(userId: string): Promise<void> {
+  await enqueueWrite(() => {
+    const existing = getStoredIntervalsConnection(userId);
+    if (!existing || existing.lastSyncError !== INTERVALS_DECRYPT_FAILURE) return;
+    upsertIntervalsConnection({
+      ...existing,
+      needsReconnect: false,
+      lastSyncError: undefined,
+    });
   });
 }
 
@@ -852,26 +1201,38 @@ export async function markIntervalsSyncSuccess(userId: string, at = new Date().t
       ...existing,
       lastSyncAt: at,
       lastSyncError: undefined,
+      needsReconnect: false,
     });
   });
 }
 
 export async function loadIntervalsRunsForSync(
+  userId: string,
   oldest: string,
   newest: string,
 ): Promise<{ ok: true; runs: IntervalsRunStats[] } | { ok: false; error: string }> {
-  const apiKey = intervalsApiKey();
-  if (!apiKey) return { ok: false, error: INTERVALS_SYNC_ERROR };
-  const pathId = intervalsAthletePathId();
+  await revokeUnownedIntervals(userId);
+  const creds = await openIntervalsCredentials(userId);
+  if (!creds.ok) return creds;
   try {
-    const activities = await fetchIntervalsActivities(apiKey, pathId, oldest, newest);
+    const activities = await fetchIntervalsActivities(
+      { authType: creds.authType, secret: creds.apiKey },
+      creds.athleteId,
+      oldest,
+      newest,
+    );
     const runs = activities
       .map(intervalsActivityStats)
       .filter((entry): entry is IntervalsRunStats => Boolean(entry))
       .sort((a, b) => a.start_date_local.localeCompare(b.start_date_local) || a.activityId.localeCompare(b.activityId));
     return { ok: true, runs };
   } catch (error) {
-    console.error("[intervals] sync fetch failed", error instanceof Error ? error.message : error);
+    if (isIntervalsAuthFailure(error)) {
+      await noteIntervalsAuthFailure(userId, error);
+      logIntervals("sync fetch failed", error, [creds.apiKey]);
+      return { ok: false, error: INTERVALS_RECONNECT_ERROR };
+    }
+    logIntervals("sync fetch failed", error, [creds.apiKey]);
     return { ok: false, error: INTERVALS_SYNC_ERROR };
   }
 }

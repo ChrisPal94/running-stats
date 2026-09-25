@@ -130,7 +130,7 @@ function seedFromData(userId: string): void {
     .run(`${userId}-event`, userId, `${userId}-plan`, `${userId}-session`, "2026-09-02T00:00:00.000Z");
   upsertIntervalsConnection({
     userId,
-    athleteId: "i704884",
+    athleteId: "i123456",
     connectedAt: "2026-09-01T00:00:00.000Z",
   });
 }

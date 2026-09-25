@@ -19,8 +19,12 @@ import {
   loadRunEffort,
   disconnectIntervals,
   getIntervalsConnection,
-  INTERVALS_NOT_FOR_ACCOUNT,
-  INTERVALS_SYNC_ERROR,
+  INTERVALS_CONNECT_INPUT,
+  INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_RECONNECT_ERROR,
+  INTERVALS_SYNC_NEEDS_CONNECT,
+  intervalsConnectUserError,
+  intervalsSyncUserError,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
   loadIntervalsRoute,
@@ -30,13 +34,18 @@ import {
   parseIntervalsRunChoice,
   parseIntervalsRunChoiceList,
   pickClosestRun,
+  intervalsEncryptionReady,
+  openIntervalsCredentials,
+  ownerEnvFallbackAllowed,
   revokeUnownedIntervals,
-  userCanUseIntervals,
+  userHasOwnIntervalsConnection,
+  type IntervalsCredentials,
   type IntervalsRunChoice,
   type IntervalsRunPickerState,
   type IntervalsRunStats,
   type IntervalsStreamRoute,
 } from "./intervals";
+import { isIntervalsOAuthConfigured } from "./intervals-oauth";
 
 const PLAN_WEEKS = 4;
 const MIN_SESSION_KM = 2;
@@ -1327,9 +1336,7 @@ export async function handleTodayPost(userId: string, formData: FormData): Promi
     const recorded =
       runLog.route?.type === "polyline" ? effortFromSamples(runLog.route.samples) : null;
     const effort =
-      runLog.source === "intervals" && getIntervalsConnection(userId)
-        ? await loadRunEffort(session.date, runLog.distanceKm)
-        : null;
+      runLog.source === "intervals" ? await loadRunEffort(userId, session.date, runLog.distanceKm) : null;
     const generated = await requestCoachFeedback({
       plannedTitle: session.title,
       plannedKm: session.distanceKm,
@@ -2071,9 +2078,11 @@ export async function applyChosenIntervalsRun(
   userId: string,
   run: IntervalsRunStats,
   sessionId: string,
+  opened?: IntervalsCredentials,
 ): Promise<boolean> {
-  if (!getIntervalsConnection(userId)) return false;
-  const streams = await loadIntervalsRoute(run.activityId);
+  const creds = opened ?? (await openIntervalsCredentials(userId));
+  if (!creds.ok) return false;
+  const streams = await loadIntervalsRoute(userId, run.activityId, creds);
   return enqueueWrite(async () => {
     const data = await readTraining();
     const session = data.sessions.find((entry) => entry.id === sessionId && entry.userId === userId);
@@ -2108,29 +2117,27 @@ export async function syncIntervalsForUser(userId: string): Promise<
     }
   | { ok: false; error: string }
 > {
-  if (!userCanUseIntervals(userId)) {
-    await revokeUnownedIntervals(userId);
-    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT };
-  }
-  if (!getIntervalsConnection(userId)) {
-    return { ok: false, error: INTERVALS_SYNC_ERROR };
-  }
   const data = await readTraining();
   const today = appTodayYmd();
   const sessionDates = data.sessions.filter((entry) => entry.userId === userId).map((entry) => entry.date);
   const oldestFromSessions =
     sessionDates.length > 0 ? sessionDates.reduce((min, date) => (date < min ? date : min)) : today;
   const oldest = oldestFromSessions < addDaysYmd(today, -27) ? oldestFromSessions : addDaysYmd(today, -27);
-  const fetched = await loadIntervalsRunsForSync(oldest, today);
+  const fetched = await loadIntervalsRunsForSync(userId, oldest, today);
   if (!fetched.ok) {
-    await markIntervalsSyncError(userId);
-    return { ok: false, error: fetched.error };
+    if (
+      fetched.error !== INTERVALS_RECONNECT_ERROR &&
+      fetched.error !== INTERVALS_CONNECT_UNAVAILABLE
+    ) {
+      await markIntervalsSyncError(userId);
+    }
+    return { ok: false, error: intervalsSyncUserError(fetched.error) };
   }
   const sessionDays = new Set(sessionDates);
   const routes = new Map<string, IntervalsStreamRoute>();
   for (const run of fetched.runs) {
     if (!sessionDays.has(run.date)) continue;
-    const route = await loadIntervalsRoute(run.activityId);
+    const route = await loadIntervalsRoute(userId, run.activityId);
     if (route) routes.set(run.activityId, route);
   }
   const result = await applyIntervalsRuns(userId, fetched.runs, routes);
@@ -2145,43 +2152,88 @@ export async function syncIntervalsForUser(userId: string): Promise<
   };
 }
 
+function personalIntervalsConnect(formData: FormData): boolean {
+  return Boolean(
+    String(formData.get("intervalsApiKey") ?? "").trim() &&
+      String(formData.get("intervalsAthleteId") ?? "").trim(),
+  );
+}
+
 export async function handleSettingsPost(
   userId: string,
   formData: FormData,
 ): Promise<SettingsFormResult> {
   const intent = String(formData.get("intent") ?? "").trim();
-  if (
-    (intent === "intervals-connect" ||
-      intent === "intervals-sync" ||
-      intent === "intervals-pick-run" ||
-      intent === "intervals-skip-pick") &&
-    !userCanUseIntervals(userId)
-  ) {
+  if (intent.startsWith("intervals-")) {
+    try {
+      return await postIntervalsSettings(userId, formData, intent);
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "Error";
+      console.error(`[intervals] settings failed ${name}`);
+      return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE, section: "intervals", status: 403 };
+    }
+  }
+
+  const cadenceRaw = String(formData.get("feedbackCadence") ?? "").trim();
+  if (!isFeedbackCadence(cadenceRaw)) {
+    return { ok: false, error: "Pick Daily, Weekly, or Monthly.", section: "cadence" };
+  }
+  const plan = await updateFeedbackCadence(userId, cadenceRaw);
+  if (!plan) {
+    return { ok: false, error: "Couldn't save. Try again.", section: "cadence" };
+  }
+  return { ok: true, redirect: "/settings?saved=1" };
+}
+
+async function postIntervalsSettings(
+  userId: string,
+  formData: FormData,
+  intent: string,
+): Promise<SettingsFormResult> {
+  if (intent === "intervals-connect") {
+    const apiKey = String(formData.get("intervalsApiKey") ?? "").trim();
+    const athleteId = String(formData.get("intervalsAthleteId") ?? "").trim();
+    const complete = Boolean(apiKey && athleteId);
+    const empty = !apiKey && !athleteId;
+    if (!complete && !(empty && ownerEnvFallbackAllowed(userId))) {
+      return { ok: false, error: INTERVALS_CONNECT_INPUT, section: "intervals" };
+    }
+  }
+
+  const gated =
+    intent === "intervals-connect" ||
+    intent === "intervals-sync" ||
+    intent === "intervals-pick-run" ||
+    intent === "intervals-skip-pick";
+  const ownConnection = userHasOwnIntervalsConnection(userId);
+  const postingOwnKey = intent === "intervals-connect" && personalIntervalsConnect(formData);
+  if (gated && !ownConnection && !postingOwnKey && !ownerEnvFallbackAllowed(userId)) {
     await revokeUnownedIntervals(userId);
-    return { ok: false, error: INTERVALS_NOT_FOR_ACCOUNT, section: "intervals", status: 403 };
+    if (intent === "intervals-sync" && (intervalsEncryptionReady() || isIntervalsOAuthConfigured())) {
+      return { ok: false, error: INTERVALS_SYNC_NEEDS_CONNECT, section: "intervals" };
+    }
+    return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE, section: "intervals", status: 403 };
   }
 
   if (intent === "intervals-connect") {
-    const result = await connectIntervals(userId);
-    if (!result.ok) {
-      return {
-        ok: false,
-        error: result.error,
-        section: "intervals",
-        status: result.error === INTERVALS_NOT_FOR_ACCOUNT ? 403 : undefined,
-      };
-    }
+    const result = await connectIntervals(userId, {
+      apiKey: String(formData.get("intervalsApiKey") ?? ""),
+      athleteId: String(formData.get("intervalsAthleteId") ?? ""),
+    });
+    if (!result.ok) return { ok: false, error: intervalsConnectUserError(result.error), section: "intervals" };
     return { ok: true, redirect: "/settings" };
   }
 
   if (intent === "intervals-sync") {
     const result = await syncIntervalsForUser(userId);
     if (!result.ok) {
-      if (result.error === INTERVALS_NOT_FOR_ACCOUNT) {
-        return { ok: false, error: result.error, section: "intervals", status: 403 };
-      }
-      if (!getIntervalsConnection(userId)) {
-        return { ok: false, error: result.error, section: "intervals" };
+      const error = intervalsSyncUserError(result.error);
+      if (
+        error === INTERVALS_RECONNECT_ERROR ||
+        error === INTERVALS_CONNECT_UNAVAILABLE ||
+        !getIntervalsConnection(userId)
+      ) {
+        return { ok: false, error, section: "intervals" };
       }
       return { ok: true, redirect: "/settings" };
     }
@@ -2195,6 +2247,14 @@ export async function handleSettingsPost(
     const skippedNoSession = String(formData.get("skippedNoSession") ?? "") === "1";
     let imported = postedImportedCount(formData.get("imported"));
     if (intent === "intervals-pick-run") {
+      const creds = await openIntervalsCredentials(userId);
+      if (!creds.ok) {
+        return {
+          ok: false,
+          error: intervalsSyncUserError(creds.error),
+          section: "intervals",
+        };
+      }
       let postedRuns: unknown = [];
       try {
         postedRuns = JSON.parse(String(formData.get("pickerRuns") ?? "[]")) as unknown;
@@ -2211,8 +2271,11 @@ export async function handleSettingsPost(
       const selectedId = String(formData.get("activityId") ?? "");
       const selected = current?.runs.find((run) => run.activityId === selectedId);
       if (current && selected) {
-        const wrote = await applyChosenIntervalsRun(userId, selected, current.sessionId);
+        const wrote = await applyChosenIntervalsRun(userId, selected, current.sessionId, creds);
         if (wrote) imported += 1;
+        if (getIntervalsConnection(userId)?.needsReconnect) {
+          return { ok: false, error: INTERVALS_RECONNECT_ERROR, section: "intervals" };
+        }
       }
     }
     const picker = pickerResult(remaining, skippedNoSession, imported);
@@ -2225,13 +2288,5 @@ export async function handleSettingsPost(
     return { ok: true, redirect: "/settings" };
   }
 
-  const cadenceRaw = String(formData.get("feedbackCadence") ?? "").trim();
-  if (!isFeedbackCadence(cadenceRaw)) {
-    return { ok: false, error: "Pick Daily, Weekly, or Monthly.", section: "cadence" };
-  }
-  const plan = await updateFeedbackCadence(userId, cadenceRaw);
-  if (!plan) {
-    return { ok: false, error: "Couldn't save. Try again.", section: "cadence" };
-  }
-  return { ok: true, redirect: "/settings?saved=1" };
+  return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE, section: "intervals", status: 403 };
 }

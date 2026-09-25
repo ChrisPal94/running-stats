@@ -7,13 +7,16 @@ import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession, userInitial } from "../lib/app-session";
 import { isSameOrigin } from "../lib/public-origin";
 import {
-  canUseIntervals,
-  getIntervalsConnectionView,
-  intervalsOwnerDeniedResponse,
+  INTERVALS_CONNECTED_TOAST,
+  denyIntervalsPostCsrf,
+  intervalsEncryptionReady,
+  intervalsOAuthSettingsError,
   intervalsSyncToastCopy,
-  revokeUnownedIntervals,
+  ownerEnvFallbackAllowed,
+  refreshIntervalsConnectionView,
   type IntervalsSyncToast,
 } from "../lib/intervals";
+import { isIntervalsOAuthConfigured } from "../lib/intervals-oauth";
 import {
   FEEDBACK_CADENCES,
   handleSettingsPost,
@@ -32,6 +35,7 @@ const initial = userInitial(user.email);
 
 let cadenceError = "";
 let intervalsError = "";
+let athleteIdDraft = "";
 let runPicker: IntervalsRunPickerState | null = null;
 let selectedCadence: FeedbackCadence = normalizeFeedbackCadence(plan.feedbackCadence);
 
@@ -41,15 +45,13 @@ if (Astro.request.method === "POST") {
   if (intent === "save-cadence") {
     selectedCadence = normalizeFeedbackCadence(String(formData.get("feedbackCadence") ?? ""));
   }
+  const csrfDenied = denyIntervalsPostCsrf(Astro.request, intent);
+  if (csrfDenied) return csrfDenied;
   if (!isSameOrigin(Astro.request)) {
-    const unverified = "This request could not be verified. Try again.";
-    if (intent.startsWith("intervals-")) intervalsError = unverified;
-    else cadenceError = unverified;
+    cadenceError = "This request could not be verified. Try again.";
   } else {
-    const denied = intervalsOwnerDeniedResponse(user, intent);
-    if (denied) {
-      await revokeUnownedIntervals(user.id);
-      return denied;
+    if (intent === "intervals-connect") {
+      athleteIdDraft = String(formData.get("intervalsAthleteId") ?? "").trim().slice(0, 16);
     }
     const result = await handleSettingsPost(user.id, formData);
     if (result.ok) {
@@ -77,8 +79,19 @@ const syncToast: Exclude<IntervalsSyncToast, null> | null =
   toastParam === "no-session" || toastParam === "no-new-runs" || toastParam === "cooper"
     ? toastParam
     : null;
-const syncToastCopy = syncToast ? intervalsSyncToastCopy(syncToast) : "";
-const connection = getIntervalsConnectionView(user.id);
+const intervalsConnected = toastParam === "intervals-connected";
+const syncToastCopy = intervalsConnected
+  ? INTERVALS_CONNECTED_TOAST
+  : syncToast
+    ? intervalsSyncToastCopy(syncToast)
+    : "";
+const oauthToastError = intervalsOAuthSettingsError(toastParam);
+if (oauthToastError && !intervalsError) intervalsError = oauthToastError;
+const connection = await refreshIntervalsConnectionView(user.id);
+const oauthConfigured = isIntervalsOAuthConfigured();
+const encryptionReady = intervalsEncryptionReady();
+const fallbackEligible = ownerEnvFallbackAllowed(user.id);
+const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionReady;
 ---
 
 <AppShell
@@ -147,7 +160,10 @@ const connection = getIntervalsConnectionView(user.id);
     <ConnectedApps
       connection={connection}
       error={intervalsError}
-      intervalsAvailable={canUseIntervals(user)}
+      envFallbackConnect={envFallbackConnect}
+      athleteIdDraft={athleteIdDraft}
+      oauthConfigured={oauthConfigured}
+      encryptionReady={encryptionReady}
     />
 
     <article
@@ -176,7 +192,7 @@ const connection = getIntervalsConnectionView(user.id);
 {runPicker ? <WhichRunSheet picker={runPicker} /> : null}
 
 {
-  syncToast && syncToastCopy ? (
+  (syncToast || intervalsConnected) && syncToastCopy ? (
     <p
       class="saved-toast pointer-events-none fixed inset-x-0 bottom-24 z-50 mx-auto w-max max-w-[min(100%-2rem,28rem)] rounded-full bg-lime px-4 py-2 text-center text-xs font-bold text-ink shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
       data-sync-toast={syncToast}
@@ -189,7 +205,11 @@ const connection = getIntervalsConnectionView(user.id);
 }
 
 {
-  syncToast ? (
+  syncToast ||
+  intervalsConnected ||
+  toastParam === "intervals-error" ||
+  toastParam === "intervals-calendar" ||
+  toastParam === "intervals-unavailable" ? (
     <script>
       const toast = document.querySelector("[data-sync-toast]");
       window.setTimeout(() => {

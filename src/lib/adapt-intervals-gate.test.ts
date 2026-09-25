@@ -2,19 +2,43 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, describe, it, mock } from "node:test";
+import { after, afterEach, describe, it, mock } from "node:test";
 import { adaptRunLogLine } from "./adapt-cron.ts";
 import { runNocturnalAdaptation } from "./adapt.ts";
 import { getDb, getUserById, insertUser, loadTrainingSnapshot, saveTrainingSnapshot, upsertIntervalsConnection } from "./db.ts";
 import type { Feedback, Plan, RunLog, Session } from "./training.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-adapt-gate-"));
+const originalEnv = {
+  AUTH_DATA_DIR: process.env.AUTH_DATA_DIR,
+  INTERVALS_OWNER_EMAILS: process.env.INTERVALS_OWNER_EMAILS,
+  ADAPT_LLM_API_KEY: process.env.ADAPT_LLM_API_KEY,
+  INTERVALS_ICU_API_KEY: process.env.INTERVALS_ICU_API_KEY,
+  INTERVALS_KEY_ENC_SECRET: process.env.INTERVALS_KEY_ENC_SECRET,
+  INTERVALS_OWNER_ENV_FALLBACK: process.env.INTERVALS_OWNER_ENV_FALLBACK,
+};
 process.env.AUTH_DATA_DIR = dataDir;
+process.env.INTERVALS_KEY_ENC_SECRET = Buffer.alloc(32, 5).toString("base64");
 
 const NOW = new Date("2026-09-24T17:00:00.000Z");
 const OWNER_EMAIL = "crispal94@gmail.com";
 
+function restoreEnv(includeDataDir: boolean): void {
+  const entries = Object.entries(originalEnv).filter(([key]) => includeDataDir || key !== "AUTH_DATA_DIR");
+  for (const [key, value] of entries) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
+afterEach(() => {
+  restoreEnv(false);
+  process.env.AUTH_DATA_DIR = dataDir;
+  process.env.INTERVALS_KEY_ENC_SECRET = Buffer.alloc(32, 5).toString("base64");
+});
+
 after(() => {
+  restoreEnv(true);
   rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -29,7 +53,7 @@ function installAthlete(userId: string, email: string, emailVerifiedAt?: string)
   }
   upsertIntervalsConnection({
     userId,
-    athleteId: "i704884",
+    athleteId: "i123456",
     connectedAt: "2026-09-01T00:00:00.000Z",
   });
 
@@ -113,7 +137,7 @@ describe("adapt Intervals gate", () => {
     const stored = getDb()
       .prepare("SELECT athleteId FROM intervals_connections WHERE userId = ?")
       .get(userId) as { athleteId: string };
-    assert.equal(stored.athleteId, "i704884");
+    assert.equal(stored.athleteId, "i123456");
 
     const loadRunEffort = mock.fn(async () => null);
     const upsertPlannedRuns = mock.fn(async () => ({ uploaded: 1, failed: 0 }));
@@ -133,6 +157,8 @@ describe("adapt Intervals gate", () => {
     delete process.env.ADAPT_LLM_API_KEY;
     process.env.INTERVALS_OWNER_EMAILS = `  ${OWNER_EMAIL.toUpperCase()}  `;
     const userId = "adapt-owner";
+    process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
+    process.env.INTERVALS_ICU_API_KEY = "owner-env-key";
     installAthlete(userId, OWNER_EMAIL, "2026-09-01T00:00:00.000Z");
 
     const loadRunEffort = mock.fn(async () => null);

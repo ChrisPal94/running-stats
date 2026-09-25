@@ -27,7 +27,9 @@ const dataDir = mkdtempSync(join(tmpdir(), "rs-magic-"));
 process.env.AUTH_DATA_DIR = dataDir;
 process.env.AUTH_SECRET = "test-auth-secret-16+";
 const originalNodeEnv = process.env.NODE_ENV;
+const originalPublicOrigin = process.env.PUBLIC_ORIGIN;
 process.env.NODE_ENV = "test";
+delete process.env.PUBLIC_ORIGIN;
 delete process.env.RESEND_API_KEY;
 delete process.env.MAIL_FROM;
 delete process.env.MAGIC_LINK_FROM;
@@ -36,11 +38,14 @@ after(() => {
   rmSync(dataDir, { recursive: true, force: true });
   if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = originalNodeEnv;
+  if (originalPublicOrigin === undefined) delete process.env.PUBLIC_ORIGIN;
+  else process.env.PUBLIC_ORIGIN = originalPublicOrigin;
 });
 
 afterEach(() => {
   mock.restoreAll();
   process.env.NODE_ENV = "test";
+  delete process.env.PUBLIC_ORIGIN;
   delete process.env.RESEND_API_KEY;
   delete process.env.MAIL_FROM;
   delete process.env.MAGIC_LINK_FROM;
@@ -386,17 +391,59 @@ describe("magic link consume", () => {
 });
 
 describe("magic link helpers", () => {
-  it("builds HTTPS Railway sign-in URLs from publicOrigin", () => {
+  it("builds the sign-in URL on PUBLIC_ORIGIN when X-Forwarded-Host is spoofed", () => {
+    process.env.PUBLIC_ORIGIN = "https://running-stats-production.up.railway.app/";
     const request = new Request("http://10.0.0.1:8080/login", {
       headers: {
+        host: "evil.example.com",
         "x-forwarded-proto": "https",
-        "x-forwarded-host": "running-stats-production.up.railway.app",
+        "x-forwarded-host": "evil.example.com",
       },
     });
     assert.equal(
       magicSignInUrl(request, "tok_abc"),
       "https://running-stats-production.up.railway.app/auth/magic?token=tok_abc",
     );
+    assert.equal(String(magicSignInUrl(request, "tok_abc")).includes("evil.example.com"), false);
+  });
+
+  it("falls back to the request origin in dev when PUBLIC_ORIGIN is unset", () => {
+    delete process.env.PUBLIC_ORIGIN;
+    const request = new Request("http://localhost:4321/login");
+    assert.equal(magicSignInUrl(request, "tok_abc"), "http://localhost:4321/auth/magic?token=tok_abc");
+  });
+
+  it("does not send a production link when PUBLIC_ORIGIN is missing", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.MAIL_FROM = "Stride Lab <mail@example.com>";
+    delete process.env.PUBLIC_ORIGIN;
+    const email = uniqueEmail("no-origin");
+    const lines = captureLogs();
+    let fetched = false;
+    mock.method(globalThis, "fetch", async () => {
+      fetched = true;
+      return new Response("{}", { status: 200 });
+    });
+    const request = new Request("https://evil.example.com/login", {
+      method: "POST",
+      headers: {
+        host: "evil.example.com",
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "evil.example.com",
+      },
+    });
+    const result = await requestMagicLink(request, formData({ intent: "magic", email }));
+    assert.deepEqual(result, { ok: false, error: MAGIC_SEND_ERROR, email });
+    assert.equal(fetched, false);
+    assert.equal(listMagicTokensByEmail(email).length, 0);
+    assert.equal(magicSignInUrl(request, "tok_abc"), null);
+    const joined = lines.join("\n");
+    assert.match(joined, /PublicOriginError/);
+    assert.equal(joined.includes("evil.example.com"), false);
+    assert.equal(joined.includes("tok_abc"), false);
+    assert.equal(joined.includes("token="), false);
+    assert.equal(joined.includes(email), false);
   });
 
   it("maps used/expired clicks to the login toast", () => {

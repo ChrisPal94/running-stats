@@ -325,6 +325,30 @@ describe("planned run upload", () => {
     assert.deepEqual(result, { uploaded: 0, failed: 0 });
   });
 
+  it("skips the network when the athlete id is missing", async () => {
+    let called = false;
+    const result = await upsertPlannedRuns(
+      [
+        {
+          externalId: "session-1",
+          date: "2026-09-25",
+          name: "Easy run · 8 km",
+          description: "Keep it conversational",
+          distanceKm: 8,
+        },
+      ],
+      {
+        apiKey: "test-key",
+        fetchImpl: async () => {
+          called = true;
+          return new Response("[]", { status: 200 });
+        },
+      },
+    );
+    assert.equal(called, false);
+    assert.deepEqual(result, { uploaded: 0, failed: 0 });
+  });
+
   it("upserts with the session id and counts an HTTP failure", async () => {
     const calls: Array<{ url: string; body: string; authorization: string }> = [];
     const fetchImpl: typeof fetch = async (input, init) => {
@@ -346,12 +370,12 @@ describe("planned run upload", () => {
           distanceKm: 8,
         },
       ],
-      { apiKey: "test-key", fetchImpl },
+      { apiKey: "test-key", athletePathId: "i123456", fetchImpl },
     );
     assert.equal(result.failed, 1);
     assert.equal(result.uploaded, 0);
     assert.equal(calls.length, 1);
-    assert.match(calls[0].url, /\/athlete\/0\/events\/bulk\?upsert=true$/);
+    assert.match(calls[0].url, /\/athlete\/i123456\/events\/bulk\?upsert=true$/);
     assert.equal(calls[0].authorization.startsWith("Basic "), true);
     assert.equal(calls[0].authorization.includes("test-key"), false);
     const body = JSON.parse(calls[0].body) as Array<Record<string, unknown>>;

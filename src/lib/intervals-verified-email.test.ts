@@ -28,10 +28,8 @@ import {
 import { finishGoogleOAuth } from "./google-oauth.ts";
 import {
   canUseIntervals,
-  INTERVALS_NOT_FOR_ACCOUNT,
-  INTERVALS_UNAVAILABLE_STATUS,
-  intervalsOwnerDeniedResponse,
-  intervalsSettingsControls,
+  INTERVALS_CONNECT_INPUT,
+  INTERVALS_CONNECT_UNAVAILABLE,
 } from "./intervals.ts";
 import { consumeMagicLink, finishMagicLink, issueMagicLinkToken } from "./magic-link.ts";
 import { handleSettingsPost } from "./training.ts";
@@ -285,30 +283,21 @@ describe("password signup does not verify an owner email", () => {
     if (logged.ok) assert.equal(logged.user.emailVerifiedAt, undefined);
     assert.equal(getUserByEmail(OWNER_EMAIL)?.emailVerifiedAt, null);
 
-    const controls = intervalsSettingsControls({
-      available: canUseIntervals(stored),
-      connection: {
-        connected: true,
-        athleteId: "i704884",
-        statusLabel: "Connected · i704884",
-        lastSyncLabel: null,
-      },
-    });
-    assert.equal(controls.statusLabel, "Not available for your account");
-    assert.equal(controls.statusLabel, INTERVALS_UNAVAILABLE_STATUS);
-    assert.equal(controls.showConnect, false);
-    assert.equal(controls.showSync, false);
-
     for (const intent of ["intervals-connect", "intervals-sync", "intervals-pick-run", "intervals-skip-pick"]) {
-      const denied = intervalsOwnerDeniedResponse(stored, intent);
-      assert.ok(denied);
-      assert.equal(denied.status, 403);
-      assert.equal(await denied.text(), INTERVALS_NOT_FOR_ACCOUNT);
       const form = new FormData();
       form.set("intent", intent);
       const result = await handleSettingsPost(stored!.id, form);
       assert.equal(result.ok, false);
-      if (!result.ok) assert.equal(result.status, 403);
+      if (!result.ok) {
+        if (intent === "intervals-connect") {
+          assert.equal(result.status, undefined);
+          assert.equal(result.error, INTERVALS_CONNECT_INPUT);
+        } else {
+          assert.equal(result.status, 403);
+          assert.equal(result.error, INTERVALS_CONNECT_UNAVAILABLE);
+        }
+        assert.equal(result.error.includes("for your account"), false);
+      }
     }
     assert.equal(fetched, false);
   });
@@ -323,7 +312,6 @@ describe("Google callback verification", () => {
     const user = getUserByEmail(email);
     assert.ok(user?.emailVerifiedAt);
     assert.equal(canUseIntervals(user), true);
-    assert.equal(intervalsOwnerDeniedResponse(user, "intervals-connect"), null);
     assert.ok(await getCurrentUser(jar.cookies));
   });
 

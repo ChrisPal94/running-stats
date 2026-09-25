@@ -21,7 +21,9 @@ import {
   withTransaction,
 } from "./db";
 import { loadLocalEnv } from "./load-env";
-import { publicOrigin } from "./public-origin";
+import { isProductionRuntime, requestPublicOrigin } from "./public-origin";
+
+export { isProductionRuntime };
 
 loadLocalEnv();
 
@@ -63,13 +65,6 @@ export function mailFromAddress(): string {
   return process.env.MAIL_FROM?.trim() || process.env.MAGIC_LINK_FROM?.trim() || "";
 }
 
-export function isProductionRuntime(): boolean {
-  const nodeEnv = process.env.NODE_ENV;
-  if (nodeEnv === "production") return true;
-  if (nodeEnv === "development" || nodeEnv === "test") return false;
-  return import.meta.env.PROD === true;
-}
-
 export function isMagicMailConfigured(): boolean {
   return Boolean(resendApiKey() && mailFromAddress());
 }
@@ -84,8 +79,19 @@ export function hashMagicToken(raw: string): string {
   return createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
-export function magicSignInUrl(request: Request, token: string): string {
-  const url = new URL("/auth/magic", `${publicOrigin(request)}/`);
+/**
+ * Sign-in origin for the emailed link. Uses `PUBLIC_ORIGIN` (same helper as
+ * the Intervals OAuth redirect), never `X-Forwarded-Host`. Production without
+ * that origin fails closed. Dev falls back to the request origin (localhost).
+ */
+export function magicLinkOrigin(request: Request): string | null {
+  return requestPublicOrigin(request);
+}
+
+export function magicSignInUrl(request: Request, token: string): string | null {
+  const origin = magicLinkOrigin(request);
+  if (!origin) return null;
+  const url = new URL("/auth/magic", `${origin}/`);
   url.searchParams.set("token", token);
   return url.href;
 }
@@ -202,6 +208,10 @@ export async function requestMagicLink(
     console.error("[auth] Magic link mail is not configured");
     return { ok: false, error: MAGIC_SEND_ERROR, email };
   }
+  if (!magicLinkOrigin(request)) {
+    console.error("[auth] magic link origin failed", "PublicOriginError");
+    return { ok: false, error: MAGIC_SEND_ERROR, email };
+  }
 
   try {
     return await enqueueWrite(async () => {
@@ -213,6 +223,11 @@ export async function requestMagicLink(
 
       const issued = issueMagicLinkToken(email, { now });
       const signInUrl = magicSignInUrl(request, issued.raw);
+      if (!signInUrl) {
+        deleteMagicToken(issued.hash);
+        console.error("[auth] magic link origin failed", "PublicOriginError");
+        return { ok: false as const, error: MAGIC_SEND_ERROR, email };
+      }
 
       try {
         if (isMagicMailConfigured()) {

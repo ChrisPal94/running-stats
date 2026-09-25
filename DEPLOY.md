@@ -16,11 +16,11 @@ The Node standalone server binds with `HOST` and `PORT`. `npm start` sets `HOST=
 
 Nixpacks already runs `npm run build` and `npm start`. Keep the start command as `npm start` (or the `HOST=0.0.0.0 node ./dist/server/entry.mjs` equivalent). Do not use `astro preview` in production.
 
-The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connection status, magic link tokens). `users.emailVerifiedAt` is nullable and is not backfilled: existing accounts stay unverified until a Google sign-in (only when `email_verified === true`; false or missing does not count) or a consumed magic link sets it. Password signup does not. Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot and still start unverified. The Intervals API key is env-only and is not stored in `app.db`. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
+The SQLite database lives at `.data/app.db` (`users`, onboarding, plans, sessions, feedbacks, run logs, AdaptationEvents, Intervals connections, magic link tokens). `users.emailVerifiedAt` is nullable and is not backfilled: existing accounts stay unverified until a Google sign-in (only when `email_verified === true`; false or missing does not count) or a consumed magic link sets it. Password signup does not. Without a volume it disappears on every deploy. If `users.json` / `training.json` are still on the volume and `app.db` is empty, they are imported once on boot and still start unverified. Each user’s own Intervals access token or API key is stored only as AES-256-GCM ciphertext (`apiKeyEnc`, unique IV, auth tag checked on read). It is never written to HTML, JSON, or logs. Raw magic-link tokens are never stored; only a hash, email, expiry, and used-at.
 
 ## Environment
 
-Set these on the **web** service. Names match `.env.example`. The app does not read a separate `SITE` / `APP_URL`; the public origin is the Railway URL (and `GOOGLE_CALLBACK_URL` for OAuth).
+Set these on the **web** service. Names match `.env.example`. Intervals OAuth `redirect_uri` and magic-link sign-in URLs are built from `PUBLIC_ORIGIN`, not from `Host` or `X-Forwarded-Host`. Google still uses `GOOGLE_CALLBACK_URL`.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
@@ -39,9 +39,34 @@ Set these on the **web** service. Names match `.env.example`. The app does not r
 | `ADAPT_LLM_MODEL` | No | Default `gpt-4o-mini`. Same variable for adapt and Generate feedback. |
 | `OLLAMA_API_KEY` | Fallback | One-release fallback when `ADAPT_LLM_API_KEY` is unset. Prefer `ADAPT_LLM_API_KEY`. Ignores `ADAPT_LLM_BASE_URL` and `ADAPT_LLM_MODEL`. Host is `https://ollama.com/v1`. |
 | `OLLAMA_MODEL` | Fallback | Model for the `OLLAMA_API_KEY` fallback. Default `gemma4:31b`. |
-| `INTERVALS_ICU_API_KEY` | For Connect | Intervals.icu personal API key. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`; athlete path `0`. Never stored in SQLite or shown in the UI. Only a verified account listed in `INTERVALS_OWNER_EMAILS` may use it. |
-| `INTERVALS_ICU_ATHLETE_ID` | No | Display fallback (default `i704884`). HTTP paths use `0`. |
-| `INTERVALS_OWNER_EMAILS` | For Connect | Comma-separated emails allowed to use the shared Intervals key. Case-insensitive; whitespace around each address is ignored. The account must also have `emailVerifiedAt` set. Unset or empty allowlist: nobody can connect, sync, or read Intervals (fail closed). Production must set `crispal94@gmail.com`. |
+| `INTERVALS_KEY_ENC_SECRET` | For Connect | 32-byte key that encrypts each user’s Intervals access token or API key at rest (AES-256-GCM). Standard base64 only, from `openssl rand -base64 32` (44 characters, decodes to exactly 32 bytes). Hex and other formats are treated as missing (logged once, no crash). Missing or invalid: the Connect button stays visible but disabled with **Connecting Intervals.icu isn’t available right now. Try again later.** Nothing is stored in plaintext. Existing rows are left in place. The secret is never stored or logged. Set it on the **web** service (the process that writes `app.db` and runs `/api/adapt`). |
+| `PUBLIC_ORIGIN` | For Intervals OAuth and magic links | Public site origin with no path, for example `https://running-stats-production.up.railway.app`. The OAuth `redirect_uri` is this origin plus `/auth/intervals/callback`. Magic-link emails use this origin plus `/auth/magic`. Neither uses `Host` or `X-Forwarded-Host`. In production, if this is unset, Intervals OAuth is treated as not configured, and magic link send fails with **Couldn’t send the link. Try again.** (a config error name is logged; the link is not sent). Local dev without it falls back to the request origin (localhost). |
+| `INTERVALS_CLIENT_ID` | For OAuth | Intervals.icu OAuth client id from [the app form](https://intervals.icu/oauth/apply). When this and `INTERVALS_CLIENT_SECRET` are both set, and `PUBLIC_ORIGIN` is set in production, Settings uses **Connect Intervals.icu**. Otherwise it shows the API key and athlete ID form. |
+| `INTERVALS_CLIENT_SECRET` | For OAuth | OAuth client secret. Used only on the server when exchanging the code at `https://intervals.icu/api/oauth/token`. Never sent to the browser. |
+| `INTERVALS_ICU_API_KEY` | No | Shared Intervals key. Not used unless `INTERVALS_OWNER_ENV_FALLBACK=true`. Basic auth user is `API_KEY`. HTTP `User-Agent: RunningStatsMVP/0.1`. Only a verified account listed in `INTERVALS_OWNER_EMAILS` may use it. |
+| `INTERVALS_ICU_ATHLETE_ID` | No | Athlete id for that shared key (for example `i123456`). Used only with the owner env fallback. |
+| `INTERVALS_OWNER_ENV_FALLBACK` | No | Set to `true` to let a verified allowlisted owner use `INTERVALS_ICU_API_KEY` and `INTERVALS_ICU_ATHLETE_ID` when they have no stored personal key. Default off. Anyone else uses their own OAuth token or pasted key, which does not require the allowlist or a verified email. |
+| `INTERVALS_OWNER_EMAILS` | For owner fallback | Comma-separated emails allowed to use the shared env key. Case-insensitive; whitespace around each address is ignored. Unset or empty: the env fallback matches nobody. The account must also have `emailVerifiedAt` set (Google `email_verified === true`, or a consumed magic link). Password signup does not verify, and existing rows are not backfilled. The allowlist does not gate per-user OAuth or pasted keys. Production must set `crispal94@gmail.com` if the env fallback is on. |
+
+### Intervals.icu OAuth
+
+Primary connect path when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIENT_SECRET` are set. Pasted API key + athlete ID is the fallback when they are not. Either path is available to any signed-in user. The owner allowlist and verified email apply only to the shared env key.
+
+Register and approve the app at https://intervals.icu/oauth/apply. Authorize URL: `https://intervals.icu/oauth/authorize` (`client_id`, `redirect_uri`, `scope`, `state`). Token URL: `https://intervals.icu/api/oauth/token` (form `client_id`, `client_secret`, `code`). The token JSON includes `athlete.id` and `athlete.name`; those are stored from that response.
+
+Scopes (one per area — `ACTIVITY:READ,ACTIVITY:WRITE` fails with **Duplicate scope**; `WRITE` already implies read):
+
+```
+ACTIVITY:READ,CALENDAR:WRITE
+```
+
+Redirect URI (must match the app settings exactly). Production:
+
+```
+https://running-stats-production.up.railway.app/auth/intervals/callback
+```
+
+Local: `http://localhost:4321/auth/intervals/callback`. Production builds it from `PUBLIC_ORIGIN` (`https://running-stats-production.up.railway.app/auth/intervals/callback`), not from `Host` or `X-Forwarded-Host`. If `PUBLIC_ORIGIN` is unset in production, OAuth is not configured.
 
 Google Cloud Console: add the production authorized redirect URI before testing Continue with Google.
 
@@ -78,9 +103,9 @@ If the dry run or `--apply` aborts because the target account already has rows (
 
 3. Sign in on the site with Google as `crispal94@gmail.com` (`email_verified` must be true). That sets `emailVerifiedAt` on the renamed account. Do this only after step 2 `--apply`.
 
-4. Connect Intervals in Settings.
+4. Connect Intervals in Settings. The owner’s legacy Intervals connection row (no stored personal key) disappears after deploy unless `INTERVALS_OWNER_ENV_FALLBACK=true`. Running adapt, or opening Settings and submitting an Intervals action, deletes that row. Run logs are kept. After the verified Google sign-in the owner must Connect again in Settings.
 
-5. **Cleanup `--apply` only after the Google login.** Until `emailVerifiedAt` is set, the allowlisted address is still a non-owner, and `--apply` would delete that account’s Intervals run logs. Then dry-run again; it should show 0.
+5. **Cleanup `--apply` only after the Google login.** Run it during low traffic. An active sync can race with the delete. Until `emailVerifiedAt` is set, cleanup `--apply` aborts and deletes no RunLogs. Then dry-run again; it should show 0.
 
 ```bash
 npm run cleanup:intervals-nonowners -- --apply
@@ -110,11 +135,11 @@ npm run reassign-owner-email -- --from <realEmail> --to crispal94@gmail.com --ap
 
 ## One-off: remove non-owner Intervals imports
 
-Order is the owner runbook, not dry-run then `--apply` back to back. Dry-run first (step 1), before reassign and before any Google login. `--apply` is step 5, only after that Google login and Connect. Then dry-run again; it should show 0. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` and, before `--apply`, that account’s `emailVerifiedAt` must be set. Do not run it on the cron service; that service has no volume.
+Order is the owner runbook, not dry-run then `--apply` back to back. Dry-run first (step 1), before reassign and before any Google login. `--apply` is step 5, only after that Google login and Connect. Then dry-run again; it should show 0. `INTERVALS_OWNER_EMAILS` must be `crispal94@gmail.com` and, before `--apply`, that account’s `emailVerifiedAt` must be set. Do not run it on the cron service; that service has no volume. Run the dry run and `--apply` during low traffic. An active sync can race with the delete.
 
 Railway: web service shell, or a one-off command that uses the web service variables and the mounted volume (workdir `/app`).
 
-Default is a dry run. It prints each account (`userId`, `email`, `verified`, `wouldDelete`), including verified owners at `0`, plus a total. `verified=yes` only when `emailVerifiedAt` is set. An allowlisted address that is still unverified is a non-owner. It does not delete.
+Default is a dry run. It prints each account (`userId`, `email`, `verified`, `wouldDelete`), including verified owners at `0`, plus a total. `verified=yes` only when `emailVerifiedAt` is set. It does not delete.
 
 ```bash
 npm run cleanup:intervals-nonowners
@@ -126,7 +151,17 @@ npm run cleanup:intervals-nonowners
 npm run cleanup:intervals-nonowners -- --apply
 ```
 
-`--apply` deletes `run_logs` with `source = intervals` except accounts whose email is in `INTERVALS_OWNER_EMAILS` (both sides trimmed and lowercased) and whose email is verified. Unverified allowlisted accounts are deleted like any other non-owner. Manual `RunLog`s stay. If `INTERVALS_OWNER_EMAILS` is unset or empty, both the dry run and `--apply` log why and delete nothing (exit code 1). Safe to run again; a second `--apply` deletes zero rows.
+Optional cutoff (`YYYY-MM-DD`, or an ISO timestamp). `--before YYYY-MM-DD` and `--before=YYYY-MM-DD` are the same flag. Impossible dates such as `2026-02-30` and any cutoff in the future abort with exit code 1. The default is `2026-09-25T00:00:00.000Z` (`PER_USER_INTERVALS_SINCE`):
+
+```bash
+npm run cleanup:intervals-nonowners -- --before 2026-09-25T00:00:00.000Z
+npm run cleanup:intervals-nonowners -- --before=2026-09-25
+npm run cleanup:intervals-nonowners -- --apply --before 2026-09-25T00:00:00.000Z
+```
+
+An unknown flag, `--before` with no value, or an empty `--before=` exits 1 and deletes nothing. Those arguments do not fall through to the default cutoff.
+
+A row is deleted only when all of these are true: `source = intervals`, the account is not a verified owner (`canUseIntervals` is false), the account has no encrypted Intervals token or API key of its own, and `createdAt` is strictly before the cutoff. Verified owners, accounts that connected their own Intervals (OAuth or API key), logs at or after the cutoff, and every manual `RunLog` stay. RunLogs whose user row no longer exists are removed when they are before the cutoff: that account is not a verified owner and has no stored secret. The dry run logs `email=`, `verified=`, and `wouldDelete=`. `--apply` logs `wouldDelete=` before the delete and `deleted=` after, with `userId` only (no email). If an allowlisted email matches an account with no `emailVerifiedAt`, the dry run warns and omits that account, and `--apply` exits 1 without deleting any RunLogs until that account is verified; an allowlisted email with no account does not abort. If `INTERVALS_OWNER_EMAILS` is unset or empty, or `--before` is not a real `YYYY-MM-DD` (or ISO timestamp) that round-trips and is not in the future, both modes log why and delete nothing (exit code 1). `--apply` logs `deleted=` from the rows SQLite actually removed, which can be lower than `wouldDelete=` if a sync races. Safe to run again; a second `--apply` deletes zero rows.
 
 ## Reverse proxy / CSRF
 
@@ -178,7 +213,7 @@ Use the Railway public HTTPS URL. Expect session cookies with `Secure`. Signup/l
 2. **Landing** — `/` loads; **Start your plan** goes to `/signup`.
 3. **Signup** — email + password Continue → `/onboarding`.
 4. **Onboarding** — Goal → Level → Baseline → Days (min 3) → Cadence (Daily / Weekly / Monthly) → **Generate my plan** → `/today`.
-5. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`. Settings **You** can change Adaptation frequency (Daily / Weekly / Monthly) and Save. Settings **Connected apps** shows Intervals.icu (`Not connected` / `Connected · {id}`); Connect uses the server env key (no paste). Sync now / Disconnect do not delete `RunLog`s.
+5. **Shell** — `/today`, `/plan`, `/progress`, `/settings`. Bottom nav works. Logged-out shell routes → `/login`. Settings **You** can change Adaptation frequency (Daily / Weekly / Monthly) and Save. Settings **Connected apps** shows Intervals.icu (`Not connected` / `Connected · {id}`). Connect asks for that user’s API key (password field) and athlete ID; the key is checked with Intervals before it is stored encrypted, and it is not shown again. Sync now / Disconnect do not delete `RunLog`s. Disconnect removes the stored key and athlete id.
 6. **Today** — Skip / Feeling off persist immediately (no map). Done opens **Log this run** bottom sheet; Save writes a `RunLog` and toasts **Saved**; Skip map writes Feedback only. Empty copy is **No session today**; CTA **See the week** → `/plan`; optional **Next run: {weekday}** when a later Session exists. AdaptationEvent **Why?** opens **Why this changed** when `reason` is present; no Why? control when `reason` is empty.
 7. **Login** — log out, then email Continue → `/today` (existing plan). Password tab remains the default.
 8. **Magic link** — Email link tab → **Email me a link** → **Check your email** / **Link expires in 15 minutes** / **Resend link**. Production needs `RESEND_API_KEY` + `MAIL_FROM` (`MAGIC_LINK_FROM` is a one-release fallback). If mail is unset in local/dev, copy the `/auth/magic?token=…` URL from web logs. Unset mail in production fails with **Couldn’t send the link. Try again.** and does not log the token. First-time click → `/onboarding`. Returning with a plan → `/today`. Used or expired token → `/login` + toast **That link expired. Request a new one.**

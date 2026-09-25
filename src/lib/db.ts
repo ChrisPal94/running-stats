@@ -49,13 +49,26 @@ export type TrainingSnapshot = {
   adaptationEvents: AdaptationEvent[];
 };
 
-/** API key is env-only and is never stored here. */
+export type IntervalsAuthType = "oauth" | "apikey";
+
+/**
+ * Per-user Intervals connection.
+ * `apiKeyEnc` is AES-256-GCM ciphertext of the OAuth access token or API key.
+ * Never send it to the browser. Absent when the row is an owner env-fallback
+ * connection (no stored secret).
+ */
 export type IntervalsConnection = {
   userId: string;
   athleteId: string;
   connectedAt: string;
   lastSyncAt?: string;
   lastSyncError?: string;
+  apiKeyEnc?: string;
+  needsReconnect?: boolean;
+  /** Missing on legacy writes; stored and read as `apikey`. */
+  authType?: IntervalsAuthType;
+  scope?: string;
+  athleteName?: string;
 };
 
 export type MagicTokenRecord = {
@@ -160,6 +173,11 @@ type IntervalsConnectionRow = {
   connectedAt: string;
   lastSyncAt: string | null;
   lastSyncError: string | null;
+  apiKeyEnc: string | null;
+  needsReconnect: number | null;
+  authType: string | null;
+  scope: string | null;
+  athleteName: string | null;
 };
 
 type MagicTokenRow = {
@@ -264,6 +282,11 @@ const ENSURED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["run_logs", "source", "TEXT NOT NULL DEFAULT 'manual'"],
   ["users", "emailVerifiedAt", "TEXT"],
   ["users", "sessionEpoch", "INTEGER NOT NULL DEFAULT 0"],
+  ["intervals_connections", "apiKeyEnc", "TEXT"],
+  ["intervals_connections", "needsReconnect", "INTEGER NOT NULL DEFAULT 0"],
+  ["intervals_connections", "authType", "TEXT NOT NULL DEFAULT 'apikey'"],
+  ["intervals_connections", "scope", "TEXT"],
+  ["intervals_connections", "athleteName", "TEXT"],
 ];
 
 function schemaIsCurrent(database: DatabaseSync): boolean {
@@ -392,7 +415,12 @@ function applySchema(database: DatabaseSync): boolean {
       athleteId TEXT NOT NULL,
       connectedAt TEXT NOT NULL,
       lastSyncAt TEXT,
-      lastSyncError TEXT
+      lastSyncError TEXT,
+      apiKeyEnc TEXT,
+      needsReconnect INTEGER NOT NULL DEFAULT 0,
+      authType TEXT NOT NULL DEFAULT 'apikey',
+      scope TEXT,
+      athleteName TEXT
     );
 
     CREATE TABLE IF NOT EXISTS magic_tokens (
@@ -415,6 +443,14 @@ function applySchema(database: DatabaseSync): boolean {
     ensureColumn(database, table, column, ddl);
   }
   return true;
+}
+
+/** Idempotent. Safe to call on every open and again after the columns exist. */
+export function ensureIntervalsConnectionColumns(database: DatabaseSync): void {
+  for (const [table, column, ddl] of ENSURED_COLUMNS) {
+    if (table !== "intervals_connections") continue;
+    ensureColumn(database, table, column, ddl);
+  }
 }
 
 /** Re-run schema creation and column adds. Safe to call more than once. Does not backfill verification. */
@@ -665,9 +701,14 @@ function intervalsConnectionFromRow(row: IntervalsConnectionRow): IntervalsConne
     userId: row.userId,
     athleteId: row.athleteId,
     connectedAt: row.connectedAt,
+    needsReconnect: Number(row.needsReconnect) === 1,
+    authType: row.authType === "oauth" ? "oauth" : "apikey",
   };
   if (row.lastSyncAt) connection.lastSyncAt = row.lastSyncAt;
   if (row.lastSyncError) connection.lastSyncError = row.lastSyncError;
+  if (row.apiKeyEnc) connection.apiKeyEnc = row.apiKeyEnc;
+  if (row.scope) connection.scope = row.scope;
+  if (row.athleteName) connection.athleteName = row.athleteName;
   return connection;
 }
 
@@ -847,34 +888,29 @@ export function listUserEmails(): { id: string; email: string; emailVerifiedAt: 
   }[];
 }
 
-export function listIntervalsRunLogCounts(): { userId: string; count: number }[] {
-  const rows = getDb()
-    .prepare("SELECT userId, COUNT(*) AS tally FROM run_logs WHERE source = 'intervals' GROUP BY userId")
-    .all() as { userId: string; tally: number }[];
-  return rows.map((row) => ({ userId: row.userId, count: Number(row.tally) }));
+export function listIntervalsRunLogs(): { id: string; userId: string; createdAt: string }[] {
+  return getDb()
+    .prepare("SELECT id, userId, createdAt FROM run_logs WHERE source = 'intervals'")
+    .all() as { id: string; userId: string; createdAt: string }[];
 }
 
-/**
- * Delete `source = intervals` RunLogs whose user id is not in `ownerUserIds`.
- * Returns how many rows were removed for each affected user. Owners are untouched.
- */
-export function deleteIntervalsRunLogsExceptUsers(
-  ownerUserIds: readonly string[],
-): { userId: string; count: number }[] {
+/** Users who stored their own encrypted Intervals token or API key. */
+export function listIntervalsSecretUserIds(): string[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT userId FROM intervals_connections WHERE apiKeyEnc IS NOT NULL AND length(trim(apiKeyEnc)) > 0",
+    )
+    .all() as { userId: string }[];
+  return rows.map((row) => row.userId);
+}
+
+/** Delete specific `source = intervals` RunLogs by id. Returns rows actually removed. */
+export function deleteIntervalsRunLogsByIds(ids: readonly string[]): number {
+  if (ids.length === 0) return 0;
   return withTransaction(() => {
-    const rows = getDb()
-      .prepare("SELECT userId, COUNT(*) AS tally FROM run_logs WHERE source = 'intervals' GROUP BY userId")
-      .all() as { userId: string; tally: number }[];
-    const owners = new Set(ownerUserIds);
-    const remove = getDb().prepare("DELETE FROM run_logs WHERE source = 'intervals' AND userId = ?");
-    const deleted: { userId: string; count: number }[] = [];
-    for (const row of rows) {
-      if (owners.has(row.userId)) continue;
-      const count = Number(row.tally);
-      if (!(count > 0)) continue;
-      remove.run(row.userId);
-      deleted.push({ userId: row.userId, count });
-    }
+    const remove = getDb().prepare("DELETE FROM run_logs WHERE source = 'intervals' AND id = ?");
+    let deleted = 0;
+    for (const id of ids) deleted += Number(remove.run(id).changes);
     return deleted;
   });
 }
@@ -1015,27 +1051,57 @@ export function saveTrainingSnapshot(
 export function getIntervalsConnection(userId: string): IntervalsConnection | null {
   const row = getDb()
     .prepare(
-      "SELECT userId, athleteId, connectedAt, lastSyncAt, lastSyncError FROM intervals_connections WHERE userId = ?",
+      `SELECT userId, athleteId, connectedAt, lastSyncAt, lastSyncError, apiKeyEnc, needsReconnect,
+              authType, scope, athleteName
+       FROM intervals_connections WHERE userId = ?`,
     )
     .get(userId) as IntervalsConnectionRow | undefined;
   return row ? intervalsConnectionFromRow(row) : null;
 }
 
+/**
+ * `undefined` when this database has no `emailVerifiedAt` column (check does not exist).
+ * `null` when the column exists and this user is not verified.
+ */
+export function readEmailVerifiedAt(userId: string): string | null | undefined {
+  const database = getDb();
+  const columns = tableColumns(database, "users");
+  if (!columns.has("emailVerifiedAt")) return undefined;
+  const row = database.prepare("SELECT emailVerifiedAt FROM users WHERE id = ?").get(userId) as
+    | { emailVerifiedAt: string | null }
+    | undefined;
+  if (!row) return null;
+  const value = row.emailVerifiedAt?.trim() ?? "";
+  return value || null;
+}
+
 export function upsertIntervalsConnection(connection: IntervalsConnection): void {
   withTransaction(() => {
     run(
-      `INSERT INTO intervals_connections (userId, athleteId, connectedAt, lastSyncAt, lastSyncError)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO intervals_connections (
+         userId, athleteId, connectedAt, lastSyncAt, lastSyncError, apiKeyEnc, needsReconnect,
+         authType, scope, athleteName
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(userId) DO UPDATE SET
          athleteId = excluded.athleteId,
          connectedAt = excluded.connectedAt,
          lastSyncAt = excluded.lastSyncAt,
-         lastSyncError = excluded.lastSyncError`,
+         lastSyncError = excluded.lastSyncError,
+         apiKeyEnc = excluded.apiKeyEnc,
+         needsReconnect = excluded.needsReconnect,
+         authType = excluded.authType,
+         scope = excluded.scope,
+         athleteName = excluded.athleteName`,
       connection.userId,
       connection.athleteId,
       connection.connectedAt,
       text(connection.lastSyncAt),
       text(connection.lastSyncError),
+      text(connection.apiKeyEnc),
+      connection.needsReconnect ? 1 : 0,
+      connection.authType === "oauth" ? "oauth" : "apikey",
+      text(connection.scope),
+      text(connection.athleteName),
     );
   });
 }
