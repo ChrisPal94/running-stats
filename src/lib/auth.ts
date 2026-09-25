@@ -32,6 +32,9 @@ const PASSWORD_MAX = 128;
 export const GOOGLE_AUTH_ERROR =
   "Couldn’t connect to Google. Try email or try again.";
 
+/** Shown on /login for Google and magic-link sign-in failures. No account or address details. */
+export const SIGN_IN_ERROR = "Couldn’t sign in. Try again or use another method.";
+
 export type AuthUser = {
   id: string;
   email: string;
@@ -288,7 +291,22 @@ export class GoogleAccountLinkError extends Error {
   }
 }
 
+const SIGN_IN_FAILURE_TEXT = [
+  "Google account is missing a verified email.",
+  "Magic link is missing a valid email.",
+  "Google sign-in could not be linked to this account.",
+];
+
+function isLoginSignInFailure(url: URL): boolean {
+  if (url.pathname !== "/login") return false;
+  const error = url.searchParams.get("error") ?? "";
+  if (error === "google" || error === "signin") return true;
+  return SIGN_IN_FAILURE_TEXT.some((text) => error.includes(text));
+}
+
 export function authPageError(url: URL, formError: string): string {
+  if (isLoginSignInFailure(url)) return SIGN_IN_ERROR;
+  if (SIGN_IN_FAILURE_TEXT.includes(formError)) return SIGN_IN_ERROR;
   if (formError) return formError;
   if (url.searchParams.get("error") === "google") return GOOGLE_AUTH_ERROR;
   return "";

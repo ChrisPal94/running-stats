@@ -272,10 +272,15 @@ export async function finishMagicLink(
   cookies: AstroCookies,
 ): Promise<{ location: string }> {
   const token = new URL(request.url).searchParams.get("token") ?? "";
-  const result = await consumeMagicLink(token);
-  if (!result.ok) {
-    return { location: magicExpiredLoginPath() };
+  try {
+    const result = await consumeMagicLink(token);
+    if (!result.ok) {
+      return { location: magicExpiredLoginPath() };
+    }
+    setSessionCookie(cookies, result.user.id);
+    return { location: await magicLinkContinuePath(result.created, result.user.id) };
+  } catch {
+    console.error("[auth] magic link sign-in failed");
+    return { location: "/login?error=signin" };
   }
-  setSessionCookie(cookies, result.user.id);
-  return { location: await magicLinkContinuePath(result.created, result.user.id) };
 }

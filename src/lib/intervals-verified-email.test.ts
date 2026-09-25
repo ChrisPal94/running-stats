@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, afterEach, describe, it, mock } from "node:test";
 import type { AstroCookies } from "astro";
-import { getCurrentUser, loginFromForm, setGoogleOAuthState, signupFromForm } from "./auth.ts";
+import {
+  authPageError,
+  getCurrentUser,
+  GOOGLE_AUTH_ERROR,
+  loginFromForm,
+  setGoogleOAuthState,
+  SIGN_IN_ERROR,
+  signupFromForm,
+} from "./auth.ts";
 import {
   dbPath,
   getDb,
@@ -549,6 +557,62 @@ describe("Google callback verification", () => {
     assert.equal((warnings[0] ?? "").includes(email), false);
     assert.equal((warnings[0] ?? "").includes("@"), false);
     assert.equal(getUserById(signed.user.id)?.googleId, "unverified-new-sub");
+  });
+});
+
+describe("login page sign-in failures", () => {
+  function showsOnlyGeneric(location: string, email: string): void {
+    assert.equal(location.startsWith("/login?"), true);
+    assert.equal(location.includes(email), false);
+    assert.equal(location.includes("missing a verified email"), false);
+    assert.equal(location.includes("missing a valid email"), false);
+    assert.equal(location.includes("could not be linked"), false);
+    assert.equal(location.includes("account"), false);
+    const shown = authPageError(new URL(`https://example.com${location}`), "");
+    assert.equal(shown, "Couldn’t sign in. Try again or use another method.");
+    assert.equal(shown, SIGN_IN_ERROR);
+    assert.equal(shown.includes(email), false);
+    assert.equal(shown.includes("@"), false);
+  }
+
+  it("shows only the generic copy for Google and magic-link failures", async () => {
+    const missingEmail = await finishGoogle({
+      email: "not-an-email",
+      sub: "missing-verified-email-sub",
+      emailVerified: true,
+    });
+    showsOnlyGeneric(missingEmail.location, "not-an-email");
+
+    const issued = issueMagicLinkToken("not-a-magic-email");
+    const magic = await finishMagicLink(
+      new Request(`http://localhost/auth/magic?token=${encodeURIComponent(issued.raw)}`),
+      cookieJar().cookies,
+    );
+    showsOnlyGeneric(magic.location, "not-a-magic-email");
+
+    const email = "login-copy-verified@example.com";
+    const signed = await signupFromForm(post("http://localhost/signup"), cookieJar().cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    getDb()
+      .prepare("UPDATE users SET googleId = ?, emailVerifiedAt = ? WHERE id = ?")
+      .run("login-copy-old-sub", "2026-09-18T00:00:00.000Z", signed.user.id);
+    const rejected = await finishGoogle({
+      email: `  ${email.toUpperCase()}  `,
+      sub: "login-copy-new-sub",
+      emailVerified: true,
+    });
+    showsOnlyGeneric(rejected.location, email);
+    assert.equal(getUserById(signed.user.id)?.googleId, "login-copy-old-sub");
+    assert.equal(getUserById(signed.user.id)?.emailVerifiedAt, "2026-09-18T00:00:00.000Z");
+
+    const leakedQuery = authPageError(
+      new URL("https://example.com/login?error=Google%20account%20is%20missing%20a%20verified%20email."),
+      "Magic link is missing a valid email.",
+    );
+    assert.equal(leakedQuery, SIGN_IN_ERROR);
+    assert.equal(authPageError(new URL("https://example.com/login"), "Google sign-in could not be linked to this account."), SIGN_IN_ERROR);
+    assert.equal(authPageError(new URL("https://example.com/signup?error=google"), ""), GOOGLE_AUTH_ERROR);
   });
 });
 
