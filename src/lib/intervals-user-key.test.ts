@@ -176,13 +176,19 @@ describe("per-user Intervals key", () => {
     await connectIntervals(userId, { apiKey: KEY_A, athleteId: ATHLETE_A });
     const stored = getStoredConnection(userId);
     const view = getIntervalsConnectionView(userId);
-    const connectedHtml = await renderConnectedApps({ connection: view, error: "", athleteIdDraft: ATHLETE_A });
+    const connectedHtml = await renderConnectedApps({
+      connection: view,
+      error: "",
+      intervalsAvailable: true,
+      athleteIdDraft: ATHLETE_A,
+    });
     assert.equal(connectedHtml.includes(KEY_A), false);
     assert.equal(connectedHtml.includes(stored?.apiKeyEnc ?? KEY_A), false);
 
     const formHtml = await renderConnectedApps({
       connection: { ...view, needsReconnect: true },
       error: "",
+      intervalsAvailable: true,
       athleteIdDraft: ATHLETE_A,
     });
     assert.equal(formHtml.includes(KEY_A), false);

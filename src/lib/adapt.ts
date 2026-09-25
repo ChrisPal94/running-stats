@@ -648,8 +648,9 @@ function adaptCounts(
   uploaded = 0,
   uploadFailed = 0,
   noConnection = 0,
+  reconnect = 0,
 ): AdaptRunCounts {
-  return { processed, written, skipped, patched, llmFailed, uploaded, uploadFailed, noConnection };
+  return { processed, written, skipped, patched, llmFailed, uploaded, uploadFailed, noConnection, reconnect };
 }
 
 export async function runNocturnalAdaptation(
@@ -666,8 +667,15 @@ export async function runNocturnalAdaptation(
   const decisions: AdaptationDecision[] = [];
   let llmFailed = 0;
   let noConnection = 0;
+  let reconnectNeeded = 0;
   let loggedEncryption = false;
   const skippedUsers = new Set<string>();
+  const reconnectUsers = new Set<string>();
+  const countReconnect = (userId: string) => {
+    if (reconnectUsers.has(userId)) return;
+    reconnectUsers.add(userId);
+    reconnectNeeded += 1;
+  };
   const noteCredentialGap = (userId: string, error: string) => {
     if (error === INTERVALS_ENC_NOT_CONFIGURED) {
       if (!loggedEncryption) {
@@ -676,7 +684,10 @@ export async function runNocturnalAdaptation(
       }
       return;
     }
-    if (error === INTERVALS_RECONNECT_ERROR) return;
+    if (error === INTERVALS_RECONNECT_ERROR) {
+      countReconnect(userId);
+      return;
+    }
     if (skippedUsers.has(userId)) return;
     skippedUsers.add(userId);
     noConnection += 1;
@@ -737,6 +748,7 @@ export async function runNocturnalAdaptation(
       0,
       0,
       noConnection,
+      reconnectNeeded,
     );
   }
 
@@ -771,7 +783,12 @@ export async function runNocturnalAdaptation(
       uploaded += result.uploaded;
       uploadFailed += result.failed;
       if (result.status === 401 || result.status === 403) {
-        await markIntervalsNeedsReconnect(userId);
+        countReconnect(userId);
+        try {
+          await markIntervalsNeedsReconnect(userId);
+        } catch {
+          console.error("[intervals] adapt account failed");
+        }
       }
     } catch {
       console.error("[intervals] adapt upload failed");
@@ -788,6 +805,7 @@ export async function runNocturnalAdaptation(
     uploaded,
     uploadFailed,
     noConnection,
+    reconnectNeeded,
   );
 }
 

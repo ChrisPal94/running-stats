@@ -40,6 +40,7 @@ type OAuthStatePayload = {
 export type IntervalsOAuthFinish =
   | { kind: "connected" }
   | { kind: "cancelled" }
+  | { kind: "csrf" }
   | { kind: "error"; message: string };
 
 function envValue(name: string): string {
@@ -196,7 +197,7 @@ export async function finishIntervalsOAuth(
       presented &&
       safeEqual(stored.state, presented),
   );
-  if (!stateOk) return { kind: "error", message: INTERVALS_OAUTH_CONNECT_ERROR };
+  if (!stateOk) return { kind: "csrf" };
 
   const code = url.searchParams.get("code")?.trim() ?? "";
   if (!code || code.length > 512) return { kind: "error", message: INTERVALS_OAUTH_CONNECT_ERROR };

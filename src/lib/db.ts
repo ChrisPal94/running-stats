@@ -800,35 +800,28 @@ export function listUserEmails(): { id: string; email: string }[] {
   return getDb().prepare("SELECT id, email FROM users").all() as { id: string; email: string }[];
 }
 
-export function listIntervalsRunLogCounts(): { userId: string; count: number }[] {
-  const rows = getDb()
-    .prepare("SELECT userId, COUNT(*) AS tally FROM run_logs WHERE source = 'intervals' GROUP BY userId")
-    .all() as { userId: string; tally: number }[];
-  return rows.map((row) => ({ userId: row.userId, count: Number(row.tally) }));
+export function listIntervalsRunLogs(): { id: string; userId: string; createdAt: string }[] {
+  return getDb()
+    .prepare("SELECT id, userId, createdAt FROM run_logs WHERE source = 'intervals'")
+    .all() as { id: string; userId: string; createdAt: string }[];
 }
 
-/**
- * Delete `source = intervals` RunLogs whose user id is not in `ownerUserIds`.
- * Returns how many rows were removed for each affected user. Owners are untouched.
- */
-export function deleteIntervalsRunLogsExceptUsers(
-  ownerUserIds: readonly string[],
-): { userId: string; count: number }[] {
-  return withTransaction(() => {
-    const rows = getDb()
-      .prepare("SELECT userId, COUNT(*) AS tally FROM run_logs WHERE source = 'intervals' GROUP BY userId")
-      .all() as { userId: string; tally: number }[];
-    const owners = new Set(ownerUserIds);
-    const remove = getDb().prepare("DELETE FROM run_logs WHERE source = 'intervals' AND userId = ?");
-    const deleted: { userId: string; count: number }[] = [];
-    for (const row of rows) {
-      if (owners.has(row.userId)) continue;
-      const count = Number(row.tally);
-      if (!(count > 0)) continue;
-      remove.run(row.userId);
-      deleted.push({ userId: row.userId, count });
-    }
-    return deleted;
+/** Users who stored their own encrypted Intervals token or API key. */
+export function listIntervalsSecretUserIds(): string[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT userId FROM intervals_connections WHERE apiKeyEnc IS NOT NULL AND length(trim(apiKeyEnc)) > 0",
+    )
+    .all() as { userId: string }[];
+  return rows.map((row) => row.userId);
+}
+
+/** Delete specific `source = intervals` RunLogs by id. Other sources stay. */
+export function deleteIntervalsRunLogsByIds(ids: readonly string[]): void {
+  if (ids.length === 0) return;
+  withTransaction(() => {
+    const remove = getDb().prepare("DELETE FROM run_logs WHERE source = 'intervals' AND id = ?");
+    for (const id of ids) remove.run(id);
   });
 }
 

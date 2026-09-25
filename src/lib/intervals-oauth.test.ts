@@ -41,10 +41,14 @@ const {
   INTERVALS_CONNECT_REJECTED,
   INTERVALS_CONNECT_UNAVAILABLE,
   INTERVALS_CONNECTED_TOAST,
+  INTERVALS_CSRF_ERROR,
   INTERVALS_OAUTH_CONNECT_BUTTON,
   INTERVALS_OAUTH_CONNECT_ERROR,
   INTERVALS_OAUTH_CONNECT_LINE,
+  INTERVALS_RECONNECT_ERROR,
   connectIntervals,
+  denyIntervalsPostCsrf,
+  intervalsCsrfDeniedResponse,
   disconnectIntervals,
   getIntervalsConnectionView,
   intervalsAuthorizationHeader,
@@ -68,6 +72,7 @@ const { setSessionCookie } = await import("./auth.ts");
 const { GET: startRoute } = await import("../pages/auth/intervals/start.ts");
 const { GET: callbackRoute } = await import("../pages/auth/intervals/callback.ts");
 const { runNocturnalAdaptation } = await import("./adapt.ts");
+const { adaptRunLogLine } = await import("./adapt-cron.ts");
 
 const originalFetch = globalThis.fetch;
 
@@ -275,12 +280,7 @@ describe("Intervals OAuth", () => {
       cookieJar().cookies,
       userId,
     );
-    assert.equal(missing.kind, "error");
-    if (missing.kind === "error") {
-      assert.equal(missing.message, "Couldn’t connect to Intervals. Try again.");
-      assert.equal(missing.message, INTERVALS_OAUTH_CONNECT_ERROR);
-      assert.equal(missing.message.includes("abc"), false);
-    }
+    assert.equal(missing.kind, "csrf");
 
     const jar = cookieJar();
     const started = startIntervalsOAuth(prodRequest("/auth/intervals/start"), jar.cookies, userId);
@@ -289,7 +289,7 @@ describe("Intervals OAuth", () => {
       jar.cookies,
       userId,
     );
-    assert.equal(mismatch.kind, "error");
+    assert.equal(mismatch.kind, "csrf");
     assert.equal(fetches, 0);
     assert.equal(getStoredConnection(userId), null);
     assert.equal(started.location.includes(CLIENT_SECRET), false);
@@ -302,7 +302,7 @@ describe("Intervals OAuth", () => {
       jarB.cookies,
       "someone-else",
     );
-    assert.equal(otherUser.kind, "error");
+    assert.equal(otherUser.kind, "csrf");
     assert.equal(fetches, 0);
   });
 
@@ -535,6 +535,7 @@ describe("Intervals OAuth", () => {
 
     const html = await renderConnectedApps({
       connection: { connected: false, statusLabel: "Not connected" },
+      intervalsAvailable: true,
       oauthConfigured: true,
       encryptionReady: false,
     });
@@ -542,6 +543,22 @@ describe("Intervals OAuth", () => {
     assert.equal(html.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
     assert.equal(html.includes("Connecting Intervals.icu isn’t available right now. Try again later."), true);
     assert.match(html, /disabled/);
+    const hidden = await renderConnectedApps({
+      connection: { connected: false, statusLabel: "Not connected" },
+      oauthConfigured: true,
+      encryptionReady: false,
+    });
+    assert.equal(hidden.includes(INTERVALS_OAUTH_CONNECT_BUTTON), false);
+    assert.equal(hidden.includes("Not available for your account"), true);
+    const keyDisabled = await renderConnectedApps({
+      connection: { connected: false, statusLabel: "Not connected" },
+      intervalsAvailable: true,
+      oauthConfigured: false,
+      encryptionReady: false,
+    });
+    assert.equal(keyDisabled.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
+    assert.equal(keyDisabled.includes('name="intervalsApiKey"'), true);
+    assert.match(keyDisabled, /disabled/);
     assert.equal(html.includes(CLIENT_SECRET), false);
     assert.equal(html.includes(TOKEN_A), false);
   });
@@ -586,6 +603,9 @@ describe("Intervals OAuth", () => {
     });
 
     const result = await runNocturnalAdaptation(new Date("2026-09-24T17:00:00.000Z"));
+    assert.equal(INTERVALS_RECONNECT_ERROR, "Intervals access expired");
+    assert.equal(result.reconnect, 1);
+    assert.match(adaptRunLogLine(result), /reconnect=1/);
     assert.equal(getStoredConnection(userA)?.needsReconnect, true);
     assert.equal(getStoredConnection(userB)?.needsReconnect === true, false);
     assert.equal(calls.some((call) => call.authorization === intervalsBasicAuthHeader(KEY_B)), true);
@@ -651,6 +671,7 @@ describe("Intervals OAuth", () => {
   it("renders the settings states without secrets", async () => {
     const oauthHtml = await renderConnectedApps({
       connection: { connected: false, statusLabel: "Not connected" },
+      intervalsAvailable: true,
       oauthConfigured: true,
       encryptionReady: true,
     });
@@ -662,6 +683,7 @@ describe("Intervals OAuth", () => {
 
     const keyHtml = await renderConnectedApps({
       connection: { connected: false, statusLabel: "Not connected" },
+      intervalsAvailable: true,
       oauthConfigured: false,
       encryptionReady: true,
       error: INTERVALS_CONNECT_REJECTED,
@@ -685,6 +707,7 @@ describe("Intervals OAuth", () => {
         statusLabel: `Connected as ${NAME_A}`,
         lastSyncLabel: null,
       },
+      intervalsAvailable: true,
       oauthConfigured: true,
       encryptionReady: true,
     });
@@ -702,6 +725,7 @@ describe("Intervals OAuth", () => {
         statusLabel: `Connected as ${ATHLETE_A}`,
         lastSyncLabel: null,
       },
+      intervalsAvailable: true,
     });
     assert.equal(idOnly.includes(`Connected as ${ATHLETE_A}`), true);
 
@@ -714,6 +738,7 @@ describe("Intervals OAuth", () => {
         statusLabel: INTERVALS_ACCESS_EXPIRED,
         lastSyncLabel: null,
       },
+      intervalsAvailable: true,
       oauthConfigured: true,
       encryptionReady: true,
     });
@@ -745,7 +770,7 @@ describe("Intervals OAuth", () => {
         jar.cookies,
         userId,
       );
-      assert.equal(expired.kind, "error");
+      assert.equal(expired.kind, "csrf");
     } finally {
       Date.now = now;
     }
@@ -782,6 +807,18 @@ describe("Intervals OAuth", () => {
     assert.equal(failed.status, 302);
     assert.equal(failed.headers.get("location"), "/settings?toast=intervals-error");
 
+    const csrfJar = cookieJar();
+    setSessionCookie(csrfJar.cookies, userId);
+    const csrfDenied = await callbackRoute({
+      request: prodRequest("/auth/intervals/callback?code=abc&state=not-the-state"),
+      cookies: csrfJar.cookies,
+      redirect: redirectTo,
+    } as Parameters<typeof callbackRoute>[0]);
+    assert.equal(csrfDenied.status, 403);
+    const csrfBody = await csrfDenied.text();
+    assert.equal(csrfBody, INTERVALS_CSRF_ERROR);
+    assert.equal(csrfBody.includes(CLIENT_SECRET), false);
+
     const cancelJar = cookieJar();
     setSessionCookie(cancelJar.cookies, userId);
     const beginCancel = startIntervalsOAuth(prodRequest("/auth/intervals/start"), cancelJar.cookies, userId);
@@ -792,5 +829,73 @@ describe("Intervals OAuth", () => {
       redirect: redirectTo,
     } as Parameters<typeof callbackRoute>[0]);
     assert.equal(cancelled.headers.get("location"), "/settings");
+  });
+
+  it("returns 403 for a cross-site Intervals POST and rejects unsafe athlete ids", async () => {
+    const cross = new Request("https://running-stats-production.up.railway.app/settings", {
+      method: "POST",
+      headers: { origin: "https://evil.example" },
+    });
+    const denied = denyIntervalsPostCsrf(cross, "intervals-connect");
+    assert.ok(denied);
+    assert.equal(denied.status, 403);
+    assert.equal(await denied.text(), INTERVALS_CSRF_ERROR);
+    assert.equal(denyIntervalsPostCsrf(cross, "save-cadence"), null);
+    const same = new Request("https://running-stats-production.up.railway.app/settings", {
+      method: "POST",
+      headers: { origin: "https://running-stats-production.up.railway.app" },
+    });
+    assert.equal(denyIntervalsPostCsrf(same, "intervals-sync"), null);
+    assert.equal(intervalsCsrfDeniedResponse().status, 403);
+
+    const userId = "oauth-bad-athlete";
+    insertUser({ id: userId, email: "bad-athlete@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    for (const athleteId of ["../admin", "12?3", "abc%2Fdef"]) {
+      const jar = cookieJar();
+      const started = startIntervalsOAuth(prodRequest("/auth/intervals/start"), jar.cookies, userId);
+      const state = new URL(started.location).searchParams.get("state") ?? "";
+      mock.method(globalThis, "fetch", async () => tokenResponse(TOKEN_A, athleteId, NAME_A));
+      const result = await finishIntervalsOAuth(
+        prodRequest(`/auth/intervals/callback?code=abc&state=${state}`),
+        jar.cookies,
+        userId,
+      );
+      assert.equal(result.kind, "error");
+      assert.equal(getStoredConnection(userId), null);
+      mock.restoreAll();
+    }
+  });
+
+  it("keeps adapting the other account when one account throws", async () => {
+    const userA = "oauth-throw-a";
+    const userB = "oauth-throw-b";
+    insertUser({ id: userA, email: "throw-a@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    insertUser({ id: userB, email: "throw-b@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    await connectOAuth(userA, TOKEN_A, ATHLETE_A, NAME_A);
+    await connectOAuth(userB, TOKEN_B, ATHLETE_B, "Bea Runner");
+    const left = planBundle(userA);
+    const right = planBundle(userB);
+    saveTrainingSnapshot(
+      {
+        onboarding: [],
+        plans: [left.plan, right.plan],
+        sessions: [left.today, left.tomorrow, right.today, right.tomorrow],
+        feedbacks: [left.feedback, right.feedback],
+        runLogs: [left.log, right.log],
+        adaptationEvents: [],
+      },
+      "replace",
+    );
+    const seen: string[] = [];
+    const result = await runNocturnalAdaptation(new Date("2026-09-24T17:00:00.000Z"), {
+      loadRunEffort: async (userId) => {
+        seen.push(userId);
+        if (userId === userA) throw new Error("sqlite locked");
+        return null;
+      },
+    });
+    assert.deepEqual(seen.sort(), [userA, userB].sort());
+    assert.equal(result.processed >= 1, true);
+    assert.equal(result.written >= 1, true);
   });
 });

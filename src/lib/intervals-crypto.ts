@@ -18,7 +18,23 @@ export class IntervalsDecryptError extends Error {
   }
 }
 
-/** False when `INTERVALS_KEY_ENC_SECRET` is missing or not 32 bytes. Never throws. */
+/**
+ * Standard base64 for exactly 32 bytes (`openssl rand -base64 32`): 43 alphabet
+ * characters and one `=` pad. Hex and unpadded base64 are not accepted.
+ */
+const ENC_SECRET_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
+
+let loggedInvalidEncSecret = false;
+
+function rejectEncSecret(raw: string): never {
+  if (raw && !loggedInvalidEncSecret) {
+    loggedInvalidEncSecret = true;
+    console.error("[intervals] encryption secret is not configured");
+  }
+  throw new IntervalsEncryptionError();
+}
+
+/** False when `INTERVALS_KEY_ENC_SECRET` is missing or not 32-byte base64. Never throws. */
 export function intervalsEncryptionReady(): boolean {
   try {
     intervalsEncryptionKey();
@@ -28,12 +44,15 @@ export function intervalsEncryptionReady(): boolean {
   }
 }
 
-/** 32-byte key from `INTERVALS_KEY_ENC_SECRET` (base64 or 64-char hex). Fail closed. */
+/**
+ * 32-byte key from `INTERVALS_KEY_ENC_SECRET`.
+ * Generate with `openssl rand -base64 32`. Anything else is treated as missing.
+ */
 export function intervalsEncryptionKey(): Buffer {
   const raw = process.env.INTERVALS_KEY_ENC_SECRET?.trim() ?? "";
-  if (!raw) throw new IntervalsEncryptionError();
-  const key = /^[0-9a-fA-F]{64}$/.test(raw) ? Buffer.from(raw, "hex") : Buffer.from(raw, "base64");
-  if (key.length !== 32) throw new IntervalsEncryptionError();
+  if (!raw || !ENC_SECRET_PATTERN.test(raw)) rejectEncSecret(raw);
+  const key = Buffer.from(raw, "base64");
+  if (key.length !== 32) rejectEncSecret(raw);
   return key;
 }
 

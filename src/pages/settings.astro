@@ -9,6 +9,7 @@ import { isSameOrigin } from "../lib/public-origin";
 import {
   INTERVALS_CONNECTED_TOAST,
   INTERVALS_OAUTH_CONNECT_ERROR,
+  denyIntervalsPostCsrf,
   intervalsEncryptionReady,
   intervalsSyncToastCopy,
   refreshIntervalsConnectionView,
@@ -43,10 +44,10 @@ if (Astro.request.method === "POST") {
   if (intent === "save-cadence") {
     selectedCadence = normalizeFeedbackCadence(String(formData.get("feedbackCadence") ?? ""));
   }
+  const csrfDenied = denyIntervalsPostCsrf(Astro.request, intent);
+  if (csrfDenied) return csrfDenied;
   if (!isSameOrigin(Astro.request)) {
-    const unverified = "This request could not be verified. Try again.";
-    if (intent.startsWith("intervals-")) intervalsError = unverified;
-    else cadenceError = unverified;
+    cadenceError = "This request could not be verified. Try again.";
   } else {
     if (intent === "intervals-connect") {
       athleteIdDraft = String(formData.get("intervalsAthleteId") ?? "").trim().slice(0, 16);
@@ -157,6 +158,7 @@ const encryptionReady = intervalsEncryptionReady();
     <ConnectedApps
       connection={connection}
       error={intervalsError}
+      intervalsAvailable={true}
       athleteIdDraft={athleteIdDraft}
       oauthConfigured={oauthConfigured}
       encryptionReady={encryptionReady}

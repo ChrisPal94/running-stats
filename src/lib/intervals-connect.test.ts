@@ -2,17 +2,20 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, afterEach, describe, it } from "node:test";
+import { after, afterEach, describe, it, mock } from "node:test";
 import { getUserById, insertUser } from "./db.ts";
 import {
   connectIntervals,
   INTERVALS_API_KEY_NOT_CONFIGURED,
+  INTERVALS_ATHLETE_ID_INVALID,
   INTERVALS_CONNECT_ERROR,
   INTERVALS_CONNECT_INPUT,
   INTERVALS_CONNECT_REJECTED,
   INTERVALS_ENC_NOT_CONFIGURED,
   INTERVALS_USER_AGENT,
   intervalsBasicAuthHeader,
+  intervalsEncryptionReady,
+  normalizeIntervalsAthleteId,
 } from "./intervals.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-intervals-connect-"));
@@ -43,6 +46,7 @@ after(() => {
 });
 
 afterEach(() => {
+  mock.restoreAll();
   globalThis.fetch = originalFetch;
   if (originalKey === undefined) delete process.env[KEY_ENV];
   else process.env[KEY_ENV] = originalKey;
@@ -142,5 +146,51 @@ describe("connectIntervals errors", () => {
     });
     assert.deepEqual(result, { ok: false, error: INTERVALS_ENC_NOT_CONFIGURED });
     assert.equal(fetchCalled, false);
+  });
+
+  it("rejects athlete ids that contain ../, ?, or %2F before calling Intervals", async () => {
+    process.env.INTERVALS_KEY_ENC_SECRET = Buffer.alloc(32, 4).toString("base64");
+    for (const athleteId of ["../i1", "i1?x", "i1%2F2", "i704884/../x", "%2F"]) {
+      assert.equal(normalizeIntervalsAthleteId(athleteId), null);
+      let fetchCalled = false;
+      globalThis.fetch = async () => {
+        fetchCalled = true;
+        return new Response("{}", { status: 200 });
+      };
+      const result = await connectIntervals("user-connect-test", {
+        apiKey: "dummy-intervals-key",
+        athleteId,
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error, INTERVALS_ATHLETE_ID_INVALID);
+      assert.equal(fetchCalled, false);
+    }
+  });
+
+  it("treats a non-32-byte secret as missing, logs once, and does not crash", async () => {
+    const lines: string[] = [];
+    mock.method(console, "error", (line: string) => {
+      lines.push(String(line));
+    });
+    process.env.INTERVALS_KEY_ENC_SECRET = "ab".repeat(32);
+    const before = lines.length;
+    assert.equal(intervalsEncryptionReady(), false);
+    assert.equal(intervalsEncryptionReady(), false);
+    const added = lines.slice(before);
+    assert.equal(added.length, 1);
+    assert.equal(added[0]?.includes("ab".repeat(32)), false);
+    assert.match(added[0] ?? "", /encryption secret is not configured/);
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response("{}", { status: 200 });
+    };
+    const result = await connectIntervals("user-connect-test", {
+      apiKey: "dummy-intervals-key",
+      athleteId: "i704884",
+    });
+    assert.deepEqual(result, { ok: false, error: INTERVALS_ENC_NOT_CONFIGURED });
+    assert.equal(fetchCalled, false);
+    mock.restoreAll();
   });
 });

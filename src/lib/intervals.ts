@@ -18,26 +18,25 @@ import {
 } from "./intervals-crypto";
 import type { IntervalsAuthType } from "./db";
 import { loadLocalEnv } from "./load-env";
+import { isSameOrigin } from "./public-origin";
 
 loadLocalEnv();
 
 export const INTERVALS_ICU_BASE_URL = "https://intervals.icu/api/v1";
 /** Cloudflare 1010 without a stable UA. Must be sent on every Intervals HTTP call. */
 export const INTERVALS_USER_AGENT = "RunningStatsMVP/0.1";
-/** HTTP paths use `0` (athlete of the API key). Display fallback is Christian. */
-export const INTERVALS_ATHLETE_PATH = "0";
-export const DEFAULT_INTERVALS_ATHLETE_ID = "i704884";
 export const INTERVALS_CONNECT_COPY = "Your API key is encrypted and never shown again.";
 export const INTERVALS_SYNC_ERROR = "Couldn’t sync. Try again.";
 export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
 export const INTERVALS_CONNECT_INPUT = "Enter your Intervals API key and athlete ID.";
 export const INTERVALS_ATHLETE_ID_INVALID = "Enter an athlete ID like i704884.";
 export const INTERVALS_CONNECT_REJECTED = "Couldn’t connect. Check your API key and athlete ID.";
-export const INTERVALS_RECONNECT_ERROR = "Reconnect Intervals.";
+export const INTERVALS_ACCESS_EXPIRED = "Intervals access expired";
+/** 401/403 and a stored secret that will not decrypt. Same copy as the Settings status. */
+export const INTERVALS_RECONNECT_ERROR = INTERVALS_ACCESS_EXPIRED;
 export const INTERVALS_API_KEY_NOT_CONFIGURED = "API key not configured";
 export const INTERVALS_OAUTH_CONNECT_ERROR = "Couldn’t connect to Intervals. Try again.";
 export const INTERVALS_CONNECTED_TOAST = "Intervals connected";
-export const INTERVALS_ACCESS_EXPIRED = "Intervals access expired";
 export const INTERVALS_CONNECT_UNAVAILABLE =
   "Connecting Intervals.icu isn’t available right now. Try again later.";
 export const INTERVALS_OAUTH_CONNECT_BUTTON = "Connect Intervals.icu";
@@ -47,18 +46,9 @@ export const INTERVALS_KEY_HELP = "Your API key and athlete ID are in Intervals 
 export const INTERVALS_KEY_HELP_URL = "https://intervals.icu/settings";
 export { INTERVALS_ENC_NOT_CONFIGURED, intervalsEncryptionReady };
 export type { IntervalsAuthType };
-/** Shown when this account is not allowed to use the shared Intervals key. No env names. */
-export const INTERVALS_NOT_FOR_ACCOUNT =
-  "Intervals.icu import isn’t available for your account yet.";
-/** Settings status line for an account that cannot use Intervals. No buttons. */
+/** Settings status line when the caller marks Intervals unavailable. No buttons. */
 export const INTERVALS_UNAVAILABLE_STATUS = "Not available for your account";
-
-const GATED_INTERVALS_INTENTS = new Set([
-  "intervals-connect",
-  "intervals-sync",
-  "intervals-pick-run",
-  "intervals-skip-pick",
-]);
+export const INTERVALS_CSRF_ERROR = "This request could not be verified. Try again.";
 export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
 export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
 export const INTERVALS_COOPER_SYNC_TOAST = "Cooper test result synced — plan updated.";
@@ -264,27 +254,19 @@ export function intervalsSettingsControls(input: {
   };
 }
 
-/** 403 for Settings connect/sync (and Which run? follow-ups) when the account is not allowed. */
-export function intervalsOwnerDeniedResponse(
-  user: { email?: string | null } | null | undefined,
-  intent: string,
-): Response | null {
-  if (!GATED_INTERVALS_INTENTS.has(intent.trim())) return null;
-  if (canUseIntervals(user)) return null;
-  return new Response(INTERVALS_NOT_FOR_ACCOUNT, {
+/** 403 for a cross-site Intervals settings POST or OAuth state failure. No secrets. */
+export function intervalsCsrfDeniedResponse(): Response {
+  return new Response(INTERVALS_CSRF_ERROR, {
     status: 403,
     headers: { "content-type": "text/plain; charset=utf-8" },
   });
 }
 
-export function intervalsApiKey(): string | null {
-  const key = envValue("INTERVALS_ICU_API_KEY");
-  return key || null;
-}
-
-/** Default HTTP path when a caller does not pass an athlete id. Per-user calls pass their own id. */
-export function intervalsAthletePathId(): string {
-  return INTERVALS_ATHLETE_PATH;
+/** 403 when an Intervals settings POST Origin/Referer does not match this site. */
+export function denyIntervalsPostCsrf(request: Request, intent: string): Response | null {
+  if (!intent.trim().startsWith("intervals-")) return null;
+  if (isSameOrigin(request)) return null;
+  return intervalsCsrfDeniedResponse();
 }
 
 export function intervalsBasicAuthHeader(apiKey: string): string {
@@ -772,11 +754,12 @@ export async function upsertPlannedRuns(
   if (!apiKey) return { uploaded: 0, failed: 0 };
 
   const authType = options.authType === "oauth" ? "oauth" : "apikey";
-  const athletePathId = options.athletePathId ?? intervalsAthletePathId();
+  const athletePathId = options.athletePathId?.trim() ?? "";
+  if (!athletePathId) return { uploaded: 0, failed: 0 };
   try {
     await intervalsGet(
       { authType, secret: apiKey },
-      `/athlete/${athletePathId}/events/bulk?upsert=true`,
+      `/athlete/${encodeURIComponent(athletePathId)}/events/bulk?upsert=true`,
       { method: "POST", body: JSON.stringify(events), fetchImpl: options.fetchImpl },
     );
     return { uploaded: events.length, failed: 0 };
@@ -870,6 +853,9 @@ const ATHLETE_ID_PATTERN = /^i\d{1,12}$/i;
 
 export function normalizeIntervalsAthleteId(raw: string): string | null {
   const trimmed = raw.trim();
+  if (trimmed.includes("..") || trimmed.includes("?") || trimmed.includes("/") || /%2f/i.test(trimmed)) {
+    return null;
+  }
   if (!ATHLETE_ID_PATTERN.test(trimmed)) return null;
   return `i${trimmed.slice(1)}`;
 }

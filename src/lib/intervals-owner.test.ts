@@ -8,10 +8,8 @@ import {
   canUseIntervals,
   getIntervalsConnection,
   INTERVALS_CONNECT_INPUT,
-  INTERVALS_NOT_FOR_ACCOUNT,
   INTERVALS_SYNC_ERROR,
   INTERVALS_UNAVAILABLE_STATUS,
-  intervalsOwnerDeniedResponse,
   intervalsSettingsControls,
   revokeUnownedIntervals,
 } from "./intervals.ts";
@@ -174,7 +172,7 @@ describe("getIntervalsConnection", () => {
 });
 
 describe("connect/sync route", () => {
-  it("rejects a non-owner with 403 and does not call Intervals", async () => {
+  it("does not call Intervals for a non-owner without a personal key", async () => {
     process.env.INTERVALS_OWNER_EMAILS = "crispal94@gmail.com";
     process.env.INTERVALS_ICU_API_KEY = "owner-key-do-not-leak";
     const userId = "non-owner-route";
@@ -195,29 +193,20 @@ describe("connect/sync route", () => {
     });
 
     for (const intent of ["intervals-connect", "intervals-sync"] as const) {
-      const denied = intervalsOwnerDeniedResponse({ email }, intent);
-      assert.ok(denied);
-      assert.equal(denied.status, 403);
-      const body = await denied.text();
-      assert.equal(body, INTERVALS_NOT_FOR_ACCOUNT);
-      assert.equal(body.includes("INTERVALS_OWNER_EMAILS"), false);
-      assert.equal(body.includes("INTERVALS_ICU"), false);
-
       const formData = new FormData();
       formData.set("intent", intent);
       const result = await handleSettingsPost(userId, formData);
       assert.equal(result.ok, false);
       if (result.ok) continue;
       assert.equal(result.status, undefined);
-      assert.notEqual(result.error, INTERVALS_NOT_FOR_ACCOUNT);
       assert.equal(result.section, "intervals");
       if (intent === "intervals-connect") assert.equal(result.error, INTERVALS_CONNECT_INPUT);
       if (intent === "intervals-sync") assert.equal(result.error, INTERVALS_SYNC_ERROR);
     }
 
     assert.equal(fetched, false);
-    assert.equal(intervalsOwnerDeniedResponse({ email: "CrisPal94@gmail.com" }, "intervals-connect"), null);
-    assert.equal(intervalsOwnerDeniedResponse({ email: "CrisPal94@gmail.com" }, "intervals-sync"), null);
+    assert.equal(canUseIntervals({ email }), false);
+    assert.equal(canUseIntervals({ email: "CrisPal94@gmail.com" }), true);
   });
 
   it("does not import a RunLog from sync or Which run? pick/skip when the connection is stale", async () => {
@@ -319,18 +308,12 @@ describe("connect/sync route", () => {
       ["intervals-pick-run", pick],
       ["intervals-skip-pick", skip],
     ] as const) {
-      const denied = intervalsOwnerDeniedResponse({ email }, intent);
-      assert.ok(denied);
-      assert.equal(denied.status, 403);
       const result = await handleSettingsPost(userId, formData);
       if (intent === "intervals-skip-pick") {
         assert.equal(result.ok, true);
       } else {
         assert.equal(result.ok, false);
-        if (!result.ok) {
-          assert.equal(result.status, undefined);
-          assert.notEqual(result.error, INTERVALS_NOT_FOR_ACCOUNT);
-        }
+        if (!result.ok) assert.equal(result.status, undefined);
       }
     }
 
