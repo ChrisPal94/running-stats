@@ -13,6 +13,8 @@ const originalEnv = {
   AUTH_DATA_DIR: process.env.AUTH_DATA_DIR,
   INTERVALS_OWNER_EMAILS: process.env.INTERVALS_OWNER_EMAILS,
   ADAPT_LLM_API_KEY: process.env.ADAPT_LLM_API_KEY,
+  OLLAMA_API_KEY: process.env.OLLAMA_API_KEY,
+  OLLAMA_MODEL: process.env.OLLAMA_MODEL,
   INTERVALS_ICU_API_KEY: process.env.INTERVALS_ICU_API_KEY,
   INTERVALS_KEY_ENC_SECRET: process.env.INTERVALS_KEY_ENC_SECRET,
   INTERVALS_OWNER_ENV_FALLBACK: process.env.INTERVALS_OWNER_ENV_FALLBACK,
@@ -22,6 +24,24 @@ process.env.INTERVALS_KEY_ENC_SECRET = Buffer.alloc(32, 5).toString("base64");
 
 const NOW = new Date("2026-09-24T17:00:00.000Z");
 const OWNER_EMAIL = "crispal94@gmail.com";
+
+/**
+ * Force the LLM to be unconfigured, whatever the developer's local `.env`
+ * holds. `loadLocalEnv` runs at import time, so a configured machine would
+ * otherwise make the adapt take the LLM path and call the real provider.
+ */
+function llmOff(): void {
+  delete process.env.ADAPT_LLM_API_KEY;
+  delete process.env.OLLAMA_API_KEY;
+  delete process.env.OLLAMA_MODEL;
+}
+
+/** Force the LLM to be configured through the Ollama fallback. */
+function llmOn(model = "gemma4:31b"): void {
+  delete process.env.ADAPT_LLM_API_KEY;
+  process.env.OLLAMA_API_KEY = "test-only-key";
+  process.env.OLLAMA_MODEL = model;
+}
 
 function restoreEnv(includeDataDir: boolean): void {
   const entries = Object.entries(originalEnv).filter(([key]) => includeDataDir || key !== "AUTH_DATA_DIR");
@@ -130,7 +150,7 @@ function installAthlete(userId: string, email: string, emailVerifiedAt?: string)
 
 describe("adapt Intervals gate", () => {
   it("does not call upsertPlannedRuns or loadRunEffort for a non-owner with a stale connection", async () => {
-    delete process.env.ADAPT_LLM_API_KEY;
+    llmOff();
     process.env.INTERVALS_OWNER_EMAILS = OWNER_EMAIL;
     const userId = "adapt-non-owner";
     installAthlete(userId, "runner@example.com");
@@ -154,7 +174,7 @@ describe("adapt Intervals gate", () => {
   });
 
   it("uploads a Skip patch and loads effort for a connected owner", async () => {
-    delete process.env.ADAPT_LLM_API_KEY;
+    llmOff();
     process.env.INTERVALS_OWNER_EMAILS = `  ${OWNER_EMAIL.toUpperCase()}  `;
     const userId = "adapt-owner";
     process.env.INTERVALS_OWNER_ENV_FALLBACK = "true";
@@ -173,7 +193,7 @@ describe("adapt Intervals gate", () => {
   });
 
   it("does not call upsertPlannedRuns or loadRunEffort for an unverified allowlisted account", async () => {
-    delete process.env.ADAPT_LLM_API_KEY;
+    llmOff();
     process.env.INTERVALS_OWNER_EMAILS = `unverified-owner@example.com, ${OWNER_EMAIL}`;
     const userId = "adapt-unverified-owner";
     installAthlete(userId, "unverified-owner@example.com");
@@ -188,5 +208,37 @@ describe("adapt Intervals gate", () => {
     assert.match(adaptRunLogLine(result), /uploaded=0/);
     assert.equal(loadTrainingSnapshot().adaptationEvents.some((event) => event.userId === userId), true);
     assert.equal(loadTrainingSnapshot().sessions.find((session) => session.id === `${userId}-tomorrow`)?.distanceKm, 8);
+  });
+
+  it("parses an LLM adjustment wrapped in a markdown code fence", async () => {
+    llmOn();
+    const userId = "adapt-fenced-json";
+    installAthlete(userId, "fenced-json@example.com");
+
+    const adjustment = {
+      title: "Plan adjusted",
+      summary: "Trimmed after a skipped day.",
+      reason: "You skipped Thursday, so tomorrow is shorter.",
+      distanceKm: 6,
+      kind: "easy",
+    };
+    const fenced = "```json\n" + JSON.stringify(adjustment, null, 2) + "\n```";
+    const body = JSON.stringify({ choices: [{ message: { content: fenced } }] });
+    const fetchMock = mock.method(globalThis, "fetch", async () => new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    try {
+      const loadRunEffort = mock.fn(async () => null);
+      const upsertPlannedRuns = mock.fn(async () => ({ uploaded: 1, failed: 0 }));
+      const result = await runNocturnalAdaptation(NOW, { loadRunEffort, upsertPlannedRuns });
+
+      // The fenced content must parse; a discarded response would count as an
+      // LLM failure and leave the heuristic result (8 km) in place.
+      assert.equal(result.llmFailed, 0);
+      const snapshot = loadTrainingSnapshot();
+      assert.equal(snapshot.sessions.find((session) => session.id === `${userId}-tomorrow`)?.distanceKm, 6);
+      assert.ok(fetchMock.mock.calls.length >= 1);
+    } finally {
+      mock.restoreAll();
+    }
   });
 });
