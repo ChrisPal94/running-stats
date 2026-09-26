@@ -36,6 +36,8 @@ const originalEnv = {
   INTERVALS_OWNER_EMAILS: process.env.INTERVALS_OWNER_EMAILS,
   INTERVALS_OWNER_ENV_FALLBACK: process.env.INTERVALS_OWNER_ENV_FALLBACK,
   ADAPT_LLM_API_KEY: process.env.ADAPT_LLM_API_KEY,
+  OLLAMA_API_KEY: process.env.OLLAMA_API_KEY,
+  OLLAMA_MODEL: process.env.OLLAMA_MODEL,
 };
 
 const SECRET = Buffer.alloc(32, 8).toString("base64");
@@ -56,6 +58,19 @@ function restoreEnv(): void {
   }
 }
 
+/**
+ * Force the LLM to be unconfigured, whatever the developer's local `.env`
+ * holds. `loadLocalEnv` runs at import time, so a configured machine would
+ * otherwise make the adapt take the LLM path and call the real provider.
+ * `readLlmConfig` falls back to `OLLAMA_API_KEY`/`OLLAMA_MODEL`, so clearing
+ * `ADAPT_LLM_API_KEY` alone is no longer enough.
+ */
+function llmOff(): void {
+  delete process.env.ADAPT_LLM_API_KEY;
+  delete process.env.OLLAMA_API_KEY;
+  delete process.env.OLLAMA_MODEL;
+}
+
 afterEach(() => {
   mock.restoreAll();
   process.env.AUTH_DATA_DIR = dataDir;
@@ -63,7 +78,7 @@ afterEach(() => {
   delete process.env.INTERVALS_ICU_API_KEY;
   delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
   delete process.env.INTERVALS_OWNER_EMAILS;
-  delete process.env.ADAPT_LLM_API_KEY;
+  llmOff();
 });
 
 after(() => {
@@ -204,7 +219,7 @@ describe("per-user Intervals key", () => {
   it("sync, pick, and adapt use only that user's key and athlete", async () => {
     delete process.env.INTERVALS_ICU_API_KEY;
     delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
-    delete process.env.ADAPT_LLM_API_KEY;
+    llmOff();
     const userA = "iso-a";
     const userB = "iso-b";
     insertUser({ id: userA, email: "iso-a@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
@@ -297,7 +312,7 @@ describe("per-user Intervals key", () => {
   });
 
   it("skips a user without a connection in adapt and logs only the count", async () => {
-    delete process.env.ADAPT_LLM_API_KEY;
+    llmOff();
     delete process.env.INTERVALS_ICU_API_KEY;
     delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
     process.env.INTERVALS_ICU_API_KEY = ENV_KEY;
