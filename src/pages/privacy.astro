@@ -1,0 +1,169 @@
+---
+import PageLayout from "../layouts/PageLayout.astro";
+
+// Fully static: no session, no cookies, nothing dynamic. Header reads only
+// `Astro.url.pathname`, so this serves as a file. That matters because a third
+// party (Intervals' OAuth registration review) fetches this page.
+export const prerender = true;
+---
+
+<PageLayout
+  title="Privacy — Stride Lab"
+  description="What Stride Lab stores, who it is shared with, and how to get it deleted."
+  heading="Privacy"
+  eyebrow="Legal"
+>
+  <p>
+    Stride Lab is a running training plan that adjusts tomorrow's session from
+    what you logged today. This page says exactly what we store, who else sees
+    it, and how to make us delete it. Effective 27 September 2026.
+  </p>
+
+  <h2 class="mt-6 text-base font-semibold tracking-[-0.02em] text-cloud uppercase">
+    What we store
+  </h2>
+
+  <h3 class="font-semibold text-cloud">Account</h3>
+  <ul class="list-disc pl-5">
+    <li>Your email address, and whether it has been verified.</li>
+    <li>
+      If you sign in with Google, the Google account identifier Google returns
+      to us. If you use a password, a hash of it — never the password itself.
+    </li>
+    <li>Session cookies and the date your account was created.</li>
+  </ul>
+
+  <h3 class="font-semibold text-cloud">Training</h3>
+  <ul class="list-disc pl-5">
+    <li>Your plan, the sessions on it, and the feedback you leave on a session.</li>
+    <li>
+      Run logs you enter: date, distance, duration, pace, and how the entry was
+      made.
+    </li>
+    <li>
+      If you record a route, the GPS trace and its samples. Without a recorded
+      route, we store no location data.
+    </li>
+  </ul>
+
+  <h3 class="font-semibold text-cloud">Intervals.icu connection</h3>
+  <ul class="list-disc pl-5">
+    <li>
+      Your Intervals athlete ID, display name, the scopes you granted, and when
+      we last synced.
+    </li>
+    <li>
+      Your Intervals API key or access token, encrypted at rest. It is never
+      displayed in the app and never sent to a browser.
+    </li>
+  </ul>
+
+  <h2 class="mt-6 text-base font-semibold tracking-[-0.02em] text-cloud uppercase">
+    Who else sees your data
+  </h2>
+
+  <p>
+    We do not sell your data, and we run no analytics, advertising, or
+    third-party tracking of any kind. Four services see some of it, and only
+    these four:
+  </p>
+
+  <h3 class="font-semibold text-cloud">Ollama Cloud — for AI coaching</h3>
+  <p>
+    To write coaching feedback and adjust your next session, we send a limited
+    snapshot of your training to a language model served by
+    <a
+      class="underline decoration-lime/50 underline-offset-2 hover:decoration-lime"
+      href="https://ollama.com/privacy">Ollama Cloud</a>. That snapshot can
+    include average, maximum and resting heart rate, your lactate threshold and
+    athlete maximum, cadence, step rate, distance, duration, pace, and the
+    feedback you left on a session. It does not include your email address, your
+    name, or any account identifier. If you would rather we did not send this,
+    tell us and we will turn the AI features off for your account.
+  </p>
+
+  <h3 class="font-semibold text-cloud">Intervals.icu</h3>
+  <p>
+    Only if you connect. We exchange authorisation tokens with them to import
+    your activities and to write planned runs to your calendar.
+  </p>
+
+  <h3 class="font-semibold text-cloud">Resend</h3>
+  <p>
+    Only if you use a magic link. They deliver the sign-in email and see your
+    address for that delivery.
+  </p>
+
+  <h3 class="font-semibold text-cloud">Google</h3>
+  <p>Only if you choose Google sign-in.</p>
+
+  <h2 class="mt-6 text-base font-semibold tracking-[-0.02em] text-cloud uppercase">
+    Where it lives
+  </h2>
+  <p>
+    In a single SQLite database on our own server. Not in a third-party
+    database, and not in a cloud data warehouse.
+  </p>
+
+  <h2 class="mt-6 text-base font-semibold tracking-[-0.02em] text-cloud uppercase">
+    How long we keep it
+  </h2>
+  <p>
+    Until you ask us to delete it. We keep training history so your plan and
+    progress still work, which means we cannot delete your account while also
+    keeping your data. One request does both.
+  </p>
+
+  <h2 class="mt-6 text-base font-semibold tracking-[-0.02em] text-cloud uppercase">
+    Your choices
+  </h2>
+  <ul class="list-disc pl-5">
+    <li>Disconnect Intervals.icu at any time in Settings.</li>
+    <li>Edit or delete individual run logs and session feedback yourself.</li>
+    <li>
+      Ask us to stop using the AI features, which stops all data reaching Ollama
+      Cloud.
+    </li>
+    <li>
+      Ask us to export or delete your account and everything in it. We will
+      confirm when it is done.
+    </li>
+    <li>Withdraw consent at any time, and stop using the service.</li>
+  </ul>
+
+  <h2 class="mt-6 text-base font-semibold tracking-[-0.02em] text-cloud uppercase">
+    Security
+  </h2>
+  <p>
+    Intervals credentials are encrypted before they are written. Passwords are
+    stored only as hashes. Signing out revokes the session. We do not consider
+    any of this a substitute for a strong password.
+  </p>
+
+  <h2 class="mt-6 text-base font-semibold tracking-[-0.02em] text-cloud uppercase">
+    Children
+  </h2>
+  <p>
+    Stride Lab is not for anyone under 13. We do not knowingly collect data from
+    children.
+  </p>
+
+  <h2 class="mt-6 text-base font-semibold tracking-[-0.02em] text-cloud uppercase">
+    Changes
+  </h2>
+  <p>
+    If this policy changes we will update the date at the top. Material changes
+    will be announced in the app before they take effect.
+  </p>
+
+  <h2 class="mt-6 text-base font-semibold tracking-[-0.02em] text-cloud uppercase">
+    Contact
+  </h2>
+  <p>
+    Questions, exports, or deletion requests:
+    <a
+      class="underline decoration-lime/50 underline-offset-2 hover:decoration-lime"
+      href="mailto:crispal94@gmail.com">crispal94@gmail.com</a
+    >.
+  </p>
+</PageLayout>
