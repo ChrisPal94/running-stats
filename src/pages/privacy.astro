@@ -1,7 +1,10 @@
 ---
 import PageLayout from "../layouts/PageLayout.astro";
 
-export const prerender = false;
+// Fully static: no session, no cookies, nothing dynamic. Header reads only
+// `Astro.url.pathname`, so this serves as a file. That matters because a third
+// party (Intervals' OAuth registration review) fetches this page.
+export const prerender = true;
 ---
 
 <PageLayout
