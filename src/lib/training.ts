@@ -1314,7 +1314,10 @@ export async function submitSessionFeedback(
       );
       if (existingIndex >= 0) {
         const existing = data.runLogs[existingIndex];
-        data.runLogs[existingIndex] = { ...log, id: existing.id };
+        // Keep the existing provenance. A log that arrived from an Intervals
+        // import must not be relabelled `manual`, or the next sync treats it
+        // as a hand-entered log and silently stops refreshing that day.
+        data.runLogs[existingIndex] = { ...log, id: existing.id, source: existing.source };
       } else {
         data.runLogs.push(log);
       }
@@ -1387,6 +1390,23 @@ export async function handleTodayPost(userId: string, formData: FormData): Promi
   if (intent === "done" && sessionId) {
     const parsed = parseRunLogForm(formData);
     if (!parsed.ok) {
+      // A Done from the TodayCard arrives with an empty form, and the numbers
+      // are already stored. Fall back only in that case: if the user actually
+      // typed a distance that failed validation, honour the error and reopen
+      // the sheet with their input rather than silently saving stale numbers.
+      if (!parsed.draft.distanceKm.trim()) {
+        const stored = await getRunLogForSession(userId, sessionId);
+        if (stored) {
+          const stats: RunLogStats = {
+            distanceKm: stored.distanceKm,
+            timeSec: stored.timeSec,
+            paceSecPerKm: stored.paceSecPerKm,
+            route: stored.route ?? EMPTY_RUN_ROUTE,
+          };
+          await submitSessionFeedback(userId, sessionId, "done", stats);
+          return { ok: true, redirect: "/today?saved=1" };
+        }
+      }
       return { ok: false, error: parsed.error, logOpen: true, draft: parsed.draft };
     }
     await submitSessionFeedback(userId, sessionId, "done", parsed.stats);
