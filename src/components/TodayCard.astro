@@ -60,6 +60,8 @@ const status =
 
 const canAct = Boolean(session && !feedback);
 const canLog = canAct && runLog?.source !== "intervals";
+/** Intervals-sourced logs skip the manual sheet; `Done` is their only path to mark the session done. */
+const canDone = canAct && runLog?.source === "intervals";
 ---
 
 <article
@@ -266,6 +268,18 @@ const canLog = canAct && runLog?.source !== "intervals";
         }
         <form method="post" class="flex flex-col gap-2">
           <input type="hidden" name="sessionId" value={session.id} />
+          {
+            canDone ? (
+              <button
+                type="submit"
+                name="intent"
+                value="done"
+                class="inline-flex w-full items-center justify-center rounded-full border border-white/12 bg-transparent px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]"
+              >
+                Done
+              </button>
+            ) : null
+          }
           <button
             type="submit"
             name="intent"
