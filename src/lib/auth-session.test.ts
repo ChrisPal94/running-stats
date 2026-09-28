@@ -371,6 +371,45 @@ describe("logout ends every session", () => {
     assert.equal(jar.get("rs_session"), undefined);
   });
 
+  it("signs out a same-origin POST with JSON or no content type", async () => {
+    const email = "logout-any-body@example.com";
+    const jar = cookieJar();
+    const signed = await signupFromForm(post("http://localhost/signup"), jar.cookies, passwordForm(email));
+    assert.equal(signed.ok, true);
+    if (!signed.ok) return;
+    const epoch = getUserById(signed.user.id)?.sessionEpoch ?? 0;
+
+    const json = await postLogout(
+      jar.cookies,
+      new Request("http://localhost/logout", {
+        method: "POST",
+        headers: { origin: "http://localhost", "content-type": "application/json" },
+        body: "{\"intent\":\"logout\"}",
+      }),
+    );
+    assert.equal(json.status, 302);
+    assert.equal(json.headers.get("Location"), "/login");
+    assert.equal(getUserById(signed.user.id)?.sessionEpoch, epoch + 1);
+    assert.equal(jar.get("rs_session"), undefined);
+
+    const again = cookieJar();
+    const logged = await loginFromForm(post("http://localhost/login"), again.cookies, passwordForm(email));
+    assert.equal(logged.ok, true);
+    if (!logged.ok) return;
+    const epochAfter = getUserById(signed.user.id)?.sessionEpoch ?? 0;
+    const bare = await postLogout(
+      again.cookies,
+      new Request("http://localhost/logout", {
+        method: "POST",
+        headers: { origin: "http://localhost" },
+      }),
+    );
+    assert.equal(bare.status, 302);
+    assert.equal(bare.headers.get("Location"), "/login");
+    assert.equal(getUserById(signed.user.id)?.sessionEpoch, epochAfter + 1);
+    assert.equal(again.get("rs_session"), undefined);
+  });
+
   it("invalidates a Google session and a magic-link session", async () => {
     const google = await googleSession("logout-google@example.com", "logout-google-sub");
     const googleUser = await getCurrentUser(google.cookies);
@@ -443,7 +482,7 @@ describe("logout ends every session", () => {
     assert.match(today, /return Astro\.redirect\(gate\.redirect\)/);
     assert.match(settings, /requireAppSession\(Astro\.cookies\)/);
     assert.match(settings, /return Astro\.redirect\(gate\.redirect\)/);
-    assert.ok(settings.indexOf("requireAppSession") < settings.indexOf("handleSettingsPost"));
+    assert.ok(settings.indexOf("requireAppSession") < settings.indexOf("applySettingsPost"));
     assert.ok(settings.includes("intervals-"));
   });
 });

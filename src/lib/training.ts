@@ -2007,6 +2007,11 @@ function upsertImportedRunLog(
       : existing?.route?.samples?.length || existing?.route?.type === "polyline"
         ? existing.route
         : { type: "none" },
+    // Original import instant. Re-import updates distance and time in place and
+    // must not move createdAt: cleanup:intervals-nonowners deletes a non-owner
+    // intervals row only when createdAt is strictly before `--before` (default
+    // PER_USER_INTERVALS_SINCE). Refreshing the timestamp would hide a
+    // pre-cutoff import from that job after a later reconnect and disconnect.
     createdAt: existing?.createdAt ?? createdAt,
     source: "intervals",
   };
