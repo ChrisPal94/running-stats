@@ -1,4 +1,6 @@
 ---
+import { isGoogleLoginConfigured, isMagicLinkConfigured, signupDuplicateMessage } from "../lib/auth-methods";
+
 interface Props {
   email?: string;
   error?: string;
@@ -23,7 +25,12 @@ const {
   resendWaitMs = 0,
 } = Astro.props;
 
-const linkSelected = method === "link";
+const alertLinkClass =
+  "font-semibold text-cloud underline decoration-lime/70 underline-offset-[3px] hover:decoration-lime focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime";
+const googleOn = isGoogleLoginConfigured();
+const magicOn = isMagicLinkConfigured();
+const duplicateAccount = error === signupDuplicateMessage();
+const linkSelected = magicOn && method === "link";
 const passwordHref = googleFrom === "login" ? "/login" : "/signup";
 const linkHref = `${passwordHref}?method=link`;
 const tabClass = (active: boolean) =>
@@ -34,24 +41,28 @@ const tabClass = (active: boolean) =>
 ---
 
 <div class="flex max-w-md flex-col gap-5">
-  <div class="grid grid-cols-2 rounded-full border border-white/12 bg-black/20 p-1" role="tablist" aria-label="Sign in method">
-    <a
-      href={passwordHref}
-      role="tab"
-      aria-selected={linkSelected ? "false" : "true"}
-      class={tabClass(!linkSelected)}
-    >
-      Password
-    </a>
-    <a
-      href={linkHref}
-      role="tab"
-      aria-selected={linkSelected ? "true" : "false"}
-      class={tabClass(linkSelected)}
-    >
-      Email link
-    </a>
-  </div>
+  {
+    magicOn && (
+      <div class="grid grid-cols-2 rounded-full border border-white/12 bg-black/20 p-1" role="tablist" aria-label="Sign in method">
+        <a
+          href={passwordHref}
+          role="tab"
+          aria-selected={linkSelected ? "false" : "true"}
+          class={tabClass(!linkSelected)}
+        >
+          Password
+        </a>
+        <a
+          href={linkHref}
+          role="tab"
+          aria-selected={linkSelected ? "true" : "false"}
+          class={tabClass(linkSelected)}
+        >
+          Email link
+        </a>
+      </div>
+    )
+  }
 
   {
     !linkSelected ? (
@@ -61,7 +72,24 @@ const tabClass = (active: boolean) =>
             class="rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
             role="alert"
           >
-            {error}
+            {
+              duplicateAccount ? (
+                <>
+                  Couldn’t create your account. If you already have one,{" "}
+                  <a href="/login" class={alertLinkClass}>log in</a>{magicOn && googleOn ? (
+                    <>, <a href="/login?method=link" class={alertLinkClass}>sign in with an email link</a>, or <a href={`/auth/google?from=${googleFrom}`} class={alertLinkClass}>continue with Google</a>.</>
+                  ) : magicOn ? (
+                    <> or <a href="/login?method=link" class={alertLinkClass}>sign in with an email link</a>.</>
+                  ) : googleOn ? (
+                    <> or <a href={`/auth/google?from=${googleFrom}`} class={alertLinkClass}>continue with Google</a>.</>
+                  ) : (
+                    "."
+                  )}
+                </>
+              ) : (
+                error
+              )
+            }
           </p>
         )}
 
@@ -163,7 +191,7 @@ const tabClass = (active: boolean) =>
   }
 
   {
-    !magicSent && (
+    googleOn && !magicSent && (
       <>
         <div class="flex items-center gap-3">
           <span class="h-px flex-1 bg-white/12"></span>
