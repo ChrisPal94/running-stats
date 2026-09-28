@@ -169,4 +169,26 @@ describe("intent=done from an Intervals-sourced run log", () => {
     // so relabelling this one would silently freeze that day on every sync.
     assert.equal(stored.source, "intervals");
   });
+
+  it("fails without falling back when the typed distance does not validate", async () => {
+    seed({
+      userId: "done-typed-bad",
+      sessionId: "session-typed-bad",
+      runLog: { source: "intervals", distanceKm: 5.2, timeSec: 1800, paceSecPerKm: 346 },
+    });
+
+    const form = emptyDoneForm("session-typed-bad");
+    form.set("loggedDistanceKm", "0");
+    const result = await handleTodayPost("done-typed-bad", form);
+
+    assert.equal(result.ok, false);
+    assert.equal(result.ok ? null : result.logOpen, true);
+    assert.equal(result.ok ? null : result.error, "Enter the distance you ran.");
+    const stored = loadTrainingSnapshot().runLogs.find(
+      (entry) => entry.userId === "done-typed-bad" && entry.sessionId === "session-typed-bad",
+    );
+    assert.ok(stored);
+    assert.equal(stored.distanceKm, 5.2);
+    assert.equal(feedbacksFor("done-typed-bad", "session-typed-bad").length, 0);
+  });
 });

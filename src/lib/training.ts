@@ -1390,18 +1390,22 @@ export async function handleTodayPost(userId: string, formData: FormData): Promi
   if (intent === "done" && sessionId) {
     const parsed = parseRunLogForm(formData);
     if (!parsed.ok) {
-      // An Intervals import (or earlier manual save) already stores the numbers; a bare `done`
-      // from that session should not fail on an empty form.
-      const stored = await getRunLogForSession(userId, sessionId);
-      if (stored) {
-        const stats: RunLogStats = {
-          distanceKm: stored.distanceKm,
-          timeSec: stored.timeSec,
-          paceSecPerKm: stored.paceSecPerKm,
-          route: stored.route ?? EMPTY_RUN_ROUTE,
-        };
-        await submitSessionFeedback(userId, sessionId, "done", stats);
-        return { ok: true, redirect: "/today?saved=1" };
+      // A Done from the TodayCard arrives with an empty form, and the numbers
+      // are already stored. Fall back only in that case: if the user actually
+      // typed a distance that failed validation, honour the error and reopen
+      // the sheet with their input rather than silently saving stale numbers.
+      if (!parsed.draft.distanceKm.trim()) {
+        const stored = await getRunLogForSession(userId, sessionId);
+        if (stored) {
+          const stats: RunLogStats = {
+            distanceKm: stored.distanceKm,
+            timeSec: stored.timeSec,
+            paceSecPerKm: stored.paceSecPerKm,
+            route: stored.route ?? EMPTY_RUN_ROUTE,
+          };
+          await submitSessionFeedback(userId, sessionId, "done", stats);
+          return { ok: true, redirect: "/today?saved=1" };
+        }
       }
       return { ok: false, error: parsed.error, logOpen: true, draft: parsed.draft };
     }
