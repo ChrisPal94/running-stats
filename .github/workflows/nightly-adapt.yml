@@ -1,0 +1,69 @@
+name: Nightly adapt
+
+# Runs the nocturnal plan adaptation once a day.
+#
+# This replaces the Railway `adapt-cron` service, which had a valid schedule
+# (`0 2 * * *`) but no source attached, so Railway created a deployment every
+# night and skipped it. Nothing ever called the endpoint, which is why the
+# adapt had never run on its own.
+#
+# Schedule is UTC: 02:00 UTC is 21:00 America/Guayaquil (UTC-5, no DST).
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  # Manual trigger, so the job can be proven without waiting for 02:00.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-adapt
+  cancel-in-progress: false
+
+jobs:
+  adapt:
+    name: POST /api/adapt
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger the nocturnal adaptation
+        id: adapt
+        env:
+          ADAPT_URL: https://running-stats-production.up.railway.app/api/adapt
+          ADAPT_CRON_SECRET: ${{ secrets.ADAPT_CRON_SECRET }}
+        run: |
+          set -o pipefail
+          response=$(curl --silent --show-error --fail-with-body \
+            --max-time 240 \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "Authorization: Bearer ${ADAPT_CRON_SECRET}" \
+            "${ADAPT_URL}")
+
+          echo "Response from the adapt endpoint:"
+          echo "${response}"
+
+          # `processed` is the plan count. 0 means the job reached the endpoint
+          # but there was no plan to adapt, which is a data problem, not a
+          # transport problem, and should read differently than a failure here.
+          processed=$(echo "${response}" | jq -r '.processed // "unparsed"')
+          echo "processed=${processed}"
+
+          if [ "${processed}" = "0" ]; then
+            echo "::warning::The adapt ran but processed 0 plans." \
+                 "No plan had a feedback to adapt."
+          fi
+
+      - name: Show the result
+        if: always()
+        env:
+          STATUS: ${{ steps.adapt.outcome }}
+        run: |
+          if [ "${STATUS}" = "success" ]; then
+            echo "The adapt endpoint responded successfully."
+          else
+            echo "::error::The adapt request failed (outcome: ${STATUS})." \
+                 "The plan was not adapted."
+          fi
