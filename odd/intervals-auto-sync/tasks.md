@@ -41,9 +41,17 @@ Evening poll (`POST /api/intervals-sync`):
 
 - [x] 1. Activity webhook: parse/auth/athlete lookup, `POST /api/intervals-webhook`,
       tests, `INTERVALS_WEBHOOK_SECRET` in DEPLOY.md (`.env.example` blocked by safety policy).
-- [ ] 2. Evening poll: bulk sync endpoint, GitHub Action at 20:30 Guayaquil, tests,
+- [x] 2. Evening poll: bulk sync endpoint, GitHub Action at 20:30 Guayaquil, tests,
       DEPLOY.md cron note.
 
 ## Evidence
 
-- (pending)
+- Task 1: `be1cb31` `feat(intervals): ingest activity webhooks and sync that athlete`
+  (`npm test` 298 pass; `astro check` 0 errors).
+- Task 2: `0826168` `feat(intervals): poll connected athletes before the nightly adapt`
+  (`npm test` 304 pass; `astro check` 0 errors).
+- `.env.example` was not updated: safety policy blocked that path. Add
+  `INTERVALS_WEBHOOK_SECRET=` by hand if needed.
+- Production still needs Railway `INTERVALS_WEBHOOK_SECRET` plus Intervals
+  Manage App webhook URL, and GitHub Actions secret `ADAPT_CRON_SECRET`
+  (already used by nightly-adapt).

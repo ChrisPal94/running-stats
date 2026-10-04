@@ -217,6 +217,17 @@ If there is **no Feedback that Guayaquil day**, the job returns 200 and does not
 
 Local equivalent (not used on Railway): `npm run adapt` once, or `npm run adapt:cron`.
 
+### Evening Intervals sync (GitHub Action)
+
+20:30 `America/Guayaquil` is `01:30` UTC (`30 1 * * *`), 30 minutes before the 21:00 adapt.
+
+A GitHub Action (`.github/workflows/evening-intervals-sync.yml`) POSTs `/api/intervals-sync`
+with the **same** `ADAPT_CRON_SECRET` as the nightly-adapt job. It exists so the 21:00 adapt
+already has tonight's Intervals run logs even if the activity webhook missed them. Every
+connected Intervals account is synced with per-account failures isolated: some accounts
+failing (and `failed > 0`) still returns 200 and does not fail the job, and `processed: 0`
+(no connected users) is valid too. `workflow_dispatch` is enabled for manual runs.
+
 ## Smoke tests (Bowser)
 
 Use the Railway public HTTPS URL. Expect session cookies with `Secure`. Signup/login POSTs must not return 403 (see Reverse proxy / CSRF above).
