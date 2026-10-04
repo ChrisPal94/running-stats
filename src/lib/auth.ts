@@ -61,7 +61,8 @@ type SessionPayload = {
 
 export type AuthFormResult =
   | { ok: true; user: AuthUser }
-  | { ok: false; error: string; email: string; duplicateAccount?: true };
+  | { ok: false; error: string; email: string; duplicateAccount?: undefined }
+  | { ok: false; email: string; duplicateAccount: true };
 
 export type GoogleOAuthFrom = "login" | "signup";
 
@@ -264,7 +265,6 @@ export async function signupFromForm(
       if (getUserByEmail(email)) {
         return {
           ok: false,
-          error: "",
           email,
           duplicateAccount: true,
         };

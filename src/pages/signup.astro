@@ -40,9 +40,12 @@ if (Astro.request.method === "POST") {
     if (result.ok) {
       return Astro.redirect("/onboarding");
     }
-    formError = result.error;
-    duplicateAccount = result.duplicateAccount === true;
     email = result.email;
+    if (result.duplicateAccount) {
+      duplicateAccount = true;
+    } else {
+      formError = result.error;
+    }
   }
 }
 

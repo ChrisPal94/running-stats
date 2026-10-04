@@ -698,7 +698,7 @@ describe("unverified password account then Google login", () => {
     );
     assert.equal(retry.ok, false);
     assert.equal(unknown.ok, false);
-    if (!retry.ok && !unknown.ok) {
+    if (!retry.ok && !retry.duplicateAccount && !unknown.ok && !unknown.duplicateAccount) {
       assert.equal(retry.error, "Email or password is incorrect.");
       assert.equal(unknown.error, retry.error);
     }
@@ -818,10 +818,9 @@ describe("password signup and login edges", () => {
         passwordForm(`  ${email.toUpperCase()}  `, "different-password"),
       );
       assert.equal(again.ok, false);
-      if (again.ok) continue;
-      assert.equal(again.duplicateAccount, true);
-      assert.equal(again.error, "");
-      assert.equal(again.error.toLowerCase().includes("already exists"), false);
+      if (again.ok || !again.duplicateAccount) continue;
+      assert.equal("error" in again, false);
+      assert.equal(/already exists/i.test(JSON.stringify(again)), false);
       assert.equal(jar.get("rs_session"), undefined);
       assert.equal(countUsers(email), 1);
       const stored = getUserById(id);

@@ -236,6 +236,13 @@ const disabledClass =
   </div>
 </article>
 <script>
+  import { markIntervalsSyncPending, restoreIntervalsSyncButton } from "../lib/intervals-sync-button";
+
+  function syncSubmitButton(form: Element): HTMLButtonElement | null {
+    const button = form.querySelector("button[type='submit']");
+    return button instanceof HTMLButtonElement ? button : null;
+  }
+
   for (const form of document.querySelectorAll("form[data-confirm]")) {
     form.addEventListener("submit", (event) => {
       const message = form.getAttribute("data-confirm");
@@ -244,11 +251,14 @@ const disabledClass =
   }
   for (const form of document.querySelectorAll("form[data-intervals-sync]")) {
     form.addEventListener("submit", () => {
-      const button = form.querySelector("button[type='submit']");
-      if (button instanceof HTMLButtonElement) {
-        button.disabled = true;
-        button.setAttribute("aria-busy", "true");
-      }
+      const button = syncSubmitButton(form);
+      if (button) markIntervalsSyncPending(button);
     });
   }
+  window.addEventListener("pageshow", (event) => {
+    for (const form of document.querySelectorAll("form[data-intervals-sync]")) {
+      const button = syncSubmitButton(form);
+      if (button) restoreIntervalsSyncButton(button, event.persisted);
+    }
+  });
 </script>

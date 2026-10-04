@@ -784,7 +784,10 @@ describe("Intervals OAuth", () => {
     assert.equal(/\sdisabled(?![:\w-])/.test(syncButton), false);
     const connectedAppsSource = readFileSync(new URL("../components/ConnectedApps.astro", import.meta.url), "utf8");
     assert.match(connectedAppsSource, /form\[data-intervals-sync\]/);
-    assert.match(connectedAppsSource, /button\.disabled = true/);
+    assert.match(connectedAppsSource, /markIntervalsSyncPending/);
+    assert.match(connectedAppsSource, /pageshow/);
+    assert.match(connectedAppsSource, /event\.persisted/);
+    assert.match(connectedAppsSource, /restoreIntervalsSyncButton/);
     assert.equal(connected.includes(TOKEN_A), false);
 
     const idOnly = await renderConnectedApps({
