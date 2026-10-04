@@ -174,7 +174,14 @@ export function adaptFeedbackWindow(
   if (cadence === "monthly") {
     return { start: startOfMonthYmd(today), end: today };
   }
-  return { start: today, end: today };
+  // Yesterday through today, not today alone. The scheduled run fires in the
+  // early hours of the following day, so a session the athlete ran and
+  // confirmed in the evening carries yesterday's date and fell outside a
+  // same-day window. That made the nightly adaptation structurally unable to
+  // fire for anyone who trains later in the day. One day of lookback also
+  // absorbs the scheduler running late, while still refusing to plan from a
+  // stale run the way an unbounded "most recent session" window would.
+  return { start: addDaysYmd(today, -1), end: today };
 }
 
 function weekdayLabel(ymd: string, session?: Session | null): string {
