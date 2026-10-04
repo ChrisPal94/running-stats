@@ -6,13 +6,11 @@ import WhichRunSheet from "../components/WhichRunSheet.astro";
 import AppShell from "../layouts/AppShell.astro";
 import { requireAppSession, userInitial } from "../lib/app-session";
 import {
-  INTERVALS_CONNECTED_TOAST,
   intervalsEncryptionReady,
   intervalsOAuthSettingsError,
-  intervalsSyncToastCopy,
   ownerEnvFallbackAllowed,
   refreshIntervalsConnectionView,
-  type IntervalsSyncToast,
+  settingsToastCopy,
 } from "../lib/intervals";
 import { isIntervalsOAuthConfigured } from "../lib/intervals-oauth";
 import { applySettingsPost } from "../lib/settings-post";
@@ -50,16 +48,7 @@ if (Astro.request.method === "POST") {
 
 const saved = Astro.url.searchParams.get("saved") === "1";
 const toastParam = Astro.url.searchParams.get("toast");
-const syncToast: Exclude<IntervalsSyncToast, null> | null =
-  toastParam === "no-session" || toastParam === "no-new-runs" || toastParam === "cooper"
-    ? toastParam
-    : null;
-const intervalsConnected = toastParam === "intervals-connected";
-const syncToastCopy = intervalsConnected
-  ? INTERVALS_CONNECTED_TOAST
-  : syncToast
-    ? intervalsSyncToastCopy(syncToast)
-    : "";
+const toastCopy = settingsToastCopy(toastParam);
 const oauthToastError = intervalsOAuthSettingsError(toastParam);
 if (oauthToastError && !intervalsError) intervalsError = oauthToastError;
 const connection = await refreshIntervalsConnectionView(user.id);
@@ -170,21 +159,20 @@ const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionRe
 {runPicker ? <WhichRunSheet picker={runPicker} /> : null}
 
 {
-  (syncToast || intervalsConnected) && syncToastCopy ? (
+  toastCopy ? (
     <p
       class="saved-toast pointer-events-none fixed inset-x-0 bottom-24 z-50 mx-auto w-max max-w-[min(100%-2rem,28rem)] rounded-full bg-lime px-4 py-2 text-center text-xs font-bold text-ink shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
-      data-sync-toast={syncToast}
-      data-no-session-toast={syncToast === "no-session" ? "" : undefined}
+      data-sync-toast=""
+      data-no-session-toast={toastParam === "no-session" ? "" : undefined}
       role="status"
     >
-      {syncToastCopy}
+      {toastCopy}
     </p>
   ) : null
 }
 
 {
-  syncToast ||
-  intervalsConnected ||
+  toastCopy ||
   toastParam === "intervals-error" ||
   toastParam === "intervals-calendar" ||
   toastParam === "intervals-unavailable" ? (

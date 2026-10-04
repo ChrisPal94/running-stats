@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { APIContext, AstroCookies } from "astro";
-import { signupDuplicateMessage } from "./auth-methods.ts";
 import { postAuthPath, requireAppSession } from "./app-session.ts";
 import {
   getAuthPageUser,
@@ -223,7 +222,8 @@ describe("signup duplicate email", () => {
     );
     assert.equal(again.ok, false);
     if (again.ok) return;
-    assert.equal(again.error, signupDuplicateMessage());
+    assert.equal(again.duplicateAccount, true);
+    assert.equal(again.error, "");
     assert.equal(/already exists/i.test(again.error), false);
     assert.equal(jar.get("rs_session"), undefined);
     assert.equal(jar.deletes.length, 0);

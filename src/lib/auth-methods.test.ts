@@ -10,7 +10,7 @@ import {
   authOptionsClause,
   isGoogleLoginConfigured,
   isMagicLinkConfigured,
-  signupDuplicateMessage,
+  signupDuplicateMethods,
 } from "./auth-methods.ts";
 
 const dataDir = mkdtempSync(join(tmpdir(), "rs-auth-methods-"));
@@ -90,7 +90,8 @@ function renderAuthForm(props: Record<string, unknown>): Promise<string> {
 function formProps(): Record<string, unknown> {
   return {
     email: "runner@example.com",
-    error: signupDuplicateMessage(),
+    error: "",
+    duplicateAccount: true,
     passwordAutocomplete: "new-password",
     footerHref: "/login",
     footerLabel: "Already training? Log in",
@@ -143,38 +144,43 @@ describe("isMagicLinkConfigured", () => {
   });
 });
 
-describe("signupDuplicateMessage", () => {
+const DUPLICATE_COPY = {
+  neither: "Couldn’t create your account. If you already have one, log in.",
+  google: "Couldn’t create your account. If you already have one, log in or continue with Google.",
+  "email link": "Couldn’t create your account. If you already have one, log in or sign in with an email link.",
+  both: "Couldn’t create your account. If you already have one, log in, sign in with an email link, or continue with Google.",
+} as const;
+
+describe("signupDuplicateMethods", () => {
   it("names only the configured sign-in methods", () => {
     clearAuthEnv();
-    assert.equal(
-      signupDuplicateMessage(),
-      "Couldn’t create your account. If you already have one, log in.",
-    );
+    assert.deepEqual(signupDuplicateMethods(), [{ label: "log in", href: "/login" }]);
     assert.equal(authOptionsClause(), "email and password");
 
     process.env.GOOGLE_CLIENT_ID = "id";
     process.env.GOOGLE_CLIENT_SECRET = "secret";
     process.env.GOOGLE_CALLBACK_URL = "http://localhost:4321/auth/google/callback";
-    assert.equal(
-      signupDuplicateMessage(),
-      "Couldn’t create your account. If you already have one, log in or continue with Google.",
-    );
+    assert.deepEqual(signupDuplicateMethods("signup"), [
+      { label: "log in", href: "/login" },
+      { label: "continue with Google", href: "/auth/google?from=signup" },
+    ]);
     assert.equal(authOptionsClause(), "email and password or continue with Google");
 
     delete process.env.GOOGLE_CLIENT_ID;
     process.env.RESEND_API_KEY = "re_test";
     process.env.MAIL_FROM = "stride@example.com";
-    assert.equal(
-      signupDuplicateMessage(),
-      "Couldn’t create your account. If you already have one, log in or sign in with an email link.",
-    );
+    assert.deepEqual(signupDuplicateMethods(), [
+      { label: "log in", href: "/login" },
+      { label: "sign in with an email link", href: "/login?method=link" },
+    ]);
     assert.equal(authOptionsClause(), "email and password or an email link");
 
     process.env.GOOGLE_CLIENT_ID = "id";
-    assert.equal(
-      signupDuplicateMessage(),
-      "Couldn’t create your account. If you already have one, log in, sign in with an email link, or continue with Google.",
-    );
+    assert.deepEqual(signupDuplicateMethods(), [
+      { label: "log in", href: "/login" },
+      { label: "sign in with an email link", href: "/login?method=link" },
+      { label: "continue with Google", href: "/auth/google?from=signup" },
+    ]);
     assert.equal(authOptionsClause(), "email and password, an email link, or continue with Google");
   });
 });
@@ -229,7 +235,8 @@ describe("auth form methods", () => {
     for (const item of cases) {
       item.setup();
       const html = await renderAuthForm(formProps());
-      assert.equal(alertText(html), signupDuplicateMessage(), item.label);
+      assert.equal(alertText(html), DUPLICATE_COPY[item.label], item.label);
+      assert.match(html, /value="runner@example.com"/, item.label);
       assert.equal(html.includes('href="/login"'), true, item.label);
       assert.equal(html.includes("Email link"), item.emailLink, item.label);
       assert.equal(html.includes("/login?method=link"), item.emailLink, item.label);
@@ -240,5 +247,37 @@ describe("auth form methods", () => {
       if (!item.emailLink) assert.equal(html.includes("method=link"), false, item.label);
       if (!item.google) assert.equal(html.includes("continue with Google"), false, item.label);
     }
+  });
+
+  it("renders a plain error without turning it into the duplicate links", async () => {
+    clearAuthEnv();
+    const html = await renderAuthForm({
+      ...formProps(),
+      duplicateAccount: false,
+      error: DUPLICATE_COPY.neither,
+    });
+    const alert = html.match(/role="alert">([\s\S]*?)<\/p>/)?.[1] ?? "";
+    assert.equal(alert.includes("<a"), false);
+    assert.equal(alertText(html), DUPLICATE_COPY.neither);
+  });
+
+  it("names the method tabs Sign up method on signup and Sign in method on login", async () => {
+    clearAuthEnv();
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.MAIL_FROM = "stride@example.com";
+    const signup = await renderAuthForm(formProps());
+    assert.match(signup, /role="tablist"[^>]*aria-label="Sign up method"/);
+    assert.match(signup, /Already training\? Log in/);
+    const login = await renderAuthForm({
+      ...formProps(),
+      duplicateAccount: false,
+      error: "",
+      googleFrom: "login",
+      footerHref: "/signup",
+      footerLabel: "New here? Start your plan",
+      passwordAutocomplete: "current-password",
+    });
+    assert.match(login, /role="tablist"[^>]*aria-label="Sign in method"/);
+    assert.equal(login.includes("Sign up method"), false);
   });
 });

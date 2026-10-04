@@ -25,6 +25,7 @@ import {
   INTERVALS_SYNC_NEEDS_CONNECT,
   intervalsConnectUserError,
   intervalsSyncUserError,
+  intervalsDisconnectedRedirect,
   intervalsSyncToast,
   intervalsSyncToastRedirect,
   loadIntervalsRoute,
@@ -2057,9 +2058,9 @@ function pickerResult(
 
 /**
  * Redirect after the Which run? picker closes.
- * An import anywhere in this sync/pick flow stays silent. No-session only when
- * a day was skipped and nothing was imported. Dismissing the picker is not an
- * empty Intervals fetch, so it does not use the no-new-runs toast.
+ * An import anywhere in this sync/pick flow uses the synced toast. No-session
+ * only when a day was skipped and nothing was imported. Dismissing the picker
+ * is not an empty Intervals fetch, so it does not use the no-new-runs toast.
  */
 function syncFinishedRedirect(input: {
   skippedNoSession: boolean;
@@ -2310,7 +2311,7 @@ async function postIntervalsSettings(
 
   if (intent === "intervals-disconnect") {
     await disconnectIntervals(userId);
-    return { ok: true, redirect: "/settings" };
+    return { ok: true, redirect: intervalsDisconnectedRedirect() };
   }
 
   return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE, section: "intervals", status: 403 };

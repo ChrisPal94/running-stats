@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, afterEach, describe, it, mock } from "node:test";
 import type { AstroCookies } from "astro";
-import { signupDuplicateMessage } from "./auth-methods.ts";
 import {
   authPageError,
   getCurrentUser,
@@ -820,7 +819,8 @@ describe("password signup and login edges", () => {
       );
       assert.equal(again.ok, false);
       if (again.ok) continue;
-      assert.equal(again.error, signupDuplicateMessage());
+      assert.equal(again.duplicateAccount, true);
+      assert.equal(again.error, "");
       assert.equal(again.error.toLowerCase().includes("already exists"), false);
       assert.equal(jar.get("rs_session"), undefined);
       assert.equal(countUsers(email), 1);

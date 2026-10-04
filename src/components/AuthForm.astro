@@ -1,9 +1,11 @@
 ---
-import { isGoogleLoginConfigured, isMagicLinkConfigured, signupDuplicateMessage } from "../lib/auth-methods";
+import { isGoogleLoginConfigured, isMagicLinkConfigured, signupDuplicateMethods } from "../lib/auth-methods";
 
 interface Props {
   email?: string;
   error?: string;
+  /** Duplicate password signup. The alert is built from `signupDuplicateMethods`, not from `error`. */
+  duplicateAccount?: boolean;
   passwordAutocomplete: "new-password" | "current-password";
   footerHref: string;
   footerLabel: string;
@@ -16,6 +18,7 @@ interface Props {
 const {
   email = "",
   error = "",
+  duplicateAccount = false,
   passwordAutocomplete,
   footerHref,
   footerLabel,
@@ -25,11 +28,20 @@ const {
   resendWaitMs = 0,
 } = Astro.props;
 
+const recoveryMethods = duplicateAccount ? signupDuplicateMethods(googleFrom) : [];
+const methodTabLabel = googleFrom === "signup" ? "Sign up method" : "Sign in method";
+
+function recoverySeparator(index: number, count: number): string {
+  if (index === 0) return "";
+  if (count === 2) return " or ";
+  if (index === count - 1) return ", or ";
+  return ", ";
+}
+
 const alertLinkClass =
   "font-semibold text-cloud underline decoration-lime/70 underline-offset-[3px] hover:decoration-lime focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime";
 const googleOn = isGoogleLoginConfigured();
 const magicOn = isMagicLinkConfigured();
-const duplicateAccount = error === signupDuplicateMessage();
 const linkSelected = magicOn && method === "link";
 const passwordHref = googleFrom === "login" ? "/login" : "/signup";
 const linkHref = `${passwordHref}?method=link`;
@@ -43,7 +55,7 @@ const tabClass = (active: boolean) =>
 <div class="flex max-w-md flex-col gap-5">
   {
     magicOn && (
-      <div class="grid grid-cols-2 rounded-full border border-white/12 bg-black/20 p-1" role="tablist" aria-label="Sign in method">
+      <div class="grid grid-cols-2 rounded-full border border-white/12 bg-black/20 p-1" role="tablist" aria-label={methodTabLabel}>
         <a
           href={passwordHref}
           role="tab"
@@ -67,7 +79,7 @@ const tabClass = (active: boolean) =>
   {
     !linkSelected ? (
       <form method="post" class="flex flex-col gap-5">
-        {error && (
+        {(duplicateAccount || error) && (
           <p
             class="rounded-xl border border-[#ff8a80]/30 bg-[#ff8a80]/8 px-4 py-3 text-sm leading-6 text-[#ffb4aa]"
             role="alert"
@@ -76,15 +88,9 @@ const tabClass = (active: boolean) =>
               duplicateAccount ? (
                 <>
                   Couldn’t create your account. If you already have one,{" "}
-                  <a href="/login" class={alertLinkClass}>log in</a>{magicOn && googleOn ? (
-                    <>, <a href="/login?method=link" class={alertLinkClass}>sign in with an email link</a>, or <a href={`/auth/google?from=${googleFrom}`} class={alertLinkClass}>continue with Google</a>.</>
-                  ) : magicOn ? (
-                    <> or <a href="/login?method=link" class={alertLinkClass}>sign in with an email link</a>.</>
-                  ) : googleOn ? (
-                    <> or <a href={`/auth/google?from=${googleFrom}`} class={alertLinkClass}>continue with Google</a>.</>
-                  ) : (
-                    "."
-                  )}
+                  {recoveryMethods.map((recovery, index) => (
+                    <>{recoverySeparator(index, recoveryMethods.length)}<a href={recovery.href} class={alertLinkClass}>{recovery.label}</a>{index === recoveryMethods.length - 1 ? "." : ""}</>
+                  ))}
                 </>
               ) : (
                 error
