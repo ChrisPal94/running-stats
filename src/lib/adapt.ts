@@ -658,6 +658,23 @@ function adaptCounts(
   return { processed, written, skipped, patched, llmFailed, uploaded, uploadFailed, noConnection, reconnect };
 }
 
+/** Planning view for one plan. Other athletes' rows are not passed to planDecisions. */
+function snapshotForPlan(snapshot: AdaptationJobSnapshot, plan: Plan): AdaptationJobSnapshot {
+  const userId = plan.userId;
+  return {
+    plans: [plan],
+    sessions: snapshot.sessions.filter((session) => session.userId === userId),
+    feedbacks: snapshot.feedbacks.filter((feedback) => feedback.userId === userId),
+    runLogs: snapshot.runLogs.filter((log) => log.userId === userId),
+    adaptationEvents: snapshot.adaptationEvents.filter((event) => event.userId === userId),
+  };
+}
+
+function logAccountSkipped(error: unknown): void {
+  const name = error instanceof Error ? error.name : "Error";
+  console.error(`[intervals] adapt account failed ${name}`);
+}
+
 export async function runNocturnalAdaptation(
   now = new Date(),
   deps: {
@@ -668,10 +685,13 @@ export async function runNocturnalAdaptation(
   const readEffort = deps.loadRunEffort ?? loadRunEffort;
   const uploadRuns = deps.upsertPlannedRuns ?? upsertPlannedRuns;
   const snapshot = await getAdaptationJobSnapshot();
-  const planned = planDecisions(snapshot, now);
-  const decisions: AdaptationDecision[] = [];
+  let plannedCount = 0;
   let llmFailed = 0;
   let accountFailed = 0;
+  let writtenCount = 0;
+  let patched = 0;
+  let uploaded = 0;
+  let uploadFailed = 0;
   let noConnection = 0;
   let reconnectNeeded = 0;
   let loggedEncryption = false;
@@ -699,119 +719,114 @@ export async function runNocturnalAdaptation(
     noConnection += 1;
   };
 
-  for (const plannedDecision of planned) {
+  for (const plan of snapshot.plans) {
+    // `counted` is set only after this plan produced a decision. A throw before that
+    // is already inside `plans - plannedCount`, so it must not also increment `accountFailed`.
+    let counted = false;
     try {
-      const tomorrow = plannedDecision.draft.sessionId
-        ? (snapshot.sessions.find((session) => session.id === plannedDecision.draft.sessionId) ?? null)
-        : null;
-      const todaySession =
-        snapshot.sessions.find(
-          (session) =>
-            session.userId === plannedDecision.draft.userId &&
-            session.date === plannedDecision.draft.sourceDate,
-        ) ?? null;
-      const log = runLogForSourceDay(
-        snapshot,
-        plannedDecision.draft.userId,
-        plannedDecision.draft.sourceDate,
-        todaySession,
-      );
-      const creds = await openIntervalsCredentials(plannedDecision.draft.userId);
-      if (!creds.ok) noteCredentialGap(plannedDecision.draft.userId, creds.error);
-      const effort =
-        log && creds.ok
-          ? await readEffort(plannedDecision.draft.userId, plannedDecision.draft.sourceDate, log.distanceKm)
+      const accountSnapshot = snapshotForPlan(snapshot, plan);
+      const planned = planDecisions(accountSnapshot, now);
+      if (planned.length === 0) continue;
+      counted = true;
+      plannedCount += planned.length;
+
+      const decisions: AdaptationDecision[] = [];
+      let accountLlmFailed = 0;
+      for (const plannedDecision of planned) {
+        const tomorrow = plannedDecision.draft.sessionId
+          ? (accountSnapshot.sessions.find((session) => session.id === plannedDecision.draft.sessionId) ?? null)
           : null;
-      const actual = llmActualFromRunLog(log, effort);
-      let decision = applyEffortToDecision(
-        plannedDecision,
-        tomorrow,
-        actual?.distanceKm ?? null,
-        effort,
-      );
+        const todaySession =
+          accountSnapshot.sessions.find(
+            (session) =>
+              session.userId === plannedDecision.draft.userId &&
+              session.date === plannedDecision.draft.sourceDate,
+          ) ?? null;
+        const log = runLogForSourceDay(
+          accountSnapshot,
+          plannedDecision.draft.userId,
+          plannedDecision.draft.sourceDate,
+          todaySession,
+        );
+        const creds = await openIntervalsCredentials(plannedDecision.draft.userId);
+        if (!creds.ok) noteCredentialGap(plannedDecision.draft.userId, creds.error);
+        const effort =
+          log && creds.ok
+            ? await readEffort(plannedDecision.draft.userId, plannedDecision.draft.sourceDate, log.distanceKm)
+            : null;
+        const actual = llmActualFromRunLog(log, effort);
+        let decision = applyEffortToDecision(
+          plannedDecision,
+          tomorrow,
+          actual?.distanceKm ?? null,
+          effort,
+        );
 
-      if (llmConfigured()) {
-        const llmDecision = await llmAdjustOrSkip(decision, tomorrow, todaySession, actual);
-        if (!llmDecision) {
-          llmFailed += 1;
-        } else {
-          decision = enforceButtonFloor(decision, llmDecision, tomorrow);
+        if (llmConfigured()) {
+          const llmDecision = await llmAdjustOrSkip(decision, tomorrow, todaySession, actual);
+          if (!llmDecision) {
+            accountLlmFailed += 1;
+          } else {
+            decision = enforceButtonFloor(decision, llmDecision, tomorrow);
+          }
         }
+        decisions.push(decision);
       }
-      decisions.push(decision);
-    } catch (error) {
-      accountFailed += 1;
-      const name = error instanceof Error ? error.name : "Error";
-      console.error(`[intervals] adapt account failed ${name}`);
-    }
-  }
 
-  const skipped = snapshot.plans.length - planned.length + llmFailed + accountFailed;
-
-  if (decisions.length === 0) {
-    return adaptCounts(
-      snapshot.plans.length,
-      0,
-      skipped,
-      0,
-      llmFailed,
-      0,
-      0,
-      noConnection,
-      reconnectNeeded,
-    );
-  }
-
-  const written = await commitAdaptationRun({
-    sessionPatches: decisions.flatMap((decision) => (decision.patch ? [decision.patch] : [])),
-    drafts: decisions.map((decision) => decision.draft),
-  });
-
-  let uploaded = 0;
-  let uploadFailed = 0;
-  const uploads = written.length > 0 ? plannedUploads(snapshot, decisions) : [];
-  const byUser = new Map<string, PlannedRunUpload[]>();
-  for (const upload of uploads) {
-    const session = snapshot.sessions.find((entry) => entry.id === upload.externalId);
-    if (!session) continue;
-    const list = byUser.get(session.userId) ?? [];
-    list.push(upload);
-    byUser.set(session.userId, list);
-  }
-  for (const [userId, userUploads] of byUser) {
-    try {
-      const creds = await openIntervalsCredentials(userId);
-      if (!creds.ok) {
-        noteCredentialGap(userId, creds.error);
-        continue;
-      }
-      const result = await uploadRuns(userUploads, {
-        apiKey: creds.apiKey,
-        authType: creds.authType,
-        athletePathId: creds.athleteId,
+      // Session patch and AdaptationEvent share this account's commit. The Intervals
+      // upload runs only after that transaction commits, so a failed commit cannot
+      // leave an upload, and a rollback cannot leave an event without its session update.
+      const written = await commitAdaptationRun({
+        sessionPatches: decisions.flatMap((decision) => (decision.patch ? [decision.patch] : [])),
+        drafts: decisions.map((decision) => decision.draft),
       });
-      uploaded += result.uploaded;
-      uploadFailed += result.failed;
-      if (result.status === 401 || result.status === 403) {
-        countReconnect(userId);
-        try {
-          await markIntervalsNeedsReconnect(userId);
-        } catch (error) {
-          const name = error instanceof Error ? error.name : "Error";
-          console.error(`[intervals] adapt account failed ${name}`);
+      llmFailed += accountLlmFailed;
+      writtenCount += written.length;
+      patched += decisions.filter((decision) => decision.patch).length;
+      for (const event of written) snapshot.adaptationEvents.push(event);
+
+      if (written.length > 0) {
+        const uploads = plannedUploads(accountSnapshot, decisions);
+        if (uploads.length > 0) {
+          try {
+            const creds = await openIntervalsCredentials(plan.userId);
+            if (!creds.ok) {
+              noteCredentialGap(plan.userId, creds.error);
+            } else {
+              const result = await uploadRuns(uploads, {
+                apiKey: creds.apiKey,
+                authType: creds.authType,
+                athletePathId: creds.athleteId,
+              });
+              uploaded += result.uploaded;
+              uploadFailed += result.failed;
+              if (result.status === 401 || result.status === 403) {
+                countReconnect(plan.userId);
+                try {
+                  await markIntervalsNeedsReconnect(plan.userId);
+                } catch (error) {
+                  logAccountSkipped(error);
+                }
+              }
+            }
+          } catch {
+            console.error("[intervals] adapt upload failed");
+            uploadFailed += uploads.length;
+          }
         }
       }
-    } catch {
-      console.error("[intervals] adapt upload failed");
-      uploadFailed += userUploads.length;
+    } catch (error) {
+      if (counted) accountFailed += 1;
+      logAccountSkipped(error);
     }
   }
 
+  const skipped = snapshot.plans.length - plannedCount + llmFailed + accountFailed;
   return adaptCounts(
     snapshot.plans.length,
-    written.length,
+    writtenCount,
     skipped,
-    decisions.filter((decision) => decision.patch).length,
+    patched,
     llmFailed,
     uploaded,
     uploadFailed,
