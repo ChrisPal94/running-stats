@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, describe, it, mock } from "node:test";
 import { getIntervalsConnection, insertUser, loadTrainingSnapshot, saveTrainingSnapshot } from "./db.ts";
+import { INTERVALS_CONNECT_UNAVAILABLE } from "./intervals.ts";
 import { applySettingsPost } from "./settings-post.ts";
 import { readFormData } from "./safe-form-data.ts";
 import { applyTodayPost } from "./today-post.ts";
@@ -134,6 +135,44 @@ describe("POST routes reject non-form bodies", () => {
     const stored = getIntervalsConnection(userId);
     assert.equal(stored?.athleteId, "i123456");
     assert.equal(JSON.stringify(stored).includes("secret-key"), false);
+  });
+
+  it("renders an Intervals 403 in the settings row instead of a plain-text page", async () => {
+    const previous = {
+      secret: process.env.INTERVALS_KEY_ENC_SECRET,
+      clientId: process.env.INTERVALS_CLIENT_ID,
+      clientSecret: process.env.INTERVALS_CLIENT_SECRET,
+      fallback: process.env.INTERVALS_OWNER_ENV_FALLBACK,
+    };
+    delete process.env.INTERVALS_KEY_ENC_SECRET;
+    delete process.env.INTERVALS_CLIENT_ID;
+    delete process.env.INTERVALS_CLIENT_SECRET;
+    delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
+    const userId = "intervals-row-403";
+    insertUser({ id: userId, email: "row-403@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    try {
+      for (const body of ["intent=intervals-sync", "intent=intervals-not-a-command"]) {
+        const outcome = await applySettingsPost(
+          request("http://localhost/settings", "application/x-www-form-urlencoded", body),
+          userId,
+          "daily",
+        );
+        assert.equal(outcome.kind, "render", body);
+        if (outcome.kind !== "render") continue;
+        assert.equal(outcome.intervalsError, INTERVALS_CONNECT_UNAVAILABLE, body);
+        assert.equal(outcome.cadenceError, "", body);
+        assert.equal(JSON.stringify(outcome).includes("text/plain"), false, body);
+      }
+    } finally {
+      if (previous.secret === undefined) delete process.env.INTERVALS_KEY_ENC_SECRET;
+      else process.env.INTERVALS_KEY_ENC_SECRET = previous.secret;
+      if (previous.clientId === undefined) delete process.env.INTERVALS_CLIENT_ID;
+      else process.env.INTERVALS_CLIENT_ID = previous.clientId;
+      if (previous.clientSecret === undefined) delete process.env.INTERVALS_CLIENT_SECRET;
+      else process.env.INTERVALS_CLIENT_SECRET = previous.clientSecret;
+      if (previous.fallback === undefined) delete process.env.INTERVALS_OWNER_ENV_FALLBACK;
+      else process.env.INTERVALS_OWNER_ENV_FALLBACK = previous.fallback;
+    }
   });
 
   it("feedback: JSON and a missing type are 400; a form still records skip; origin stays first", async () => {

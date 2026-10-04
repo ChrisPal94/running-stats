@@ -44,7 +44,7 @@ if (Astro.request.method === "POST") {
     if (destination) {
       return Astro.redirect(destination);
     }
-    if (!result.ok) {
+    if (!result.ok && !result.duplicateAccount) {
       formError = result.error;
       email = result.email;
     }

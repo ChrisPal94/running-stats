@@ -16,6 +16,7 @@ if (signedInPath) {
 }
 
 let formError = "";
+let duplicateAccount = false;
 let email = "";
 let method: "password" | "link" = Astro.url.searchParams.get("method") === "link" ? "link" : "password";
 let magicSent = false;
@@ -39,8 +40,12 @@ if (Astro.request.method === "POST") {
     if (result.ok) {
       return Astro.redirect("/onboarding");
     }
-    formError = result.error;
     email = result.email;
+    if (result.duplicateAccount) {
+      duplicateAccount = true;
+    } else {
+      formError = result.error;
+    }
   }
 }
 
@@ -56,6 +61,7 @@ const error = authPageError(Astro.url, formError);
   <AuthForm
     email={email}
     error={error}
+    duplicateAccount={duplicateAccount}
     passwordAutocomplete="new-password"
     footerHref="/login"
     footerLabel="Already training? Log in"

@@ -48,6 +48,7 @@ const {
   INTERVALS_ATHLETE_ID_PLACEHOLDER,
   INTERVALS_CONNECT_REJECTED,
   INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_DISCONNECT_CONFIRM,
   INTERVALS_RECONNECT_LINK_LABEL,
   INTERVALS_RECONNECT_NOTICE,
   INTERVALS_UNAVAILABLE_HELPER_ID,
@@ -728,6 +729,11 @@ describe("Intervals OAuth", () => {
     assert.equal(keyHtml.includes(`placeholder="${INTERVALS_ATHLETE_ID_PLACEHOLDER}"`), true);
     assert.equal(keyHtml.includes(`placeholder="${INTERVALS_ATHLETE_ID_INVALID}"`), false);
     assert.equal(keyHtml.includes(INTERVALS_ATHLETE_ID_INVALID), false);
+    assert.equal(keyHtml.includes("never shown again"), false);
+    assert.equal(keyHtml.includes("Your API key is encrypted"), false);
+    const athleteInput = keyHtml.match(/<input[^>]*name="intervalsAthleteId"[^>]*>/)?.[0] ?? "";
+    assert.match(athleteInput, /placeholder:text-mist(?!\/)/);
+    assert.equal(athleteInput.includes("placeholder:text-mist/50"), false);
     assert.equal(keyHtml.includes("i704884"), false);
     assert.match(keyHtml, /role="alert"/);
     assert.equal(keyHtml.includes("Not available for your account"), false);
@@ -771,7 +777,17 @@ describe("Intervals OAuth", () => {
     assert.equal(connected.includes("Not available for your account"), false);
     assert.equal(connected.includes('data-intervals-actions'), true);
     assert.equal(connected.includes('data-intervals-helper'), true);
-    assert.equal(connected.includes("Disconnect Intervals.icu?"), true);
+    assert.equal(connected.includes(INTERVALS_DISCONNECT_CONFIRM), true);
+    assert.match(connected, /data-intervals-sync/);
+    const syncButton = connected.match(/<button[^>]*>\s*Sync now\s*<\/button>/)?.[0] ?? "";
+    assert.match(syncButton, /type="submit"/);
+    assert.equal(/\sdisabled(?![:\w-])/.test(syncButton), false);
+    const connectedAppsSource = readFileSync(new URL("../components/ConnectedApps.astro", import.meta.url), "utf8");
+    assert.match(connectedAppsSource, /form\[data-intervals-sync\]/);
+    assert.match(connectedAppsSource, /markIntervalsSyncPending/);
+    assert.match(connectedAppsSource, /pageshow/);
+    assert.match(connectedAppsSource, /event\.persisted/);
+    assert.match(connectedAppsSource, /restoreIntervalsSyncButton/);
     assert.equal(connected.includes(TOKEN_A), false);
 
     const idOnly = await renderConnectedApps({
@@ -801,6 +817,11 @@ describe("Intervals OAuth", () => {
     });
     assert.equal(expired.includes("Intervals access expired"), true);
     assert.equal(expired.includes("Reconnect"), true);
+    assert.equal(expired.includes(INTERVALS_RECONNECT_NOTICE), true);
+    assert.equal(expired.includes('id="intervals-reconnect-help"'), true);
+    const reconnectAt = expired.indexOf('href="/auth/intervals/start"');
+    const noticeAt = expired.indexOf(INTERVALS_RECONNECT_NOTICE);
+    assert.equal(reconnectAt >= 0 && noticeAt > reconnectAt, true);
     assert.equal(expired.includes('href="/auth/intervals/start"'), true);
     assert.equal(expired.includes("Disconnect"), true);
     assert.equal(expired.includes("Not available for your account"), false);
@@ -1325,6 +1346,7 @@ describe("Intervals OAuth", () => {
     });
     assert.equal(expired.includes("Intervals access expired"), true);
     assert.equal(expired.includes("Reconnect"), true);
+    assert.equal(expired.includes(INTERVALS_RECONNECT_NOTICE), false);
     assert.equal(expired.includes(INTERVALS_CONNECT_UNAVAILABLE), true);
     assert.equal(expired.includes("Disconnect"), true);
     assert.equal(expired.includes("Not available for your account"), false);

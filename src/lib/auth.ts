@@ -12,7 +12,6 @@ import {
   withTransaction,
   type UserRecord,
 } from "./db";
-import { signupDuplicateMessage } from "./auth-methods";
 import { loadLocalEnv } from "./load-env";
 import { isSameOrigin } from "./public-origin";
 import { readFormData } from "./safe-form-data";
@@ -62,7 +61,8 @@ type SessionPayload = {
 
 export type AuthFormResult =
   | { ok: true; user: AuthUser }
-  | { ok: false; error: string; email: string };
+  | { ok: false; error: string; email: string; duplicateAccount?: undefined }
+  | { ok: false; email: string; duplicateAccount: true };
 
 export type GoogleOAuthFrom = "login" | "signup";
 
@@ -265,8 +265,8 @@ export async function signupFromForm(
       if (getUserByEmail(email)) {
         return {
           ok: false,
-          error: signupDuplicateMessage(),
           email,
+          duplicateAccount: true,
         };
       }
 

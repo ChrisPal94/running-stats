@@ -34,18 +34,24 @@ export function authOptionsClause(): string {
   return "email and password";
 }
 
+/** One way back in after a duplicate password signup. Password login is always included. */
+export type SignupDuplicateMethod = {
+  label: string;
+  href: string;
+};
+
 /**
- * Duplicate password signup. Does not say whether the address is registered.
- * Names only the sign-in methods that are configured.
+ * Methods the duplicate-signup alert may name. Does not say whether the address
+ * is registered. Only methods that are configured are included.
+ * Password login, then an email link, then Google — that order is the sentence.
  */
-export function signupDuplicateMessage(): string {
-  const magic = isMagicLinkConfigured();
-  const google = isGoogleLoginConfigured();
-  const prefix = "Couldn’t create your account. If you already have one, ";
-  if (magic && google) {
-    return `${prefix}log in, sign in with an email link, or continue with Google.`;
+export function signupDuplicateMethods(from: "login" | "signup" = "signup"): SignupDuplicateMethod[] {
+  const methods: SignupDuplicateMethod[] = [{ label: "log in", href: "/login" }];
+  if (isMagicLinkConfigured()) {
+    methods.push({ label: "sign in with an email link", href: "/login?method=link" });
   }
-  if (google) return `${prefix}log in or continue with Google.`;
-  if (magic) return `${prefix}log in or sign in with an email link.`;
-  return `${prefix}log in.`;
+  if (isGoogleLoginConfigured()) {
+    methods.push({ label: "continue with Google", href: `/auth/google?from=${from}` });
+  }
+  return methods;
 }

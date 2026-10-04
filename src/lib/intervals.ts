@@ -23,7 +23,6 @@ loadLocalEnv();
 export const INTERVALS_ICU_BASE_URL = "https://intervals.icu/api/v1";
 /** Cloudflare 1010 without a stable UA. Must be sent on every Intervals HTTP call. */
 export const INTERVALS_USER_AGENT = "RunningStatsMVP/0.1";
-export const INTERVALS_CONNECT_COPY = "Your API key is encrypted and never shown again.";
 export const INTERVALS_SYNC_ERROR = "Couldn’t sync. Try again.";
 export const INTERVALS_CONNECT_ERROR = "Couldn’t connect. Try again.";
 export const INTERVALS_CONNECT_INPUT = "Enter your Intervals API key and athlete ID.";
@@ -47,6 +46,10 @@ export const INTERVALS_OAUTH_CALENDAR_SCOPE =
 export const INTERVALS_SYNC_NEEDS_CONNECT = "Connect Intervals.icu to import your runs.";
 export const INTERVALS_ROW_ID = "intervals";
 export const INTERVALS_CONNECTED_TOAST = "Intervals connected";
+export const INTERVALS_DISCONNECTED_TOAST = "Intervals disconnected";
+export const INTERVALS_DISCONNECT_CONFIRM =
+  "Disconnect Intervals.icu? Your logged runs stay in Stride Lab. New workouts won’t be added to your Intervals calendar.";
+export const INTERVALS_SYNCED_TOAST = "Intervals synced";
 export const INTERVALS_CONNECT_UNAVAILABLE =
   "Connecting Intervals.icu isn’t available right now. Try again later.";
 /** `aria-describedby` target for the disabled Connect/Reconnect control. */
@@ -63,7 +66,7 @@ export const INTERVALS_NO_SESSION_TOAST = "No planned session that day";
 export const INTERVALS_NO_NEW_RUNS_TOAST = "No new runs to import";
 export const INTERVALS_COOPER_SYNC_TOAST = "Cooper test result synced — plan updated.";
 
-export type IntervalsSyncToast = "no-session" | "no-new-runs" | "cooper" | null;
+export type IntervalsSyncToast = "no-session" | "no-new-runs" | "cooper" | "synced" | null;
 
 const INTERVALS_SYNC_PUBLIC_ERRORS = new Set<string>([
   INTERVALS_SYNC_ERROR,
@@ -104,9 +107,9 @@ export function intervalsConnectUserError(error: string): string {
 
 /**
  * Toast after Sync now when the Which run? picker is not shown.
- * Cooper wins when its result was applied. A successful import stays on the
- * silent success path even if another activity in the batch had no planned
- * session. No-session only when nothing was imported.
+ * Cooper wins when its result was applied. A successful import uses the synced
+ * toast even if another activity in the batch had no planned session.
+ * No-session only when nothing was imported.
  */
 export function intervalsSyncToast(input: {
   imported: number;
@@ -114,7 +117,7 @@ export function intervalsSyncToast(input: {
   cooperResolved?: boolean;
 }): IntervalsSyncToast {
   if (input.cooperResolved) return "cooper";
-  if (input.imported > 0) return null;
+  if (input.imported > 0) return "synced";
   if (input.skippedNoSession > 0) return "no-session";
   return "no-new-runs";
 }
@@ -131,12 +134,28 @@ export function intervalsSyncToastRedirect(toast: IntervalsSyncToast): string {
   if (toast === "no-session") return "/settings?toast=no-session";
   if (toast === "no-new-runs") return "/settings?toast=no-new-runs";
   if (toast === "cooper") return "/settings?toast=cooper";
+  if (toast === "synced") return "/settings?toast=synced";
   return "/settings";
+}
+
+export function intervalsDisconnectedRedirect(): string {
+  return "/settings?toast=intervals-disconnected";
+}
+
+/** Lime toast on Settings. Empty when the query is an error toast or unrelated. */
+export function settingsToastCopy(toast: string | null): string {
+  if (toast === "intervals-connected") return INTERVALS_CONNECTED_TOAST;
+  if (toast === "intervals-disconnected") return INTERVALS_DISCONNECTED_TOAST;
+  if (toast === "no-session" || toast === "no-new-runs" || toast === "cooper" || toast === "synced") {
+    return intervalsSyncToastCopy(toast);
+  }
+  return "";
 }
 
 export function intervalsSyncToastCopy(toast: Exclude<IntervalsSyncToast, null>): string {
   if (toast === "no-session") return INTERVALS_NO_SESSION_TOAST;
   if (toast === "no-new-runs") return INTERVALS_NO_NEW_RUNS_TOAST;
+  if (toast === "synced") return INTERVALS_SYNCED_TOAST;
   return INTERVALS_COOPER_SYNC_TOAST;
 }
 

@@ -14,6 +14,7 @@ import {
   INTERVALS_CONNECT_REJECTED,
   INTERVALS_CONNECT_UNAVAILABLE,
   INTERVALS_RECONNECT_ERROR,
+  intervalsDisconnectedRedirect,
   INTERVALS_USER_AGENT,
   connectIntervals,
   disconnectIntervals,
@@ -582,7 +583,9 @@ describe("per-user Intervals key", () => {
     form.set("intent", "intervals-disconnect");
     const missingSecret = await handleSettingsPost(userId, form);
     assert.equal(missingSecret.ok, true);
-    if (missingSecret.ok && "redirect" in missingSecret) assert.equal(missingSecret.redirect, "/settings");
+    if (missingSecret.ok && "redirect" in missingSecret) {
+      assert.equal(missingSecret.redirect, intervalsDisconnectedRedirect());
+    }
     assert.equal(getStoredConnection(userId), null);
     assert.equal(dbContains(KEY_A), false);
 
@@ -600,6 +603,7 @@ describe("per-user Intervals key", () => {
     assert.equal(getStoredConnection(userId)?.needsReconnect, true);
     const corrupt = await handleSettingsPost(userId, form);
     assert.equal(corrupt.ok, true);
+    if (corrupt.ok && "redirect" in corrupt) assert.equal(corrupt.redirect, "/settings?toast=intervals-disconnected");
     assert.equal(getStoredConnection(userId), null);
   });
 

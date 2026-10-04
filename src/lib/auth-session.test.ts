@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { APIContext, AstroCookies } from "astro";
-import { signupDuplicateMessage } from "./auth-methods.ts";
 import { postAuthPath, requireAppSession } from "./app-session.ts";
 import {
   getAuthPageUser,
@@ -222,9 +221,9 @@ describe("signup duplicate email", () => {
       passwordForm(`  ${email.toUpperCase()}  `, "different-password"),
     );
     assert.equal(again.ok, false);
-    if (again.ok) return;
-    assert.equal(again.error, signupDuplicateMessage());
-    assert.equal(/already exists/i.test(again.error), false);
+    if (again.ok || !again.duplicateAccount) return;
+    assert.equal("error" in again, false);
+    assert.equal(/already exists/i.test(JSON.stringify(again)), false);
     assert.equal(jar.get("rs_session"), undefined);
     assert.equal(jar.deletes.length, 0);
     assert.equal(getUserById(created.user.id)?.sessionEpoch, epoch);
@@ -236,7 +235,9 @@ describe("signup duplicate email", () => {
       passwordForm("not-an-email"),
     );
     assert.equal(invalidEmail.ok, false);
-    if (!invalidEmail.ok) assert.equal(invalidEmail.error, "Enter a valid email.");
+    if (!invalidEmail.ok && !invalidEmail.duplicateAccount) {
+      assert.equal(invalidEmail.error, "Enter a valid email.");
+    }
 
     const shortPassword = await signupFromForm(
       post("http://localhost/signup"),
@@ -244,7 +245,7 @@ describe("signup duplicate email", () => {
       passwordForm("short-pass@example.com", "short"),
     );
     assert.equal(shortPassword.ok, false);
-    if (!shortPassword.ok) {
+    if (!shortPassword.ok && !shortPassword.duplicateAccount) {
       assert.equal(shortPassword.error, "Password must be at least 8 characters.");
     }
 
@@ -254,7 +255,7 @@ describe("signup duplicate email", () => {
       passwordForm("cross-site@example.com"),
     );
     assert.equal(crossSite.ok, false);
-    if (!crossSite.ok) {
+    if (!crossSite.ok && !crossSite.duplicateAccount) {
       assert.equal(crossSite.error, "This request could not be verified. Try again.");
     }
   });

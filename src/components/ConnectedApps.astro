@@ -3,13 +3,14 @@ import {
   INTERVALS_ACCESS_EXPIRED,
   INTERVALS_ATHLETE_ID_INVALID,
   INTERVALS_ATHLETE_ID_PLACEHOLDER,
-  INTERVALS_CONNECT_COPY,
   INTERVALS_CONNECT_UNAVAILABLE,
+  INTERVALS_DISCONNECT_CONFIRM,
   INTERVALS_UNAVAILABLE_HELPER_ID,
   INTERVALS_KEY_HELP,
   INTERVALS_KEY_HELP_URL,
   INTERVALS_OAUTH_CONNECT_BUTTON,
   INTERVALS_OAUTH_CONNECT_LINE,
+  INTERVALS_RECONNECT_NOTICE,
   INTERVALS_ROW_ID,
   INTERVALS_SYNC_NEEDS_CONNECT,
   intervalsSettingsControls,
@@ -43,6 +44,7 @@ const showKeyForm =
   (!connection.connected || reconnecting) && !oauthConfigured && !envFallbackConnect && encryptionReady;
 const connectDisabled = (!connection.connected || reconnecting) && !envFallbackConnect && !encryptionReady;
 const showSync = connection.connected && !reconnecting;
+const oauthReconnectHelp = reconnecting && oauthConfigured && !connectDisabled;
 const connectLabel = reconnecting
   ? "Reconnect"
   : oauthConfigured || connectDisabled
@@ -55,7 +57,6 @@ let helper = "";
 let helperIsError = false;
 if (!connection.connected || reconnecting) {
   if (connectDisabled) helper = INTERVALS_CONNECT_UNAVAILABLE;
-  else if (showKeyForm) helper = INTERVALS_CONNECT_COPY;
   else if (oauthConfigured && !reconnecting) helper = INTERVALS_OAUTH_CONNECT_LINE;
 } else if (connection.lastSyncLabel) {
   helper = connection.lastSyncLabel;
@@ -65,6 +66,7 @@ const secondaryClass =
   "inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-xs font-bold text-cloud uppercase transition-colors hover:border-lime/50 hover:bg-white/[0.04]";
 const primaryClass =
   "inline-flex w-full items-center justify-center rounded-full bg-lime px-5 py-3 text-xs font-bold text-ink uppercase shadow-[0_8px_28px_rgba(184,245,44,0.2)] transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[#cbff50] hover:shadow-[0_12px_34px_rgba(184,245,44,0.28)]";
+const syncClass = `${primaryClass} disabled:cursor-wait disabled:opacity-70`;
 const disabledClass =
   "inline-flex w-full cursor-not-allowed items-center justify-center rounded-full bg-lime/40 px-5 py-3 text-xs font-bold text-ink/70 uppercase";
 ---
@@ -132,7 +134,7 @@ const disabledClass =
               maxlength="16"
               aria-invalid={athleteFieldError ? "true" : undefined}
               aria-describedby={athleteFieldError ? "intervals-athlete-error" : undefined}
-              class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist/50 focus:border-lime"
+              class="w-full rounded-xl border border-white/12 bg-panel px-4 py-3 text-sm text-cloud outline-none transition-colors placeholder:text-mist focus:border-lime"
             />
             {
               athleteFieldError ? (
@@ -148,9 +150,9 @@ const disabledClass =
     <div class="flex flex-col gap-2 sm:flex-row">
       {
         showSync ? (
-          <form method="post" class="sm:flex-1">
+          <form method="post" class="sm:flex-1" data-intervals-sync>
             <input type="hidden" name="intent" value="intervals-sync" />
-            <button type="submit" class={primaryClass}>
+            <button type="submit" class={syncClass}>
               Sync now
             </button>
           </form>
@@ -174,6 +176,19 @@ const disabledClass =
               {connectLabel}
             </button>
           </form>
+        ) : oauthReconnectHelp ? (
+          <div class="flex flex-col gap-2 sm:flex-1">
+            <a
+              href="/auth/intervals/start"
+              class={primaryClass}
+              aria-describedby="intervals-reconnect-help"
+            >
+              {connectLabel}
+            </a>
+            <p id="intervals-reconnect-help" class="text-xs leading-5 text-mist">
+              {INTERVALS_RECONNECT_NOTICE}
+            </p>
+          </div>
         ) : (
           <a href="/auth/intervals/start" class:list={[primaryClass, "sm:flex-1"]}>
             {connectLabel}
@@ -182,7 +197,7 @@ const disabledClass =
       }
       {
         connection.connected ? (
-          <form method="post" class="sm:flex-1" data-confirm="Disconnect Intervals.icu?">
+          <form method="post" class="sm:flex-1" data-confirm={INTERVALS_DISCONNECT_CONFIRM}>
             <input type="hidden" name="intent" value="intervals-disconnect" />
             <button type="submit" class={secondaryClass}>
               Disconnect
@@ -221,10 +236,29 @@ const disabledClass =
   </div>
 </article>
 <script>
+  import { markIntervalsSyncPending, restoreIntervalsSyncButton } from "../lib/intervals-sync-button";
+
+  function syncSubmitButton(form: Element): HTMLButtonElement | null {
+    const button = form.querySelector("button[type='submit']");
+    return button instanceof HTMLButtonElement ? button : null;
+  }
+
   for (const form of document.querySelectorAll("form[data-confirm]")) {
     form.addEventListener("submit", (event) => {
       const message = form.getAttribute("data-confirm");
       if (message && !window.confirm(message)) event.preventDefault();
     });
   }
+  for (const form of document.querySelectorAll("form[data-intervals-sync]")) {
+    form.addEventListener("submit", () => {
+      const button = syncSubmitButton(form);
+      if (button) markIntervalsSyncPending(button);
+    });
+  }
+  window.addEventListener("pageshow", (event) => {
+    for (const form of document.querySelectorAll("form[data-intervals-sync]")) {
+      const button = syncSubmitButton(form);
+      if (button) restoreIntervalsSyncButton(button, event.persisted);
+    }
+  });
 </script>

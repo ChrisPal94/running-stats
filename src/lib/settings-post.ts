@@ -71,15 +71,8 @@ export async function applySettingsPost(
     }
     return { kind: "redirect", location: result.redirect };
   }
-  if (result.status === 403) {
-    return {
-      kind: "response",
-      response: new Response(result.error, {
-        status: 403,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      }),
-    };
-  }
+  // Account-gate and other Intervals failures stay in the Settings row.
+  // A cross-site Intervals POST already returned text/plain above.
   if (result.section === "intervals") {
     return {
       kind: "render",
@@ -88,6 +81,15 @@ export async function applySettingsPost(
       athleteIdDraft,
       runPicker: null,
       selectedCadence,
+    };
+  }
+  if (result.status === 403) {
+    return {
+      kind: "response",
+      response: new Response(result.error, {
+        status: 403,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      }),
     };
   }
   return {

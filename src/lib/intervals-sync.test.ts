@@ -11,14 +11,19 @@ import {
   INTERVALS_CONNECT_ERROR,
   INTERVALS_RECONNECT_ERROR,
   INTERVALS_COOPER_SYNC_TOAST,
+  INTERVALS_DISCONNECTED_TOAST,
+  INTERVALS_DISCONNECT_CONFIRM,
   INTERVALS_NO_NEW_RUNS_TOAST,
   INTERVALS_NO_SESSION_TOAST,
+  INTERVALS_SYNCED_TOAST,
   intervalsActivityDay,
   effortForDistance,
   intervalsActivityStats,
+  intervalsDisconnectedRedirect,
   intervalsSyncToast,
   intervalsSyncToastCopy,
   intervalsSyncToastRedirect,
+  settingsToastCopy,
   loadIntervalsRunsForSync,
   parseIntervalsActivity,
   type IntervalsRunStats,
@@ -350,14 +355,29 @@ describe("Intervals Sync toasts", () => {
     assert.equal(intervalsSyncToastRedirect("no-session"), "/settings?toast=no-session");
   });
 
-  it("stays silent when a batch imports a Run and also skips a day with no Session", () => {
-    assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 1 }), null);
-    assert.equal(intervalsSyncToastRedirect(null), "/settings");
+  it("toasts Intervals synced when a batch imports a Run and also skips a day with no Session", () => {
+    assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 1 }), "synced");
+    assert.equal(intervalsSyncToastCopy("synced"), INTERVALS_SYNCED_TOAST);
+    assert.equal(intervalsSyncToastRedirect("synced"), "/settings?toast=synced");
+    assert.equal(intervalsSyncToastRedirect("synced").includes("no-session"), false);
   });
 
-  it("does not toast after a successful import", () => {
-    assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 0 }), null);
-    assert.equal(intervalsSyncToastRedirect(null), "/settings");
+  it("toasts Intervals synced after a successful import", () => {
+    assert.equal(INTERVALS_SYNCED_TOAST, "Intervals synced");
+    assert.equal(intervalsSyncToast({ imported: 1, skippedNoSession: 0 }), "synced");
+    assert.equal(intervalsSyncToastCopy("synced"), INTERVALS_SYNCED_TOAST);
+    assert.equal(intervalsSyncToastRedirect("synced"), "/settings?toast=synced");
+    assert.equal(settingsToastCopy("synced"), INTERVALS_SYNCED_TOAST);
+    assert.equal(INTERVALS_DISCONNECTED_TOAST, "Intervals disconnected");
+    assert.equal(
+      INTERVALS_DISCONNECT_CONFIRM,
+      "Disconnect Intervals.icu? Your logged runs stay in Stride Lab. New workouts won’t be added to your Intervals calendar.",
+    );
+    assert.equal(intervalsDisconnectedRedirect(), "/settings?toast=intervals-disconnected");
+    assert.equal(settingsToastCopy("intervals-disconnected"), INTERVALS_DISCONNECTED_TOAST);
+    assert.equal(settingsToastCopy("intervals-connected"), "Intervals connected");
+    assert.equal(settingsToastCopy("no-new-runs"), INTERVALS_NO_NEW_RUNS_TOAST);
+    assert.equal(settingsToastCopy("intervals-error"), "");
   });
 
   it("toasts the Cooper result ahead of the no-session / no-new-runs signals", () => {
@@ -491,7 +511,7 @@ describe("Settings Sync path", () => {
     assert.equal(stored[0]?.distanceKm, 7.2);
   });
 
-  it("imports a matching Run without a toast", async () => {
+  it("imports a matching Run and toasts Intervals synced", async () => {
     const userId = "settings-import";
     const { session } = seed(userId);
     connectUser(userId);
@@ -499,14 +519,14 @@ describe("Settings Sync path", () => {
     mockActivities([activityPayload(SESSION_DAY, "act-match")]);
 
     const result = await postSync(userId);
-    assert.deepEqual(result, { ok: true, redirect: "/settings" });
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=synced" });
     const stored = logsFor(userId);
     assert.equal(stored.length, 1);
     assert.equal(stored[0]?.sessionId, session.id);
     assert.equal(stored[0]?.source, "intervals");
   });
 
-  it("does not toast no-session when the batch imports a Run and skips another day", async () => {
+  it("toasts synced, not no-session, when the batch imports a Run and skips another day", async () => {
     const userId = "settings-import-and-skip";
     const { session } = seed(userId);
     connectUser(userId);
@@ -517,14 +537,14 @@ describe("Settings Sync path", () => {
     ]);
 
     const result = await postSync(userId);
-    assert.deepEqual(result, { ok: true, redirect: "/settings" });
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=synced" });
     const stored = logsFor(userId);
     assert.equal(stored.length, 1);
     assert.equal(stored[0]?.sessionId, session.id);
     assert.equal(stored[0]?.source, "intervals");
   });
 
-  it("does not toast no-session after a Which run? pick when another activity had no Session", async () => {
+  it("toasts synced, not no-session, after a Which run? pick when another activity had no Session", async () => {
     const userId = "settings-pick-and-skip";
     const { session } = seed(userId);
     connectUser(userId);
@@ -544,7 +564,7 @@ describe("Settings Sync path", () => {
     assert.equal(logsFor(userId).length, 0);
 
     const result = await handleSettingsPost(userId, pickerForm(opened.picker, "intervals-pick-run", "act-a"));
-    assert.deepEqual(result, { ok: true, redirect: "/settings" });
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=synced" });
     const stored = logsFor(userId);
     assert.equal(stored.length, 1);
     assert.equal(stored[0]?.sessionId, session.id);
@@ -584,7 +604,7 @@ describe("Settings Sync path", () => {
     formData.set("imported", "1");
 
     const result = await handleSettingsPost(userId, formData);
-    assert.deepEqual(result, { ok: true, redirect: "/settings" });
+    assert.deepEqual(result, { ok: true, redirect: "/settings?toast=synced" });
     assert.equal(logsFor(userId).length, 0);
   });
 });
