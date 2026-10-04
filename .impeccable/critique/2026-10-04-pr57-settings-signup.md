@@ -8,9 +8,10 @@ p1_count: 0
 p2_count: 2
 p3_count: 5
 target_path: src/components/ConnectedApps.astro
-timestamp: 2026-10-04T14:40:00Z
+timestamp: 2026-10-04T16:00:00Z
 slug: src-components-connectedapps-astro
-reviewed_head: cf1e311
+reviewed_head: d6fc829
+prior_head: cf1e311
 reviewed_base: ccf117d
 pr: 57
 closes: 44
@@ -24,6 +25,55 @@ Method: dual-agent (A: bc-ad4e07fa-0448-5762-a215-54dcdfb6f11d · B: bc-c0128849
 Browser: headless Chrome at 390×844 against a worktree of `cf1e311`. Outbound hosts other than loopback were aborted. CLI `impeccable detect --json` on `ConnectedApps.astro`, `AuthForm.astro`, `settings.astro`, `signup.astro`, and `login.astro` returned `[]` (exit 0). `detect.js` was not injected. No user-visible overlay.
 
 Mode: Operate. Baseline scores supplied for the trend: PR #35 Settings **29/40**, PR #47 auth follow-ups **28/40**. No `ignore.md`. No `DESIGN.md`.
+
+## Current head `d6fc829`
+
+Method: dual-agent (A: bc-d5430307-1b85-54b1-a78b-b3ab0b5de111 · B: bc-d665045b-35a3-5cc4-91b0-fb8939b7d927)
+
+**Verdict: PASS.** No blockers. Design health **28/40**. Trend: **29/40** (#35) → **28/40** (#47) → **28/40** (`cf1e311`) → **28/40** (`d6fc829`). No heuristic moved. The bfcache half of the Sync pending issue is closed. The visible label is still “Sync now”. Disconnect still confirms only when JavaScript runs.
+
+`impeccable detect --json` on `ConnectedApps.astro`, `settings.astro`, `signup.astro`, `login.astro`, and `AuthForm.astro` at this head returned `[]` (exit 0).
+
+### Sync now
+
+`markIntervalsSyncPending` sets `disabled` and `aria-busy="true"` and does not change the label (`src/lib/intervals-sync-button.ts:8-11`). `restoreIntervalsSyncButton` returns immediately when `persisted` is false, and when `persisted` is true it sets `disabled` to false and removes `aria-busy` (`src/lib/intervals-sync-button.ts:17-21`). The page wires submit to the first and `pageshow` to the second (`src/components/ConnectedApps.astro:251-262`).
+
+On the live Settings page, the submit listener produced: text **Sync now**, `disabled` true, `aria-busy="true"`, opacity **0.7**, not `:focus-visible` (disabling the control drops focus).
+
+A `pageshow` with `persisted: false` left that pending state alone.
+
+A `pageshow` with `persisted: true` recovered it: `disabled` false, `aria-busy` attribute absent (not `"false"`), opacity **1**, text still **Sync now**. `focus()` then matched `:focus-visible` with outline **2px solid `rgb(184, 245, 44)`**, offset **4px**. The restored control looks like the idle Sync now button.
+
+A real back navigation in this headless Chrome did not use the back-forward cache. `pageshow.persisted` was **false**. `/settings` had no `Cache-Control: no-store`. The document came from the HTTP cache and was a new page, so Sync now was the fresh enabled button, not a frozen disabled one. The stuck-disabled case only happens when the browser restores the frozen document. That path is what `persisted: true` covers, and that path re-enables the button.
+
+### Duplicate signup
+
+The failure object is `{ ok: false, email, duplicateAccount: true }` with no `error` field (`src/lib/auth.ts:64-65`, `src/lib/auth.ts:266-270`). Signup writes `email` first, then sets `duplicateAccount` without reading `.error` (`src/pages/signup.astro:43-46`). Login reads `.error` only when `!result.ok && !result.duplicateAccount` (`src/pages/login.astro:47-49`). `loginFromForm` does not return `duplicateAccount`.
+
+Rendered again at 390px. Apostrophe is U+2019. `role="alert"`. Email stayed in the field. No link for a method that was off.
+
+| Config | Exact string | Links |
+|---|---|---|
+| Neither | Couldn’t create your account. If you already have one, log in. | `log in` → `/login` |
+| Google only | Couldn’t create your account. If you already have one, log in or continue with Google. | `/login`, `/auth/google?from=signup` |
+| Email link only | Couldn’t create your account. If you already have one, log in or sign in with an email link. | `/login`, `/login?method=link` |
+| Both | Couldn’t create your account. If you already have one, log in, sign in with an email link, or continue with Google. | `/login`, `/login?method=link`, `/auth/google?from=signup` |
+
+Wrong-password login, with methods off and with both on, showed **Email or password is incorrect.** The duplicate sentence was absent. The typed email stayed in the field.
+
+### Still open
+
+**P2.** Disconnect still confirms only through `window.confirm` (`src/components/ConnectedApps.astro:246-250`). Escape cancels when JavaScript runs. Without JavaScript the form posts immediately.
+
+**P2, narrowed.** While the request is in flight the label stays **Sync now**. The bfcache restore no longer leaves it disabled.
+
+### Low nits
+
+Unchanged from `cf1e311`: reconnect helper under the lime link, toasts hide after 1.8s, encryption sentence removed, account-gate copy says “try again later”, in-row “Connect Intervals.icu” links to the same card, Sync / Reconnect / Continue are 40px, tabs are 32px.
+
+## Prior head `cf1e311`
+
+This section is the earlier review. The current head is `d6fc829`, above.
 
 ## Verdict
 
