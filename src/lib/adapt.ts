@@ -680,10 +680,12 @@ export async function runNocturnalAdaptation(
   deps: {
     loadRunEffort?: typeof loadRunEffort;
     upsertPlannedRuns?: typeof upsertPlannedRuns;
+    plannedUploads?: typeof plannedUploads;
   } = {},
 ): Promise<AdaptRunCounts> {
   const readEffort = deps.loadRunEffort ?? loadRunEffort;
   const uploadRuns = deps.upsertPlannedRuns ?? upsertPlannedRuns;
+  const planUploads = deps.plannedUploads ?? plannedUploads;
   const snapshot = await getAdaptationJobSnapshot();
   let plannedCount = 0;
   let llmFailed = 0;
@@ -786,9 +788,10 @@ export async function runNocturnalAdaptation(
       for (const event of written) snapshot.adaptationEvents.push(event);
 
       if (written.length > 0) {
-        const uploads = plannedUploads(accountSnapshot, decisions);
-        if (uploads.length > 0) {
-          try {
+        let uploads: PlannedRunUpload[] = [];
+        try {
+          uploads = planUploads(accountSnapshot, decisions);
+          if (uploads.length > 0) {
             const creds = await openIntervalsCredentials(plan.userId);
             if (!creds.ok) {
               noteCredentialGap(plan.userId, creds.error);
@@ -809,10 +812,10 @@ export async function runNocturnalAdaptation(
                 }
               }
             }
-          } catch {
-            console.error("[intervals] adapt upload failed");
-            uploadFailed += uploads.length;
           }
+        } catch {
+          console.error("[intervals] adapt upload failed");
+          uploadFailed += uploads.length > 0 ? uploads.length : 1;
         }
       }
     } catch (error) {

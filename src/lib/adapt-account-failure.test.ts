@@ -631,4 +631,48 @@ describe("adapt account failure", { concurrency: false }, () => {
     assert.equal(JSON.stringify(body).includes(CRON_SECRET), false);
     assertNoUserData(lines.join("\n"), [CRON_SECRET]);
   });
+
+  it("counts a plannedUploads throw after commit as written, not skipped", async () => {
+    llmOff();
+    const userId = "adapt-upload-plan";
+    const email = "leak-upload-plan@example.com";
+    saveAthletes([athlete(userId, { email })]);
+    const lines = captureConsole();
+    installFetch();
+    const upsertPlannedRuns = mock.fn(async () => ({ uploaded: 1, failed: 0 }));
+    const plannedUploads = () => {
+      const error = new Error(`planned uploads ${email} secret-message`);
+      error.name = "PlannedUploadError";
+      throw error;
+    };
+
+    const result = await runNocturnalAdaptation(NOW, {
+      loadRunEffort: async () => null,
+      upsertPlannedRuns,
+      plannedUploads,
+    });
+    const response = new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as Record<string, number>;
+    assert.deepEqual(Object.keys(body).sort(), [...COUNT_KEYS].sort());
+    assert.equal(body.processed, 1);
+    assert.equal(body.written, 1);
+    assert.equal(body.skipped, 0);
+    assert.equal(body.patched, 1);
+    assert.equal(body.uploaded, 0);
+    assert.equal(body.uploadFailed, 1);
+    assert.equal(hasEvent(userId), true);
+    assert.equal(distanceOf(`${userId}-tomorrow`), 8);
+    assert.equal(upsertPlannedRuns.mock.calls.length, 0);
+
+    const seeds = [userId, email, "secret-message", "PlannedUploadError", "key-adapt-upload-plan"];
+    assertNoUserData(JSON.stringify(body), seeds);
+    const logged = lines.join("\n");
+    assert.match(logged, /\[intervals\] adapt upload failed/);
+    assert.equal(logged.includes("adapt account failed"), false);
+    assertNoUserData(logged, seeds);
+  });
 });
