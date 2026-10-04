@@ -1060,6 +1060,22 @@ export function getIntervalsConnection(userId: string): IntervalsConnection | nu
 }
 
 /**
+ * Webhook lookup. Stored athlete ids already use the OAuth `i\d+` form, so pass
+ * a normalized (`i\d+`) id. Several users can share an athlete id (no unique
+ * index); the first row wins.
+ */
+export function getIntervalsConnectionByAthleteId(athleteId: string): IntervalsConnection | null {
+  const row = getDb()
+    .prepare(
+      `SELECT userId, athleteId, connectedAt, lastSyncAt, lastSyncError, apiKeyEnc, needsReconnect,
+              authType, scope, athleteName
+       FROM intervals_connections WHERE athleteId = ? LIMIT 1`,
+    )
+    .get(athleteId) as IntervalsConnectionRow | undefined;
+  return row ? intervalsConnectionFromRow(row) : null;
+}
+
+/**
  * `undefined` when this database has no `emailVerifiedAt` column (check does not exist).
  * `null` when the column exists and this user is not verified.
  */
