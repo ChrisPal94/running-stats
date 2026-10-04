@@ -42,6 +42,7 @@ Never set `NODE_ENV=development` on Railway. With `PUBLIC_ORIGIN` unset, that ma
 | `ADAPT_LLM_BASE_URL` | No | Applies only when `ADAPT_LLM_API_KEY` is set. Default `https://api.openai.com/v1`. |
 | `ADAPT_LLM_MODEL` | No | Applies only when `ADAPT_LLM_API_KEY` is set. Default `gpt-4o-mini`. |
 | `INTERVALS_KEY_ENC_SECRET` | For Connect | 32-byte key that encrypts each user’s Intervals access token or API key at rest (AES-256-GCM). Standard base64 only, from `openssl rand -base64 32` (44 characters, decodes to exactly 32 bytes). Hex and other formats are treated as missing (logged once, no crash). Missing or invalid: the Connect button stays visible but disabled with **Connecting Intervals.icu isn’t available right now. Try again later.** Nothing is stored in plaintext. Existing rows are left in place. The secret is never stored or logged. Set it on the **web** service (the process that writes `app.db` and runs `/api/adapt`). |
+| `INTERVALS_WEBHOOK_SECRET` | For the activity webhook | Secret Intervals.icu sends in the JSON body `secret` field of `POST /api/intervals-webhook` activity webhooks. Compared timing-safely; never logged. Missing or blank: the webhook answers `503` and Intervals retries. Wrong or missing body secret: `401`. Set the Intervals app webhook secret on the **web** service. |
 | `PUBLIC_ORIGIN` | For Intervals OAuth and magic links | Public site origin with no path, for example `https://running-stats-production.up.railway.app`. The OAuth `redirect_uri` is this origin plus `/auth/intervals/callback`. Magic-link emails use this origin plus `/auth/magic`. Neither uses `Host` or `X-Forwarded-Host`. In production, if this is unset, Intervals OAuth is treated as not configured, and magic link send fails with **Couldn’t send the link. Try again.** (a config error name is logged; the link is not sent). Local dev without it falls back to the request origin (localhost). |
 | `INTERVALS_CLIENT_ID` | For OAuth | Intervals.icu OAuth client id from [the app form](https://intervals.icu/oauth/apply). When this and `INTERVALS_CLIENT_SECRET` are both set, and `PUBLIC_ORIGIN` is set in production, Settings uses **Connect Intervals.icu**. Otherwise it shows the API key and athlete ID form. |
 | `INTERVALS_CLIENT_SECRET` | For OAuth | OAuth client secret. Used only on the server when exchanging the code at `https://intervals.icu/api/oauth/token`. Never sent to the browser. |
@@ -69,6 +70,15 @@ https://running-stats-production.up.railway.app/auth/intervals/callback
 ```
 
 Local: `http://localhost:4321/auth/intervals/callback`. Production builds it from `PUBLIC_ORIGIN` (`https://running-stats-production.up.railway.app/auth/intervals/callback`), not from `Host` or `X-Forwarded-Host`. If `PUBLIC_ORIGIN` is unset in production, OAuth is not configured.
+
+#### Webhooks
+
+Intervals.icu can push activity events, so a finished Import brings the run in without tapping **Sync now**.
+
+- URL: `https://running-stats-production.up.railway.app/api/intervals-webhook`
+- Configure on Intervals Settings → the app → **Manage App** (activity events).
+- Paste the app webhook secret into the Railway `INTERVALS_WEBHOOK_SECRET` variable on the web service.
+- Strava-sourced activities will not fire activity webhooks (an Intervals limit — those runs still arrive via the manual sync or the evening poll).
 
 Google Cloud Console: add the production authorized redirect URI before testing Continue with Google.
 
@@ -206,6 +216,17 @@ Missing secret on the web service → `503`. Wrong secret → `401`.
 If there is **no Feedback that Guayaquil day**, the job returns 200 and does not write an AdaptationEvent or change tomorrow’s sessions.
 
 Local equivalent (not used on Railway): `npm run adapt` once, or `npm run adapt:cron`.
+
+### Evening Intervals sync (GitHub Action)
+
+20:30 `America/Guayaquil` is `01:30` UTC (`30 1 * * *`), 30 minutes before the 21:00 adapt.
+
+A GitHub Action (`.github/workflows/evening-intervals-sync.yml`) POSTs `/api/intervals-sync`
+with the **same** `ADAPT_CRON_SECRET` as the nightly-adapt job. It exists so the 21:00 adapt
+already has tonight's Intervals run logs even if the activity webhook missed them. Every
+connected Intervals account is synced with per-account failures isolated: some accounts
+failing (and `failed > 0`) still returns 200 and does not fail the job, and `processed: 0`
+(no connected users) is valid too. `workflow_dispatch` is enabled for manual runs.
 
 ## Smoke tests (Bowser)
 

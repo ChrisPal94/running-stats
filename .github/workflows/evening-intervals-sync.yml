@@ -1,0 +1,66 @@
+name: Evening Intervals sync
+
+# Polls every connected Intervals account at 20:30 America/Guayaquil so the
+# 21:00 adapt already has tonight's run logs even if the activity webhook
+# missed them. Same secret and shape as `nightly-adapt.yml`.
+#
+# Schedule is UTC: 01:30 UTC is 20:30 America/Guayaquil (UTC-5, no DST),
+# 30 minutes before the nightly adapt.
+on:
+  schedule:
+    - cron: "30 1 * * *"
+  # Manual trigger, so the job can be proven without waiting for 01:30.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evening-intervals-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: POST /api/intervals-sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger the evening Intervals sync
+        id: sync
+        env:
+          INTERVALS_SYNC_HOST: https://running-stats-production.up.railway.app
+          ADAPT_CRON_SECRET: ${{ secrets.ADAPT_CRON_SECRET }}
+        run: |
+          set -o pipefail
+          response=$(curl --silent --show-error --fail-with-body \
+            --max-time 240 \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "Authorization: Bearer ${ADAPT_CRON_SECRET}" \
+            "${INTERVALS_SYNC_HOST}/api/intervals-sync")
+
+          echo "Response from the intervals-sync endpoint:"
+          echo "${response}"
+
+          # `failed` counts accounts whose sync failed; those are still isolated
+          # per user and the endpoint returns 200, so log them without failing.
+          failed=$(echo "${response}" | jq -r '.failed // "unparsed"')
+          echo "failed=${failed}"
+
+          if [ "${failed}" != "0" ] && [ "${failed}" != "unparsed" ]; then
+            echo "::warning::Some Intervals accounts failed to sync" \
+                 "(failed=${failed}). They stay isolated; check the web logs."
+          fi
+
+      - name: Show the result
+        if: always()
+        env:
+          STATUS: ${{ steps.sync.outcome }}
+        run: |
+          if [ "${STATUS}" = "success" ]; then
+            echo "The intervals-sync endpoint responded successfully."
+          else
+            echo "::error::The intervals-sync request failed (outcome: " \
+                 "${STATUS}). The scheduled Intervals poll did not complete."
+          fi
