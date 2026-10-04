@@ -15,7 +15,7 @@ export const COACH_FEEDBACK_USER_COPY = [
 ] as const;
 
 const LLM_UNCONFIGURED_LOG =
-  "[feedback] LLM is not configured; ADAPT_LLM_API_KEY is unset and the OLLAMA_API_KEY fallback is unset";
+  "[feedback] LLM is not configured; OLLAMA_API_KEY and ADAPT_LLM_API_KEY are unset";
 
 const TIMEOUT_MS = 25_000;
 const JARGON = /\b(CTL|ATL|TSB)\b/i;
