@@ -2313,8 +2313,8 @@ async function postIntervalsSettings(
   }
 
   if (intent === "intervals-disconnect") {
-    await disconnectIntervals(userId);
-    return { ok: true, redirect: intervalsDisconnectedRedirect() };
+    const removed = await disconnectIntervals(userId);
+    return { ok: true, redirect: removed ? intervalsDisconnectedRedirect() : "/settings" };
   }
 
   return { ok: false, error: INTERVALS_CONNECT_UNAVAILABLE, section: "intervals", status: 403 };

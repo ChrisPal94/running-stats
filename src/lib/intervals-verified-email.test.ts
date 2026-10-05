@@ -698,6 +698,16 @@ describe("unverified password account then Google login", () => {
     );
     assert.equal(retry.ok, false);
     assert.equal(unknown.ok, false);
+    if (!retry.ok && retry.duplicateAccount) {
+      assert.equal(retry.duplicateAccount, true);
+      assert.equal("error" in retry, false);
+      assert.equal(/already exists/i.test(JSON.stringify(retry)), false);
+    }
+    if (!unknown.ok && unknown.duplicateAccount) {
+      assert.equal(unknown.duplicateAccount, true);
+      assert.equal("error" in unknown, false);
+      assert.equal(/already exists/i.test(JSON.stringify(unknown)), false);
+    }
     if (!retry.ok && !retry.duplicateAccount && !unknown.ok && !unknown.duplicateAccount) {
       assert.equal(retry.error, "Email or password is incorrect.");
       assert.equal(unknown.error, retry.error);

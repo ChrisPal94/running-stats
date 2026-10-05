@@ -607,6 +607,36 @@ describe("per-user Intervals key", () => {
     assert.equal(getStoredConnection(userId), null);
   });
 
+  it("omits the disconnect toast when nothing was connected and keeps it for a real disconnect", async () => {
+    const noneId = "disconnect-none";
+    insertUser({ id: noneId, email: "disconnect-none@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    const form = new FormData();
+    form.set("intent", "intervals-disconnect");
+    const missing = await handleSettingsPost(noneId, form);
+    assert.equal(missing.ok, true);
+    if (!missing.ok || !("redirect" in missing)) assert.fail("expected a settings redirect");
+    assert.equal(missing.redirect, "/settings");
+    assert.equal(missing.redirect.includes("?toast="), false);
+
+    const userId = "disconnect-toast";
+    insertUser({ id: userId, email: "disconnect-toast@example.com", createdAt: "2026-09-01T00:00:00.000Z" });
+    mock.method(globalThis, "fetch", async () => athleteResponse(ATHLETE_A));
+    const connected = await connectIntervals(userId, { apiKey: KEY_A, athleteId: ATHLETE_A });
+    assert.equal(connected.ok, true);
+    const removed = await handleSettingsPost(userId, form);
+    assert.equal(removed.ok, true);
+    if (!removed.ok || !("redirect" in removed)) assert.fail("expected a settings redirect");
+    assert.equal(removed.redirect, intervalsDisconnectedRedirect());
+    assert.equal(removed.redirect.includes("?toast=intervals-disconnected"), true);
+    assert.equal(getStoredConnection(userId), null);
+
+    const again = await handleSettingsPost(userId, form);
+    assert.equal(again.ok, true);
+    if (!again.ok || !("redirect" in again)) assert.fail("expected a settings redirect");
+    assert.equal(again.redirect, "/settings");
+    assert.equal(again.redirect.includes("?toast="), false);
+  });
+
   it("upserts planned runs with the caller-supplied athlete, not the env key", async () => {
     process.env.INTERVALS_ICU_API_KEY = ENV_KEY;
     const calls: Array<{ url: string; authorization: string }> = [];
