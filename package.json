@@ -16,6 +16,7 @@
     "adapt": "tsx src/jobs/adapt.ts",
     "adapt:cron": "tsx src/jobs/adapt.ts --cron",
     "cleanup:intervals-nonowners": "tsx src/jobs/cleanup-intervals-nonowners.ts",
+    "cleanup:owner-calendar": "tsx src/jobs/cleanup-owner-calendar.ts",
     "reassign-owner-email": "tsx src/jobs/reassign-owner-email.ts"
   },
   "dependencies": {
