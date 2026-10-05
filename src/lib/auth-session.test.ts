@@ -235,6 +235,11 @@ describe("signup duplicate email", () => {
       passwordForm("not-an-email"),
     );
     assert.equal(invalidEmail.ok, false);
+    if (!invalidEmail.ok && invalidEmail.duplicateAccount) {
+      assert.equal(invalidEmail.duplicateAccount, true);
+      assert.equal("error" in invalidEmail, false);
+      assert.equal(/already exists/i.test(JSON.stringify(invalidEmail)), false);
+    }
     if (!invalidEmail.ok && !invalidEmail.duplicateAccount) {
       assert.equal(invalidEmail.error, "Enter a valid email.");
     }
@@ -245,6 +250,11 @@ describe("signup duplicate email", () => {
       passwordForm("short-pass@example.com", "short"),
     );
     assert.equal(shortPassword.ok, false);
+    if (!shortPassword.ok && shortPassword.duplicateAccount) {
+      assert.equal(shortPassword.duplicateAccount, true);
+      assert.equal("error" in shortPassword, false);
+      assert.equal(/already exists/i.test(JSON.stringify(shortPassword)), false);
+    }
     if (!shortPassword.ok && !shortPassword.duplicateAccount) {
       assert.equal(shortPassword.error, "Password must be at least 8 characters.");
     }
@@ -255,6 +265,11 @@ describe("signup duplicate email", () => {
       passwordForm("cross-site@example.com"),
     );
     assert.equal(crossSite.ok, false);
+    if (!crossSite.ok && crossSite.duplicateAccount) {
+      assert.equal(crossSite.duplicateAccount, true);
+      assert.equal("error" in crossSite, false);
+      assert.equal(/already exists/i.test(JSON.stringify(crossSite)), false);
+    }
     if (!crossSite.ok && !crossSite.duplicateAccount) {
       assert.equal(crossSite.error, "This request could not be verified. Try again.");
     }
