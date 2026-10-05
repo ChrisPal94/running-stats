@@ -8,10 +8,16 @@ const headers = {
   "cache-control": "no-store",
 };
 
+/** True when `INTERVALS_WEBHOOK_SECRET` is set and non-empty after trim. Never returns the secret. */
+function intervalsWebhookConfigured(): boolean {
+  return Boolean(process.env.INTERVALS_WEBHOOK_SECRET?.trim());
+}
+
 function healthBody(): string {
   return JSON.stringify({
     ok: true,
     adaptCronConfigured: adaptCronConfigured(),
+    intervalsWebhookConfigured: intervalsWebhookConfigured(),
   });
 }
 

@@ -563,6 +563,39 @@ async function llmAdjustOrSkip(
   return null;
 }
 
+/**
+ * Latest planned Session in the adapt window that has an Intervals RunLog.
+ * Sync stores the RunLog and does not write Feedback, so this is the Done
+ * stand-in. Manual logs, and runs with no planned Session, are ignored.
+ */
+function intervalsRunInWindow(
+  snapshot: AdaptationJobSnapshot,
+  plan: Plan,
+  startYmd: string,
+  endYmd: string,
+): Session | null {
+  const matches: { session: Session; createdAt: string }[] = [];
+  for (const log of snapshot.runLogs) {
+    if (log.userId !== plan.userId || log.source !== "intervals") continue;
+    const session = snapshot.sessions.find(
+      (entry) =>
+        entry.id === log.sessionId &&
+        entry.userId === plan.userId &&
+        entry.planId === plan.id &&
+        entry.date >= startYmd &&
+        entry.date <= endYmd,
+    );
+    if (!session) continue;
+    matches.push({ session, createdAt: log.createdAt });
+  }
+  matches.sort((a, b) => {
+    const byDate = a.session.date.localeCompare(b.session.date);
+    if (byDate !== 0) return byDate;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+  return matches.at(-1)?.session ?? null;
+}
+
 /** Next unfinished session after today. A rest day in between is skipped. */
 function nextPlannedSession(
   snapshot: AdaptationJobSnapshot,
@@ -606,21 +639,34 @@ export function planDecisions(
       window.start,
       window.end,
     );
-    if (!feedback) continue;
 
-    const sourceDate = feedbackDay(feedback, snapshot.sessions) ?? today;
-    const todaySession =
-      snapshot.sessions.find((session) => session.id === feedback.sessionId) ??
-      snapshot.sessions.find(
-        (session) =>
-          session.userId === plan.userId && session.planId === plan.id && session.date === sourceDate,
-      ) ??
-      null;
+    // Feeling off and Skip (any explicit Feedback) win over a synced run.
+    // An Intervals RunLog is Done only when that window has no Feedback.
+    let signal: AdaptationSignal;
+    let sourceDate: string;
+    let todaySession: Session | null;
+    if (feedback) {
+      signal = feedback.kind;
+      sourceDate = feedbackDay(feedback, snapshot.sessions) ?? today;
+      todaySession =
+        snapshot.sessions.find((session) => session.id === feedback.sessionId) ??
+        snapshot.sessions.find(
+          (session) =>
+            session.userId === plan.userId && session.planId === plan.id && session.date === sourceDate,
+        ) ??
+        null;
+    } else {
+      todaySession = intervalsRunInWindow(snapshot, plan, window.start, window.end);
+      if (!todaySession) continue;
+      signal = "done";
+      sourceDate = todaySession.date;
+    }
+
     const tomorrow = nextPlannedSession(snapshot, plan, today);
 
     decisions.push(
       decideHeuristic({
-        signal: feedback.kind,
+        signal,
         sourceDate,
         userId: plan.userId,
         planId: plan.id,

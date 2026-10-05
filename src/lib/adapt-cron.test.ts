@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { GET as healthGet } from "../pages/api/health.ts";
 import { adaptCronConfigured, adaptRunLogLine } from "./adapt-cron.ts";
 
 describe("adaptCronConfigured", () => {
@@ -14,12 +15,51 @@ describe("adaptCronConfigured", () => {
     assert.equal(adaptCronConfigured("  cron-token  "), true);
   });
 
-  it("health JSON is a boolean flag and never includes the secret", () => {
-    const secret = "unit-test-cron-secret";
-    const body = JSON.stringify({ ok: true, adaptCronConfigured: adaptCronConfigured(secret) });
-    assert.deepEqual(JSON.parse(body), { ok: true, adaptCronConfigured: true });
-    assert.equal(body.includes(secret), false);
-    assert.equal(body.includes("unit-test"), false);
+  it("health JSON reports both flags and never includes the secrets", async () => {
+    const previousCron = process.env.ADAPT_CRON_SECRET;
+    const previousWebhook = process.env.INTERVALS_WEBHOOK_SECRET;
+    const context = {} as Parameters<typeof healthGet>[0];
+    try {
+      process.env.ADAPT_CRON_SECRET = "unit-test-cron-secret";
+      process.env.INTERVALS_WEBHOOK_SECRET = "unit-test-webhook-secret";
+      const response = await healthGet(context);
+      assert.equal(response.status, 200);
+      const text = await response.text();
+      assert.deepEqual(JSON.parse(text), {
+        ok: true,
+        adaptCronConfigured: true,
+        intervalsWebhookConfigured: true,
+      });
+      assert.equal(text.includes("unit-test-cron-secret"), false);
+      assert.equal(text.includes("unit-test-webhook-secret"), false);
+      assert.equal(text.includes("unit-test"), false);
+
+      process.env.INTERVALS_WEBHOOK_SECRET = "   ";
+      const blank = (await (await healthGet(context)).json()) as { intervalsWebhookConfigured: boolean };
+      assert.equal(blank.intervalsWebhookConfigured, false);
+
+      delete process.env.INTERVALS_WEBHOOK_SECRET;
+      const missing = (await (await healthGet(context)).json()) as {
+        adaptCronConfigured: boolean;
+        intervalsWebhookConfigured: boolean;
+      };
+      assert.equal(missing.intervalsWebhookConfigured, false);
+      assert.equal(missing.adaptCronConfigured, true);
+
+      delete process.env.ADAPT_CRON_SECRET;
+      process.env.INTERVALS_WEBHOOK_SECRET = "unit-test-webhook-secret";
+      const cronMissing = (await (await healthGet(context)).json()) as {
+        adaptCronConfigured: boolean;
+        intervalsWebhookConfigured: boolean;
+      };
+      assert.equal(cronMissing.adaptCronConfigured, false);
+      assert.equal(cronMissing.intervalsWebhookConfigured, true);
+    } finally {
+      if (previousCron === undefined) delete process.env.ADAPT_CRON_SECRET;
+      else process.env.ADAPT_CRON_SECRET = previousCron;
+      if (previousWebhook === undefined) delete process.env.INTERVALS_WEBHOOK_SECRET;
+      else process.env.INTERVALS_WEBHOOK_SECRET = previousWebhook;
+    }
   });
 });
 

@@ -285,7 +285,10 @@ export type AdaptationEvent = {
   summary: string;
   /** One or two lines: why. Shown in the Why? sheet when non-empty. */
   reason: string;
-  /** Guayaquil day of the Feedback that triggered this event. */
+  /**
+   * Guayaquil day that triggered this event: the Feedback day, or the planned
+   * Session day when an Intervals RunLog stands in for Done.
+   */
   sourceDate?: string;
   createdAt: string;
 };
