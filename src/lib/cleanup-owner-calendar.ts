@@ -10,20 +10,22 @@ import {
   intervalsOwnerEmailAllowlist,
   normalizeIntervalsAthleteId,
 } from "./intervals";
-import { presentSession, type SessionKind } from "./training";
-
 /**
  * One athlete per run. Dry-run unless `apply` is set.
  *
  *   npm run cleanup:owner-calendar -- --athlete i123456
  *   npm run cleanup:owner-calendar -- --athlete i123456 --apply
+ *
+ * A workout is ours only when `external_id` equals a non-owner session id.
+ * `plannedRunEvent` has always required that id, so a blank `external_id` is
+ * not an upload from this app.
  */
 const LOG = "[cleanup:owner-calendar]";
-const UPLOAD_KINDS: readonly SessionKind[] = ["easy", "intervals", "tempo", "long"];
-/** `plannedRunEvent` always writes this local time. */
-const UPLOAD_LOCAL_TIME = "T08:00:00";
 /** Events can be dragged off the session day. The list call is not the 7-day default. */
 const LIST_PAD_DAYS = 366;
+/** Used when no local session dates remain, so a wiped database can still show leftovers. */
+const FALLBACK_OLDEST = "2024-01-01";
+const FALLBACK_NEWEST = "2028-12-31";
 const FETCH_TIMEOUT_MS = 15_000;
 
 export type OwnerCalendarCleanupResult = {
@@ -43,7 +45,6 @@ type SessionRef = {
   id: string;
   userId: string;
   date: string;
-  title: string;
 };
 
 type CalendarWorkout = {
@@ -51,10 +52,7 @@ type CalendarWorkout = {
   externalId: string;
   date: string;
   name: string;
-  description: string;
   category: string;
-  type: string;
-  startDateLocal: string;
 };
 
 type PlannedDelete = {
@@ -121,74 +119,31 @@ function redact(value: string, secrets: readonly string[]): string {
   return out;
 }
 
-/** Title prefix `presentSession` writes, e.g. `Easy run · `. */
-function uploadTitlePrefix(kind: SessionKind): string {
-  const title = presentSession(kind, 8).title;
-  const marker = " · ";
-  const at = title.indexOf(marker);
-  return at === -1 ? title : title.slice(0, at + marker.length);
-}
-
 /**
- * Name and cue written by `upsertPlannedRuns` via `presentSession`.
- * Returns the exact title, or null when the name is not that upload.
+ * User id when `external_id` is a non-owner session id from `upsertPlannedRuns`.
+ * A blank id is not ours. An id that matches no session is an orphan, not a delete.
  */
-function adaptUploadTitle(name: string, description: string): string | null {
-  const normalizedName = collapse(name);
-  const normalizedDescription = collapse(description);
-  for (const kind of UPLOAD_KINDS) {
-    const prefix = uploadTitlePrefix(kind);
-    if (!normalizedName.startsWith(prefix)) continue;
-    const kmText = normalizedName.slice(prefix.length);
-    if (!/^\d+ km$/.test(kmText)) continue;
-    const km = Number(kmText.slice(0, -" km".length));
-    const presented = presentSession(kind, km);
-    if (presented.title !== normalizedName) continue;
-    if (collapse(presented.cue) !== normalizedDescription) continue;
-    return presented.title;
-  }
-  return null;
-}
-
-function uploadedAtEight(startDateLocal: string, date: string): boolean {
-  const raw = startDateLocal.trim();
-  const prefix = `${date}${UPLOAD_LOCAL_TIME}`;
-  if (!raw.startsWith(prefix)) return false;
-  const rest = raw.slice(prefix.length);
-  return rest === "" || /^[Z.+-]/.test(rest);
-}
-
-/**
- * User id of a non-owner session this calendar event belongs to.
- * `external_id` is the session id `upsertPlannedRuns` sends. A foreign id never matches.
- * A blank `external_id` can still match the upload's name prefix, cue, and 08:00 local
- * time, and only when that title and date belong to exactly one non-owner and to no owner.
- */
-export function legacyNonOwnerUploadUserId(
+function nonOwnerUploadUserId(
   event: CalendarWorkout,
   sessionsById: Map<string, SessionRef>,
-  sessions: readonly SessionRef[],
   ownerIds: ReadonlySet<string>,
   pendingIds: ReadonlySet<string>,
 ): string | null {
   if (event.category && event.category !== "WORKOUT") return null;
   const externalId = event.externalId.trim();
-  if (externalId) {
-    const session = sessionsById.get(externalId);
-    if (!session) return null;
-    if (ownerIds.has(session.userId) || pendingIds.has(session.userId)) return null;
-    return session.userId;
-  }
+  if (!externalId) return null;
+  const session = sessionsById.get(externalId);
+  if (!session) return null;
+  if (ownerIds.has(session.userId) || pendingIds.has(session.userId)) return null;
+  return session.userId;
+}
 
-  const title = adaptUploadTitle(event.name, event.description);
-  if (!title || !event.date) return null;
-  if (event.type.trim().toLowerCase() !== "run") return null;
-  if (!uploadedAtEight(event.startDateLocal, event.date)) return null;
-  const same = sessions.filter((session) => session.date === event.date && collapse(session.title) === title);
-  if (same.some((session) => ownerIds.has(session.userId) || pendingIds.has(session.userId))) return null;
-  const userIds = [...new Set(same.map((session) => session.userId))];
-  if (userIds.length !== 1) return null;
-  return userIds[0] ?? null;
+/** `external_id` is set and is not a session id we still have. Blank ids are not orphans. */
+function orphanExternalId(event: CalendarWorkout, sessionsById: Map<string, SessionRef>): boolean {
+  if (event.category && event.category !== "WORKOUT") return false;
+  const externalId = event.externalId.trim();
+  if (!externalId) return false;
+  return !sessionsById.has(externalId);
 }
 
 function eventId(value: unknown): string | null {
@@ -216,16 +171,12 @@ function parseCalendarWorkouts(payload: unknown): CalendarWorkout[] | null {
     if (!value || typeof value !== "object") continue;
     const record = value as Record<string, unknown>;
     const start = textField(record.start_date_local);
-    const date = intervalsActivityDay(start) ?? "";
     events.push({
       id: eventId(record.id),
       externalId: externalIdField(record.external_id),
-      date,
+      date: intervalsActivityDay(start) ?? "",
       name: textField(record.name),
-      description: textField(record.description),
       category: textField(record.category),
-      type: textField(record.type),
-      startDateLocal: start,
     });
   }
   return events;
@@ -331,16 +282,22 @@ export async function cleanupOwnerCalendarPlannedWorkouts(
     id: session.id,
     userId: session.userId,
     date: session.date,
-    title: session.title,
   }));
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   const candidateSessions = sessions.filter(
     (session) => !ownerIds.has(session.userId) && !pendingIds.has(session.userId),
   );
-  if (candidateSessions.length === 0) {
+  if (apply && candidateSessions.length === 0) {
     console.log(`${LOG} wouldDelete=0`);
-    if (!apply) console.log(`${LOG} dry-run: nothing deleted`);
-    else console.log(`${LOG} deleted=0 alreadyDeleted=0`);
+    console.log(`${LOG} deleted=0 alreadyDeleted=0`);
+    return stopped(true, false);
+  }
+
+  const scanDates = (candidateSessions.length > 0 ? candidateSessions : sessions).map((session) => session.date);
+  const window = listWindow(scanDates) ?? (apply ? null : { oldest: FALLBACK_OLDEST, newest: FALLBACK_NEWEST });
+  if (!window) {
+    console.log(`${LOG} wouldDelete=0`);
+    console.log(`${LOG} deleted=0 alreadyDeleted=0`);
     return stopped(apply, false);
   }
 
@@ -350,14 +307,6 @@ export async function cleanupOwnerCalendarPlannedWorkouts(
     return stopped(apply, true);
   }
   const secrets = [apiKey];
-
-  const window = listWindow(candidateSessions.map((session) => session.date));
-  if (!window) {
-    console.log(`${LOG} wouldDelete=0`);
-    if (!apply) console.log(`${LOG} dry-run: nothing deleted`);
-    else console.log(`${LOG} deleted=0 alreadyDeleted=0`);
-    return stopped(apply, false);
-  }
 
   const params = new URLSearchParams({
     oldest: window.oldest,
@@ -379,9 +328,14 @@ export async function cleanupOwnerCalendarPlannedWorkouts(
   }
 
   const planned: PlannedDelete[] = [];
+  const orphans: Array<{ id: string; date: string }> = [];
   let missingId = 0;
   for (const event of events) {
-    const userId = legacyNonOwnerUploadUserId(event, sessionsById, sessions, ownerIds, pendingIds);
+    if (orphanExternalId(event, sessionsById)) {
+      if (event.id) orphans.push({ id: event.id, date: event.date || "unknown" });
+      continue;
+    }
+    const userId = nonOwnerUploadUserId(event, sessionsById, ownerIds, pendingIds);
     if (!userId) continue;
     if (!event.id) {
       missingId += 1;
@@ -395,6 +349,7 @@ export async function cleanupOwnerCalendarPlannedWorkouts(
     });
   }
   planned.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  orphans.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 
   logRedacted(`${LOG} athlete=${athlete}`, secrets);
   for (const row of planned) {
@@ -404,6 +359,12 @@ export async function cleanupOwnerCalendarPlannedWorkouts(
   for (const row of planned) counts.set(row.userId, (counts.get(row.userId) ?? 0) + 1);
   for (const userId of [...counts.keys()].sort((a, b) => a.localeCompare(b))) {
     logRedacted(`${LOG} userId=${userId} count=${counts.get(userId) ?? 0}`, secrets);
+  }
+  if (!apply && orphans.length > 0) {
+    for (const orphan of orphans) {
+      logRedacted(`${LOG} orphan-external-id id=${orphan.id} date=${orphan.date}`, secrets);
+    }
+    console.log(`${LOG} orphan-external-id count=${orphans.length}`);
   }
   if (missingId > 0) {
     console.error(`${LOG} skipped-no-id count=${missingId}`);

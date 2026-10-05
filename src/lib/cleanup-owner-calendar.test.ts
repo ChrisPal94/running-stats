@@ -265,15 +265,17 @@ describe("cleanupOwnerCalendarPlannedWorkouts", () => {
     assert.equal(lines.some((line) => line.includes(`userId=${OTHER_ID} count=1`)), true);
     assert.equal(lines.some((line) => line.includes("wouldDelete=1")), true);
     assert.equal(lines.some((line) => line.includes("dry-run: nothing deleted")), true);
-    assert.equal(lines.some((line) => line.includes(String(foreignId))), false);
+    assert.equal(lines.some((line) => line.includes(`orphan-external-id id=${foreignId} date=${DAY}`)), true);
+    assert.equal(lines.some((line) => line.includes("orphan-external-id id=9005 date=")), true);
+    assert.equal(lines.some((line) => line.includes("orphan-external-id count=2")), true);
     assert.equal(lines.some((line) => line.includes(String(ownerEventId))), false);
     assert.equal(lines.some((line) => line.includes(String(handMadeId))), false);
-    assert.equal(lines.some((line) => line.includes("9005")), false);
     assert.equal(lines.some((line) => line.includes("424242")), false);
+    assert.equal(lines.some((line) => line.includes("other-app-workout")), false);
     assertNoSecrets(lines);
   });
 
-  it("deletes only the non-owner upload on --apply, including a blank external id that matches the upload name", async () => {
+  it("deletes only the non-owner upload on --apply and never deletes a blank external_id", async () => {
     seedSessions(baseSessions());
     process.env.INTERVALS_OWNER_EMAILS = OWNER_EMAIL;
     process.env.INTERVALS_ICU_API_KEY = API_KEY;
@@ -311,29 +313,29 @@ describe("cleanupOwnerCalendarPlannedWorkouts", () => {
       apply: true,
       fetchImpl,
     });
-    assert.equal(lines.filter((line) => line.includes("would-delete")).length, 2);
-    assert.equal(result.deleted, 2);
+    assert.equal(lines.filter((line) => line.includes("would-delete")).length, 1);
+    assert.equal(lines.some((line) => line.includes(`would-delete id=${legacyId}`)), true);
+    assert.equal(lines.some((line) => line.includes(String(namedId))), false);
+    assert.equal(result.wouldDelete, 1);
+    assert.equal(result.deleted, 1);
     assert.equal(result.alreadyDeleted, 0);
     assert.equal(result.failed, 0);
     const deletes = timeline.filter((entry) => entry.startsWith("DELETE "));
     assert.deepEqual(
       deletes.map((entry) => entry.split("/").at(-1)),
-      [String(legacyId), String(namedId)],
+      [String(legacyId)],
     );
+    assert.equal(deletes.some((entry) => entry.includes(String(namedId))), false);
     assert.equal(deletes.some((entry) => entry.includes(String(foreignId))), false);
     assert.equal(timeline.findIndex((entry) => entry.startsWith("DELETE ")) > timeline.findIndex((entry) => entry.startsWith("GET ")), true);
     assert.equal(lines.findIndex((line) => line.includes("would-delete")) < lines.findIndex((line) => line.includes("deleted=")), true);
-    assert.equal(lines.some((line) => line.includes(`userId=${OTHER_ID} count=2`)), true);
+    assert.equal(lines.some((line) => line.includes(`userId=${OTHER_ID} count=1`)), true);
+    assert.equal(lines.some((line) => line.includes("orphan-external-id")), false);
     assertNoSecrets(lines);
   });
 
-  it("does not use the name prefix when that day also belongs to the owner or to two other accounts", async () => {
-    seedSessions([
-      ...baseSessions(),
-      session("other-two-tempo", OTHER_TWO_ID, "Long run · 14 km", "Easy pace, finish with something left", "long", "2026-09-23"),
-      session("other-long", OTHER_ID, "Long run · 14 km", "Easy pace, finish with something left", "long", "2026-09-23"),
-      session("owner-tempo", OWNER_ID, "Tempo · 10 km", "Comfortably hard, controlled", "tempo", "2026-09-22"),
-    ]);
+  it("never deletes an empty external_id, including with --apply, even when the name matches an upload", async () => {
+    seedSessions(baseSessions());
     process.env.INTERVALS_OWNER_EMAILS = OWNER_EMAIL;
     process.env.INTERVALS_ICU_API_KEY = API_KEY;
     const calls: string[] = [];
@@ -350,20 +352,23 @@ describe("cleanupOwnerCalendarPlannedWorkouts", () => {
           }),
           workout({
             id: 9202,
-            externalId: "",
-            name: "Long run · 14 km",
-            description: "Easy pace, finish with something left",
-            start: "2026-09-23T08:00:00",
+            externalId: "   ",
+            name: "Easy run · 8 km",
+            description: "Keep it conversational",
+            start: `${DAY}T08:00:00`,
           }),
         ]),
         { status: 200 },
       );
     };
-    captureLogs();
+    const lines = captureLogs();
     const result = await cleanupOwnerCalendarPlannedWorkouts({ athlete: ATHLETE, apply: true, fetchImpl });
     assert.equal(result.wouldDelete, 0);
     assert.equal(result.deleted, 0);
     assert.equal(calls.length, 0);
+    assert.equal(lines.some((line) => line.includes("9201")), false);
+    assert.equal(lines.some((line) => line.includes("9202")), false);
+    assert.equal(lines.some((line) => line.includes("orphan-external-id")), false);
   });
 
   it("treats a 404 on delete as already deleted, including a second --apply", async () => {

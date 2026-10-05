@@ -1,7 +1,10 @@
 /**
  * Remove planned workouts this app uploaded onto the owner's Intervals calendar
- * for other accounts, before per-user Intervals. Christian's own planned
- * workouts, and anything this app did not create, stay.
+ * for other accounts, before per-user Intervals. A workout is deleted only
+ * when its `external_id` is a non-owner session id. A blank `external_id` is
+ * left alone. Christian's own planned workouts stay too. A dry run prints
+ * `orphan-external-id` for an id that matches no local session; those are
+ * not deleted.
  *
  * Dry-run by default. Prints each match as `id`, `date`, and `name`, plus
  * `userId` counts. No emails, API keys, or tokens.
