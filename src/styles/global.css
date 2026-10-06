@@ -165,6 +165,50 @@ dialog.app-sheet::backdrop {
   animation: saved-toast 1.8s ease forwards;
 }
 
+/* Settings toast only. The row fades out, then collapses in the last 250ms
+   of the same 1.8s. The negative margin cancels the parent `gap-4` so the
+   collapsed slot leaves no gap. Login and Today keep `.saved-toast`. */
+.settings-toast-slot {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-bottom: 0;
+  animation: settings-toast-collapse 1.8s ease forwards;
+}
+
+.settings-toast-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-toast-slot .settings-toast {
+  animation: settings-toast-fade 1.8s ease forwards;
+}
+
+@keyframes settings-toast-fade {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  86.12% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes settings-toast-collapse {
+  0%,
+  86.12% {
+    grid-template-rows: 1fr;
+    margin-bottom: 0;
+  }
+  100% {
+    grid-template-rows: 0fr;
+    margin-bottom: -1rem;
+  }
+}
+
 @keyframes wizard-arrive {
   from {
     opacity: 0;
@@ -337,5 +381,19 @@ dialog.app-sheet::backdrop {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+
+  .settings-toast-slot,
+  .settings-toast-slot .settings-toast {
+    animation: none !important;
+  }
+
+  .settings-toast-slot {
+    grid-template-rows: 0fr;
+    margin-bottom: -1rem;
+  }
+
+  .settings-toast-slot .settings-toast {
+    opacity: 0;
   }
 }

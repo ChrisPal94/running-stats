@@ -67,14 +67,20 @@ const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionRe
   <div class="flex flex-col gap-4">
     {
       toastCopy ? (
-        <p
-          class="saved-toast pointer-events-none mx-auto w-max max-w-[min(100%-2rem,28rem)] rounded-full bg-lime px-4 py-2 text-center text-xs font-bold text-ink shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
+        <div
+          class="settings-toast-slot pointer-events-none"
           data-sync-toast=""
           data-no-session-toast={toastParam === "no-session" ? "" : undefined}
-          role="status"
         >
-          {toastCopy}
-        </p>
+          <div class="settings-toast-clip">
+            <p
+              class="settings-toast pointer-events-none mx-auto w-max max-w-[min(100%-2rem,28rem)] rounded-full bg-lime px-4 py-2 text-center text-xs font-bold text-ink shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
+              role="status"
+            >
+              {toastCopy}
+            </p>
+          </div>
+        </div>
       ) : null
     }
     <article
@@ -177,11 +183,25 @@ const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionRe
   toastParam === "intervals-unavailable" ? (
     <script>
       const toast = document.querySelector("[data-sync-toast]");
-      window.setTimeout(() => {
-        if (toast instanceof HTMLElement) toast.hidden = true;
+      const clearToastQuery = () => {
         if (window.location.search.includes("toast=")) {
           history.replaceState({}, "", "/settings");
         }
+      };
+      const hideIfCollapsed = () => {
+        if (!(toast instanceof HTMLElement) || toast.hidden) return;
+        if (toast.getBoundingClientRect().height > 1) return;
+        toast.hidden = true;
+      };
+      if (toast instanceof HTMLElement) {
+        toast.addEventListener("animationend", (event) => {
+          if (event.target !== toast) return;
+          hideIfCollapsed();
+        });
+      }
+      window.setTimeout(() => {
+        hideIfCollapsed();
+        clearToastQuery();
       }, 1800);
     </script>
   ) : null

@@ -825,6 +825,7 @@ describe("password signup and login edges", () => {
       assert.equal(again.ok, false);
       if (again.ok) assert.fail("duplicate signup must not succeed");
       assert.equal(again.duplicateAccount, true);
+      // TypeScript narrowing only; the assert above already fails the test.
       if (!again.duplicateAccount) assert.fail("duplicate signup must set duplicateAccount");
       assert.equal("error" in again, false);
       assert.equal(/already exists/i.test(JSON.stringify(again)), false);
