@@ -65,6 +65,18 @@ const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionRe
   email={user.email}
 >
   <div class="flex flex-col gap-4">
+    {
+      toastCopy ? (
+        <p
+          class="saved-toast pointer-events-none mx-auto w-max max-w-[min(100%-2rem,28rem)] rounded-full bg-lime px-4 py-2 text-center text-xs font-bold text-ink shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
+          data-sync-toast=""
+          data-no-session-toast={toastParam === "no-session" ? "" : undefined}
+          role="status"
+        >
+          {toastCopy}
+        </p>
+      ) : null
+    }
     <article
       class="flex flex-col rounded-[1.75rem] border border-white/12 bg-[#111718]/82 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.3)] backdrop-blur-md sm:p-6"
     >
@@ -157,19 +169,6 @@ const envFallbackConnect = fallbackEligible && !oauthConfigured && !encryptionRe
 </AppShell>
 
 {runPicker ? <WhichRunSheet picker={runPicker} /> : null}
-
-{
-  toastCopy ? (
-    <p
-      class="saved-toast pointer-events-none fixed inset-x-0 bottom-24 z-50 mx-auto w-max max-w-[min(100%-2rem,28rem)] rounded-full bg-lime px-4 py-2 text-center text-xs font-bold text-ink shadow-[0_8px_28px_rgba(184,245,44,0.2)]"
-      data-sync-toast=""
-      data-no-session-toast={toastParam === "no-session" ? "" : undefined}
-      role="status"
-    >
-      {toastCopy}
-    </p>
-  ) : null
-}
 
 {
   toastCopy ||
