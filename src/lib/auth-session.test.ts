@@ -221,7 +221,10 @@ describe("signup duplicate email", () => {
       passwordForm(`  ${email.toUpperCase()}  `, "different-password"),
     );
     assert.equal(again.ok, false);
-    if (again.ok || !again.duplicateAccount) return;
+    if (again.ok) assert.fail("duplicate signup must not succeed");
+    assert.equal(again.duplicateAccount, true);
+    // TypeScript narrowing only; the assert above already fails the test.
+    if (!again.duplicateAccount) assert.fail("duplicate signup must set duplicateAccount");
     assert.equal("error" in again, false);
     assert.equal(/already exists/i.test(JSON.stringify(again)), false);
     assert.equal(jar.get("rs_session"), undefined);
@@ -235,14 +238,10 @@ describe("signup duplicate email", () => {
       passwordForm("not-an-email"),
     );
     assert.equal(invalidEmail.ok, false);
-    if (!invalidEmail.ok && invalidEmail.duplicateAccount) {
-      assert.equal(invalidEmail.duplicateAccount, true);
-      assert.equal("error" in invalidEmail, false);
-      assert.equal(/already exists/i.test(JSON.stringify(invalidEmail)), false);
-    }
-    if (!invalidEmail.ok && !invalidEmail.duplicateAccount) {
-      assert.equal(invalidEmail.error, "Enter a valid email.");
-    }
+    if (invalidEmail.ok) assert.fail("invalid email must not succeed");
+    assert.notEqual(invalidEmail.duplicateAccount, true);
+    if (invalidEmail.duplicateAccount) assert.fail("invalid email must not be a duplicate account");
+    assert.equal(invalidEmail.error, "Enter a valid email.");
 
     const shortPassword = await signupFromForm(
       post("http://localhost/signup"),
@@ -250,14 +249,10 @@ describe("signup duplicate email", () => {
       passwordForm("short-pass@example.com", "short"),
     );
     assert.equal(shortPassword.ok, false);
-    if (!shortPassword.ok && shortPassword.duplicateAccount) {
-      assert.equal(shortPassword.duplicateAccount, true);
-      assert.equal("error" in shortPassword, false);
-      assert.equal(/already exists/i.test(JSON.stringify(shortPassword)), false);
-    }
-    if (!shortPassword.ok && !shortPassword.duplicateAccount) {
-      assert.equal(shortPassword.error, "Password must be at least 8 characters.");
-    }
+    if (shortPassword.ok) assert.fail("short password must not succeed");
+    assert.notEqual(shortPassword.duplicateAccount, true);
+    if (shortPassword.duplicateAccount) assert.fail("short password must not be a duplicate account");
+    assert.equal(shortPassword.error, "Password must be at least 8 characters.");
 
     const crossSite = await signupFromForm(
       post("http://localhost/signup", { origin: "https://evil.example" }),
@@ -265,14 +260,10 @@ describe("signup duplicate email", () => {
       passwordForm("cross-site@example.com"),
     );
     assert.equal(crossSite.ok, false);
-    if (!crossSite.ok && crossSite.duplicateAccount) {
-      assert.equal(crossSite.duplicateAccount, true);
-      assert.equal("error" in crossSite, false);
-      assert.equal(/already exists/i.test(JSON.stringify(crossSite)), false);
-    }
-    if (!crossSite.ok && !crossSite.duplicateAccount) {
-      assert.equal(crossSite.error, "This request could not be verified. Try again.");
-    }
+    if (crossSite.ok) assert.fail("cross-site signup must not succeed");
+    assert.notEqual(crossSite.duplicateAccount, true);
+    if (crossSite.duplicateAccount) assert.fail("cross-site signup must not be a duplicate account");
+    assert.equal(crossSite.error, "This request could not be verified. Try again.");
   });
 });
 

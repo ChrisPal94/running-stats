@@ -697,21 +697,16 @@ describe("unverified password account then Google login", () => {
       passwordForm("nobody-hijack@example.com"),
     );
     assert.equal(retry.ok, false);
+    if (retry.ok) assert.fail("password login must fail after the hash is cleared");
+    assert.notEqual(retry.duplicateAccount, true);
+    if (retry.duplicateAccount) assert.fail("password login must not be a duplicate account");
+    assert.equal(retry.error, "Email or password is incorrect.");
+    assert.equal(/already exists/i.test(retry.error), false);
     assert.equal(unknown.ok, false);
-    if (!retry.ok && retry.duplicateAccount) {
-      assert.equal(retry.duplicateAccount, true);
-      assert.equal("error" in retry, false);
-      assert.equal(/already exists/i.test(JSON.stringify(retry)), false);
-    }
-    if (!unknown.ok && unknown.duplicateAccount) {
-      assert.equal(unknown.duplicateAccount, true);
-      assert.equal("error" in unknown, false);
-      assert.equal(/already exists/i.test(JSON.stringify(unknown)), false);
-    }
-    if (!retry.ok && !retry.duplicateAccount && !unknown.ok && !unknown.duplicateAccount) {
-      assert.equal(retry.error, "Email or password is incorrect.");
-      assert.equal(unknown.error, retry.error);
-    }
+    if (unknown.ok) assert.fail("unknown email must not log in");
+    assert.notEqual(unknown.duplicateAccount, true);
+    if (unknown.duplicateAccount) assert.fail("unknown email must not be a duplicate account");
+    assert.equal(unknown.error, retry.error);
   });
 
   it("keeps the password and existing sessions when the account is already verified", async () => {
@@ -828,7 +823,10 @@ describe("password signup and login edges", () => {
         passwordForm(`  ${email.toUpperCase()}  `, "different-password"),
       );
       assert.equal(again.ok, false);
-      if (again.ok || !again.duplicateAccount) continue;
+      if (again.ok) assert.fail("duplicate signup must not succeed");
+      assert.equal(again.duplicateAccount, true);
+      // TypeScript narrowing only; the assert above already fails the test.
+      if (!again.duplicateAccount) assert.fail("duplicate signup must set duplicateAccount");
       assert.equal("error" in again, false);
       assert.equal(/already exists/i.test(JSON.stringify(again)), false);
       assert.equal(jar.get("rs_session"), undefined);
