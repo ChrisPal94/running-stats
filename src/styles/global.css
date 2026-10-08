@@ -167,7 +167,9 @@ dialog.app-sheet::backdrop {
 
 /* Settings toast only. The row fades out, then collapses in the last 250ms
    of the same 1.8s. The negative margin cancels the parent `gap-4` so the
-   collapsed slot leaves no gap. Login and Today keep `.saved-toast`. */
+   collapsed slot leaves no gap. Reduced motion keeps the row open and fully
+   opaque, with no glow (the clip would crop a shadow). Login and Today keep
+   `.saved-toast` and their glow. */
 .settings-toast-slot {
   display: grid;
   grid-template-rows: 1fr;
@@ -389,11 +391,11 @@ dialog.app-sheet::backdrop {
   }
 
   .settings-toast-slot {
-    grid-template-rows: 0fr;
-    margin-bottom: -1rem;
+    grid-template-rows: 1fr;
+    margin-bottom: 0;
   }
 
   .settings-toast-slot .settings-toast {
-    opacity: 0;
+    opacity: 1;
   }
 }
